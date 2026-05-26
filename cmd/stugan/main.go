@@ -12,6 +12,8 @@ import (
 	"syscall"
 
 	"github.com/klippelism/stugan/internal/config"
+	"github.com/klippelism/stugan/internal/core"
+	"github.com/klippelism/stugan/internal/irc"
 	"github.com/klippelism/stugan/internal/logging"
 )
 
@@ -62,13 +64,43 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Phase 1+ wires the daemon here: store.Open, irc connections, core
-	// engine, plugin host, and the HTTP/WebSocket server, all sharing ctx
-	// and tearing down cleanly when it is cancelled.
-	log.Info("daemon ready; waiting for shutdown signal (no services wired yet — Phase 0)")
+	// Build the core engine and attach a connection per configured network.
+	// Phase 2+ adds the store sink and the HTTP/WebSocket server here; for
+	// now the engine's default sink prints buffer activity to the terminal.
+	engine := core.New(core.Options{Logger: log})
 
-	<-ctx.Done()
-	log.Info("shutdown signal received, stopping")
+	for _, n := range cfg.Networks {
+		if !n.Connect {
+			log.Info("network configured but not auto-connecting", "network", n.Name)
+			continue
+		}
+		conn, err := irc.New(irc.Options{
+			Network:  n.Name,
+			Addr:     n.Addr,
+			TLS:      n.TLS,
+			Nick:     n.Nick,
+			User:     n.User,
+			Realname: n.Realname,
+			SASLUser: n.SASLUser,
+			SASLPass: n.SASLPass,
+			Channels: n.Channels,
+			Logger:   log,
+		}, engine)
+		if err != nil {
+			return fmt.Errorf("network %q: %w", n.Name, err)
+		}
+		engine.AddNetwork(core.NetworkSpec{ID: n.Name, Name: n.Name, Nick: n.Nick}, conn)
+	}
+
+	if len(cfg.Networks) == 0 {
+		log.Warn("no networks configured; daemon will idle until shutdown")
+	}
+
+	log.Info("daemon ready")
+	if err := engine.Run(ctx); err != nil {
+		return err
+	}
+	log.Info("shutdown complete")
 	return nil
 }
 

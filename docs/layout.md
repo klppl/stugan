@@ -30,18 +30,21 @@ Concretely:
 
 | Package   | May import                          | Must NOT import                         |
 |-----------|-------------------------------------|-----------------------------------------|
-| `core`    | `proto` (types only), stdlib        | `server`, `irc` impl, `store` impl, girc, Lua, UI |
-| `irc`     | girc, stdlib                        | `core`, `server`, `plugin`              |
-| `store`   | modernc.org/sqlite, stdlib          | `core`, `server`, `plugin`              |
+| `core`    | `proto` (types only), stdlib        | `server`, `irc`, `store`, `plugin`, girc, Lua, UI |
+| `irc`     | girc, `core` (types it emits), stdlib | `server`, `plugin`                    |
+| `store`   | modernc.org/sqlite, `core` (types), stdlib | `server`, `plugin`               |
 | `plugin`  | gopher-lua, `core` (interfaces+types) | `server`, `irc` impl, `store` impl    |
 | `server`  | `core`, `proto`, coder/websocket    | girc, Lua                               |
 | `proto`   | stdlib only                         | everything else                         |
 | `config`  | go-toml/v2, stdlib                  | everything else                         |
 
 `core` defines the interfaces it consumes (`IRCConn`, `PluginHost`,
-`Store`). The concrete packages implement them. This is the standard Go
-"accept interfaces" inversion: the dependency on girc/lua/sqlite points
-*away* from core, so any of them can be replaced without touching core.
+`Store`). The concrete packages implement them and so import `core` for the
+interface and the event/domain types they produce — but the dependency is
+strictly one-directional (`irc/store/plugin → core`, never the reverse), and
+the heavy libraries (girc/lua/sqlite) point *away* from core. The rule that
+matters: **core imports none of them, and girc/lua/sqlite never leak past
+their owning package.** (Settled during Phase 1: `irc` imports `core`.)
 
 > **Decision needed:** where do the interfaces live? I propose **core
 > defines `IRCConn`, `PluginHost`, and `Store`** (consumer-defined
