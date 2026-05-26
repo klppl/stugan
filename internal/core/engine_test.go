@@ -1,0 +1,190 @@
+package core
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+)
+
+// captureSink records printed lines for assertions.
+type captureSink struct{ msgs []Message }
+
+func (c *captureSink) Print(m Message) { c.msgs = append(c.msgs, m) }
+
+// newTestEngine returns an engine with one registered network and a
+// capture sink, without starting the run loop (apply is exercised directly).
+func newTestEngine(t *testing.T) (*Engine, *captureSink) {
+	t.Helper()
+	sink := &captureSink{}
+	e := New(Options{Sink: sink})
+	e.AddNetwork(NetworkSpec{ID: "net", Name: "net", Nick: "me"}, nil)
+	return e, sink
+}
+
+func net0(e *Engine) *Network { return e.user.Network("net") }
+
+func TestApplyConnectDisconnect(t *testing.T) {
+	e, _ := newTestEngine(t)
+
+	e.apply(Event{Type: evSetState, Network: "net", State: StateConnecting})
+	if got := net0(e).State; got != StateConnecting {
+		t.Fatalf("state = %q, want connecting", got)
+	}
+
+	e.apply(Event{Type: EvConnect, Network: "net", Nick: "me2"})
+	if got := net0(e).State; got != StateRegistered {
+		t.Fatalf("state = %q, want registered", got)
+	}
+	if got := net0(e).Nick; got != "me2" {
+		t.Fatalf("nick = %q, want me2", got)
+	}
+
+	e.apply(Event{Type: EvDisconnect, Network: "net", Text: "bye"})
+	if got := net0(e).State; got != StateDisconnected {
+		t.Fatalf("state = %q, want disconnected", got)
+	}
+}
+
+func TestApplyJoinPartQuit(t *testing.T) {
+	e, _ := newTestEngine(t)
+
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Channel: "#go"})
+	c := net0(e).Channel("#go")
+	if c == nil {
+		t.Fatal("channel #go not created on join")
+	}
+	if c.Kind != KindChannel {
+		t.Errorf("kind = %q, want channel", c.Kind)
+	}
+	if _, ok := c.Members["alice"]; !ok {
+		t.Fatalf("alice not a member: %+v", c.Members)
+	}
+
+	// Case-insensitive: joining with different case must not duplicate.
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Channel: "#GO"})
+	if len(net0(e).Channels) != 1 {
+		t.Fatalf("channel duplicated by case: %d channels", len(net0(e).Channels))
+	}
+	if len(net0(e).Channel("#go").Members) != 2 {
+		t.Fatalf("members = %d, want 2", len(net0(e).Channel("#go").Members))
+	}
+
+	e.apply(Event{Type: EvPart, Network: "net", Nick: "alice", Channel: "#go", Text: "later"})
+	if _, ok := net0(e).Channel("#go").Members["alice"]; ok {
+		t.Error("alice still present after part")
+	}
+
+	e.apply(Event{Type: EvQuit, Network: "net", Nick: "bob", Text: "ping timeout"})
+	if _, ok := net0(e).Channel("#go").Members["bob"]; ok {
+		t.Error("bob still present after quit")
+	}
+}
+
+func TestApplyNickRename(t *testing.T) {
+	e, _ := newTestEngine(t)
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Channel: "#go"})
+
+	e.apply(Event{Type: EvNick, Network: "net", Nick: "alice", NewNick: "alice2"})
+	c := net0(e).Channel("#go")
+	if _, ok := c.Members["alice"]; ok {
+		t.Error("old nick alice still present")
+	}
+	mem, ok := c.Members["alice2"]
+	if !ok || mem.Nick != "alice2" {
+		t.Fatalf("alice2 not present/renamed: %+v", c.Members)
+	}
+
+	// Our own nick tracks rename.
+	e.apply(Event{Type: EvNick, Network: "net", Nick: "me", NewNick: "newme"})
+	if net0(e).Nick != "newme" {
+		t.Errorf("our nick = %q, want newme", net0(e).Nick)
+	}
+}
+
+func TestApplyTopic(t *testing.T) {
+	e, _ := newTestEngine(t)
+	e.apply(Event{Type: EvTopic, Network: "net", Channel: "#go", Text: "hello world", Nick: "op"})
+	if got := net0(e).Channel("#go").Topic; got != "hello world" {
+		t.Errorf("topic = %q", got)
+	}
+}
+
+func TestApplyMessageRoutesBuffer(t *testing.T) {
+	e, sink := newTestEngine(t)
+
+	// Channel message → channel buffer.
+	e.apply(Event{Type: EvMessageIn, Network: "net", Message: &Message{
+		Network: "net", Buffer: "#go", From: "alice", Kind: MsgPrivmsg, Text: "hi",
+	}})
+	if c := net0(e).Channel("#go"); c == nil || c.Kind != KindChannel {
+		t.Fatalf("channel buffer not created as channel: %+v", c)
+	}
+
+	// Query message → query buffer.
+	e.apply(Event{Type: EvMessageIn, Network: "net", Message: &Message{
+		Network: "net", Buffer: "alice", From: "alice", Kind: MsgPrivmsg, Text: "psst",
+	}})
+	if c := net0(e).Channel("alice"); c == nil || c.Kind != KindQuery {
+		t.Fatalf("query buffer not created as query: %+v", c)
+	}
+
+	if len(sink.msgs) != 2 {
+		t.Fatalf("printed %d messages, want 2", len(sink.msgs))
+	}
+}
+
+func TestUnknownNetworkIgnored(t *testing.T) {
+	e, sink := newTestEngine(t)
+	e.apply(Event{Type: EvJoin, Network: "ghost", Nick: "x", Channel: "#y"})
+	if len(sink.msgs) != 0 {
+		t.Errorf("event for unknown network produced output: %+v", sink.msgs)
+	}
+}
+
+// dropHost drops any message whose text contains "spoiler" — exercising the
+// plugin-hook drop path through the engine loop.
+type dropHost struct{}
+
+func (dropHost) Dispatch(_ context.Context, ev Event) (Event, bool) {
+	if ev.Message != nil && strings.Contains(ev.Message.Text, "spoiler") {
+		return ev, false
+	}
+	return ev, true
+}
+func (dropHost) Commands() []string { return nil }
+func (dropHost) Close() error       { return nil }
+
+func TestHostCanDropMessage(t *testing.T) {
+	sink := &captureSink{}
+	e := New(Options{Sink: sink, Host: dropHost{}})
+	e.AddNetwork(NetworkSpec{ID: "net", Name: "net", Nick: "me"}, nil)
+
+	ctx := context.Background()
+	e.handle(ctx, Event{Type: EvMessageIn, Network: "net", Message: &Message{
+		Network: "net", Buffer: "#go", From: "a", Kind: MsgPrivmsg, Text: "big spoiler here",
+	}})
+	e.handle(ctx, Event{Type: EvMessageIn, Network: "net", Message: &Message{
+		Network: "net", Buffer: "#go", From: "a", Kind: MsgPrivmsg, Text: "harmless",
+	}})
+
+	if len(sink.msgs) != 1 || sink.msgs[0].Text != "harmless" {
+		t.Fatalf("expected only the harmless line, got %+v", sink.msgs)
+	}
+}
+
+func TestHandleEventAfterShutdown(t *testing.T) {
+	e, _ := newTestEngine(t)
+	close(e.done)
+	// Must not block or panic once done is closed.
+	doneCh := make(chan struct{})
+	go func() {
+		e.HandleEvent(Event{Type: EvJoin, Network: "net", Nick: "x", Channel: "#y"})
+		close(doneCh)
+	}()
+	select {
+	case <-doneCh:
+	case <-time.After(time.Second):
+		t.Fatal("HandleEvent blocked after shutdown")
+	}
+}
