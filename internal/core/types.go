@@ -59,25 +59,30 @@ func (u *User) Network(id string) *Network {
 func (u *User) clone() *User {
 	c := &User{ID: u.ID, Name: u.Name, Networks: make([]*Network, len(u.Networks))}
 	for i, n := range u.Networks {
-		nc := &Network{
-			ID: n.ID, Name: n.Name, Nick: n.Nick, State: n.State,
-			Channels: make([]*Channel, len(n.Channels)),
-		}
-		for j, ch := range n.Channels {
-			cc := &Channel{
-				Name: ch.Name, Kind: ch.Kind, Topic: ch.Topic,
-				Unread: ch.Unread, Highlight: ch.Highlight,
-				Members: make(map[string]*Member, len(ch.Members)),
-			}
-			for k, m := range ch.Members {
-				mc := *m
-				cc.Members[k] = &mc
-			}
-			nc.Channels[j] = cc
-		}
-		c.Networks[i] = nc
+		c.Networks[i] = n.clone()
 	}
 	return c
+}
+
+// clone returns a deep copy of a network (channels and members included).
+func (n *Network) clone() *Network {
+	nc := &Network{
+		ID: n.ID, Name: n.Name, Nick: n.Nick, State: n.State,
+		Channels: make([]*Channel, len(n.Channels)),
+	}
+	for j, ch := range n.Channels {
+		cc := &Channel{
+			Name: ch.Name, Kind: ch.Kind, Topic: ch.Topic,
+			Unread: ch.Unread, Highlight: ch.Highlight,
+			Members: make(map[string]*Member, len(ch.Members)),
+		}
+		for k, m := range ch.Members {
+			mc := *m
+			cc.Members[k] = &mc
+		}
+		nc.Channels[j] = cc
+	}
+	return nc
 }
 
 // Network is one IRC connection's state.
@@ -100,13 +105,14 @@ func (n *Network) Channel(name string) *Channel {
 }
 
 // getOrCreate returns the named buffer, creating it with kind if absent.
-func (n *Network) getOrCreate(name string, kind ChannelKind) *Channel {
+// created reports whether a new buffer was added.
+func (n *Network) getOrCreate(name string, kind ChannelKind) (c *Channel, created bool) {
 	if c := n.Channel(name); c != nil {
-		return c
+		return c, false
 	}
-	c := &Channel{Name: name, Kind: kind, Members: map[string]*Member{}}
+	c = &Channel{Name: name, Kind: kind, Members: map[string]*Member{}}
 	n.Channels = append(n.Channels, c)
-	return c
+	return c, true
 }
 
 // remove drops the named buffer if present.

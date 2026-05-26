@@ -29,7 +29,8 @@ func (f *fakeConn) Close() error        { return nil }
 
 type noopSink struct{}
 
-func (noopSink) Print(core.Message) {}
+func (noopSink) Print(core.Message)           {}
+func (noopSink) NetworkChanged(*core.Network) {}
 
 // readFrame reads one envelope with a timeout.
 func readFrame(t *testing.T, ctx context.Context, ws *websocket.Conn) proto.Envelope {

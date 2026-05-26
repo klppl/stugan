@@ -7,10 +7,14 @@ import (
 	"time"
 )
 
-// captureSink records printed lines for assertions.
-type captureSink struct{ msgs []Message }
+// captureSink records printed lines and network snapshots for assertions.
+type captureSink struct {
+	msgs []Message
+	nets []*Network
+}
 
-func (c *captureSink) Print(m Message) { c.msgs = append(c.msgs, m) }
+func (c *captureSink) Print(m Message)           { c.msgs = append(c.msgs, m) }
+func (c *captureSink) NetworkChanged(n *Network) { c.nets = append(c.nets, n) }
 
 // newTestEngine returns an engine with one registered network and a
 // capture sink, without starting the run loop (apply is exercised directly).
@@ -131,6 +135,57 @@ func TestApplyMessageRoutesBuffer(t *testing.T) {
 
 	if len(sink.msgs) != 2 {
 		t.Fatalf("printed %d messages, want 2", len(sink.msgs))
+	}
+}
+
+func TestNetworkChangedEmitted(t *testing.T) {
+	e, sink := newTestEngine(t)
+
+	// A join is a structural change: a network snapshot is emitted carrying
+	// the new channel and member.
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Channel: "#go"})
+	if len(sink.nets) != 1 {
+		t.Fatalf("got %d network snapshots, want 1", len(sink.nets))
+	}
+	snap := sink.nets[0]
+	ch := snap.Channel("#go")
+	if ch == nil || ch.Members["alice"] == nil {
+		t.Fatalf("snapshot missing #go/alice: %+v", snap)
+	}
+
+	// The snapshot is a copy: later mutation must not leak into it.
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Channel: "#go"})
+	if _, leaked := snap.Channel("#go").Members["bob"]; leaked {
+		t.Error("earlier snapshot was mutated by a later event")
+	}
+
+	// A message to an existing buffer is not structural: no new snapshot.
+	before := len(sink.nets)
+	e.apply(Event{Type: EvMessageIn, Network: "net", Message: &Message{
+		Network: "net", Buffer: "#go", From: "alice", Kind: MsgPrivmsg, Text: "hi",
+	}})
+	if len(sink.nets) != before {
+		t.Errorf("message to existing buffer emitted a snapshot")
+	}
+
+	// A message to a new buffer is structural.
+	e.apply(Event{Type: EvMessageIn, Network: "net", Message: &Message{
+		Network: "net", Buffer: "bob", From: "bob", Kind: MsgPrivmsg, Text: "dm",
+	}})
+	if len(sink.nets) != before+1 {
+		t.Errorf("message creating a buffer did not emit a snapshot")
+	}
+}
+
+func TestPartSelfRemovesBuffer(t *testing.T) {
+	e, _ := newTestEngine(t)
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Channel: "#go"})
+	if net0(e).Channel("#go") == nil {
+		t.Fatal("we did not join #go")
+	}
+	e.apply(Event{Type: EvPart, Network: "net", Nick: "me", Channel: "#go"})
+	if net0(e).Channel("#go") != nil {
+		t.Error("our own part did not remove the buffer")
 	}
 }
 

@@ -116,6 +116,21 @@ func (s *Server) Print(m core.Message) {
 		s.log.Error("encode msg frame", "err", err)
 		return
 	}
+	s.broadcast(env)
+}
+
+// NetworkChanged implements core.Sink: it pushes a net:update with the
+// network's current snapshot to all clients.
+func (s *Server) NetworkChanged(n *core.Network) {
+	env, err := proto.Frame(proto.TNetUpdate, toNetworkDTO(n))
+	if err != nil {
+		s.log.Error("encode net:update frame", "err", err)
+		return
+	}
+	s.broadcast(env)
+}
+
+func (s *Server) broadcast(env proto.Envelope) {
 	s.mu.Lock()
 	for c := range s.clients {
 		c.trySend(env)

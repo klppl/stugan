@@ -93,30 +93,62 @@ export class Connection {
       case T.Init:
         this.applyInit(env.d as InitState);
         break;
+      case T.NetUpdate:
+        this.applyNetwork(env.d as NetworkDTO);
+        break;
       case T.Msg:
         this.applyMessage(env.d as MessageDTO);
         break;
       default:
-        // net:update, error, etc. handled in later phases
+        // error and later-phase events ignored for now
         break;
     }
   }
 
   private applyInit(init: InitState) {
-    this.store.networks = init.networks.map((n: NetworkDTO) => ({
-      id: n.id,
-      name: n.name,
-      nick: n.nick,
-      state: n.state,
-      buffers: n.channels.map(emptyBuffer),
-    }));
-    // Pick a sensible default active buffer.
-    if (!this.store.active) {
-      const first = this.store.networks.find((n) => n.buffers.length > 0);
-      if (first) {
-        this.store.active = { network: first.id, buffer: first.buffers[0].name };
-      }
+    // Merge each network so message history survives a reconnect, then drop
+    // any network the snapshot no longer lists.
+    for (const n of init.networks) this.applyNetwork(n);
+    const ids = new Set(init.networks.map((n) => n.id));
+    this.store.networks = this.store.networks.filter((n) => ids.has(n.id));
+    this.ensureActive();
+  }
+
+  // applyNetwork reconciles a network snapshot into the store, preserving the
+  // message arrays of buffers that persist across the update.
+  private applyNetwork(dto: NetworkDTO) {
+    let net = this.store.networks.find((n) => n.id === dto.id);
+    if (!net) {
+      net = { id: dto.id, name: dto.name, nick: dto.nick, state: dto.state, buffers: [] };
+      this.store.networks.push(net);
+    } else {
+      net.name = dto.name;
+      net.nick = dto.nick;
+      net.state = dto.state;
     }
+    const existing = new Map(net.buffers.map((b) => [b.name.toLowerCase(), b]));
+    net.buffers = dto.channels.map((c) => {
+      const prev = existing.get(c.name.toLowerCase());
+      if (prev) {
+        prev.kind = c.kind;
+        prev.topic = c.topic;
+        prev.members = c.members ?? [];
+        return prev;
+      }
+      return emptyBuffer(c);
+    });
+    this.ensureActive();
+  }
+
+  // ensureActive keeps the selection pointing at a buffer that still exists.
+  private ensureActive() {
+    const a = this.store.active;
+    if (a) {
+      const net = this.store.networks.find((n) => n.id === a.network);
+      if (net?.buffers.some((b) => b.name === a.buffer)) return;
+    }
+    const first = this.store.networks.find((n) => n.buffers.length > 0);
+    this.store.active = first ? { network: first.id, buffer: first.buffers[0].name } : null;
   }
 
   private applyMessage(m: MessageDTO) {

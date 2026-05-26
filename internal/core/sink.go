@@ -29,6 +29,10 @@ func (s logSink) Print(m Message) {
 	fmt.Fprintln(os.Stdout, line)
 }
 
+// NetworkChanged is a no-op for the terminal sink: structural changes are
+// already visible via the system lines Print emits.
+func (s logSink) NetworkChanged(*Network) {}
+
 // toLowerASCII lowercases a string for case-insensitive map keys. IRC
 // casemapping is server-defined; rfc1459 mapping arrives with ISUPPORT.
 func toLowerASCII(s string) string { return strings.ToLower(s) }

@@ -19,11 +19,15 @@ type NetworkSpec struct {
 	Nick string
 }
 
-// Sink receives committed buffer lines (post-hook, post-state-update). In
-// Phase 1 the default sink prints to a terminal; later the server bridges
-// these to WebSocket clients and the store persists them.
+// Sink observes committed state changes (post-hook, post-state-update),
+// the read side of the bus. Print receives each new buffer line;
+// NetworkChanged receives a snapshot of a network whose structure changed
+// (connection state, nick, buffers, members, topic). Implementations are
+// called synchronously from the engine loop and must not block: marshal or
+// enqueue and return.
 type Sink interface {
 	Print(m Message)
+	NetworkChanged(n *Network)
 }
 
 // Options configures a new Engine.
@@ -230,11 +234,18 @@ type outbound struct {
 // performs I/O (sink fan-out, conn send) with the lock released.
 func (e *Engine) apply(ev Event) {
 	e.mu.Lock()
-	emit, send := e.applyLocked(ev)
+	emit, send, netChanged := e.applyLocked(ev)
 	e.mu.Unlock()
 
 	for _, m := range emit {
 		e.broadcast(m)
+	}
+	if netChanged {
+		if nc := e.SnapshotNetwork(ev.Network); nc != nil {
+			for _, s := range e.sinks {
+				s.NetworkChanged(nc)
+			}
+		}
 	}
 	if send != nil {
 		if conn := e.conns[ev.Network]; conn != nil {
@@ -245,12 +256,13 @@ func (e *Engine) apply(ev Event) {
 	}
 }
 
-// applyLocked mutates state for ev and returns the buffer lines to emit and
-// an optional IRC send. The caller holds e.mu for writing.
-func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound) {
+// applyLocked mutates state for ev and returns the buffer lines to emit, an
+// optional IRC send, and whether the network's structure changed (so a
+// snapshot should be pushed to observers). The caller holds e.mu for writing.
+func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound, netChanged bool) {
 	n := e.user.Network(ev.Network)
 	if n == nil {
-		return nil, nil
+		return nil, nil, false
 	}
 	sys := func(buffer, text string) {
 		emit = append(emit, Message{
@@ -262,6 +274,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound) {
 	switch ev.Type {
 	case evSetState:
 		n.State = ev.State
+		netChanged = true
 
 	case EvConnect:
 		n.State = StateRegistered
@@ -269,6 +282,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound) {
 			n.Nick = ev.Nick
 		}
 		sys(StatusBuffer, fmt.Sprintf("connected to %s as %s", n.Name, n.Nick))
+		netChanged = true
 
 	case EvDisconnect:
 		n.State = StateDisconnected
@@ -277,34 +291,42 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound) {
 			msg += ": " + ev.Text
 		}
 		sys(StatusBuffer, msg)
+		netChanged = true
 
 	case EvMessageIn:
 		if ev.Message == nil {
-			return emit, nil
+			return emit, nil, false
 		}
 		m := *ev.Message
-		n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
+		_, created := n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
 		emit = append(emit, m)
+		netChanged = created
 
 	case EvMessageOut:
 		if ev.Message == nil {
-			return emit, nil
+			return emit, nil, false
 		}
 		m := *ev.Message
 		if m.From == "" {
 			m.From = n.Nick
 		}
-		n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
+		_, created := n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
 		emit = append(emit, m)
 		send = &outbound{target: m.Buffer, text: m.Text}
+		netChanged = created
 
 	case EvJoin:
-		c := n.getOrCreate(ev.Channel, KindChannel)
+		c, _ := n.getOrCreate(ev.Channel, KindChannel)
 		c.Members[lower(ev.Nick)] = &Member{Nick: ev.Nick, Account: ev.Account}
 		sys(ev.Channel, fmt.Sprintf("%s has joined %s", ev.Nick, ev.Channel))
+		netChanged = true
 
 	case EvPart:
-		if c := n.Channel(ev.Channel); c != nil {
+		// If we are the one parting, drop the buffer entirely; otherwise just
+		// remove the member.
+		if eqFold(ev.Nick, n.Nick) {
+			n.remove(ev.Channel)
+		} else if c := n.Channel(ev.Channel); c != nil {
 			delete(c.Members, lower(ev.Nick))
 		}
 		line := fmt.Sprintf("%s has left %s", ev.Nick, ev.Channel)
@@ -312,6 +334,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound) {
 			line += " (" + ev.Text + ")"
 		}
 		sys(ev.Channel, line)
+		netChanged = true
 
 	case EvQuit:
 		line := ev.Nick + " has quit"
@@ -322,12 +345,14 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound) {
 			if _, ok := c.Members[lower(ev.Nick)]; ok {
 				delete(c.Members, lower(ev.Nick))
 				sys(c.Name, line)
+				netChanged = true
 			}
 		}
 
 	case EvNick:
 		if eqFold(n.Nick, ev.Nick) {
 			n.Nick = ev.NewNick
+			netChanged = true
 		}
 		for _, c := range n.Channels {
 			if mem, ok := c.Members[lower(ev.Nick)]; ok {
@@ -335,19 +360,21 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound) {
 				mem.Nick = ev.NewNick
 				c.Members[lower(ev.NewNick)] = mem
 				sys(c.Name, fmt.Sprintf("%s is now known as %s", ev.Nick, ev.NewNick))
+				netChanged = true
 			}
 		}
 
 	case EvTopic:
-		c := n.getOrCreate(ev.Channel, KindChannel)
+		c, _ := n.getOrCreate(ev.Channel, KindChannel)
 		c.Topic = ev.Text
 		who := ev.Nick
 		if who == "" {
 			who = "topic"
 		}
 		sys(ev.Channel, fmt.Sprintf("%s set topic: %s", who, ev.Text))
+		netChanged = true
 	}
-	return emit, send
+	return emit, send, netChanged
 }
 
 // broadcast fans a committed line out to every registered sink.
@@ -355,6 +382,17 @@ func (e *Engine) broadcast(m Message) {
 	for _, s := range e.sinks {
 		s.Print(m)
 	}
+}
+
+// SnapshotNetwork returns a deep copy of one network's state, or nil if it
+// is unknown. Safe to call from any goroutine.
+func (e *Engine) SnapshotNetwork(id string) *Network {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if n := e.user.Network(id); n != nil {
+		return n.clone()
+	}
+	return nil
 }
 
 // bufferKind classifies a buffer name into channel vs query.

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/klippelism/stugan/internal/irc"
 	"github.com/klippelism/stugan/internal/logging"
 	"github.com/klippelism/stugan/internal/server"
+	"github.com/klippelism/stugan/internal/store"
 )
 
 func main() {
@@ -69,11 +71,19 @@ func run() error {
 	ctx, cancel := context.WithCancel(sigCtx)
 	defer cancel()
 
+	// Open the SQLite history store; it persists every committed line.
+	db, err := store.Open(filepath.Join(cfg.DataDir(), "stugan.db"), log)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
 	// Build the core engine, the WebSocket server bridge, and a connection
-	// per configured network. The server is registered as an engine sink so
-	// committed buffer lines fan out to browsers; the default terminal sink
-	// stays on for headless visibility.
+	// per configured network. The server and store are registered as engine
+	// sinks so committed lines fan out to browsers and to disk; the default
+	// terminal sink stays on for headless visibility.
 	engine := core.New(core.Options{Logger: log})
+	engine.AddSink(db)
 
 	srv := server.New(engine, server.Options{
 		Logger:         log,
