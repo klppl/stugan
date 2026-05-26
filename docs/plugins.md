@@ -1,10 +1,9 @@
-# Proposal 3 — Lua plugin API
+# Lua plugin API
 
 The centerpiece. A user writes `$STUGAN_HOME/scripts/foo.lua`, saves, and it
 loads live. Scripts extend stugan with commands, message filters, event
-hooks, and timers — the weechat/irssi experience. **Awaiting sign-off; the
-host lands in Phase 5, but the API surface is fixed now so `core`'s event
-bus and `PluginHost` interface are designed to serve it.**
+hooks, and timers — the weechat/irssi experience. **Implemented in Phase 5**
+(`internal/plugin`); the surface below matches the running host.
 
 Runtime: `github.com/yuin/gopher-lua` behind the `core.PluginHost`
 interface (§1.3). Everything below is exposed on a single global table
@@ -233,16 +232,22 @@ stugan.hook_timer(60 * 1000, function()
 end)
 ```
 
-## 3.9 Open questions for sign-off
+## 3.9 Decisions (locked in Phase 5)
 
-1. Global table name `stugan` — keep it, or a shorter alias (`s`, `irc`)?
-   I propose `stugan` with no alias.
-2. Hook signature for commands: `fn(args, ctx)` (proposed) vs. weechat's
-   `fn(buffer, args_string)`? I prefer pre-split `args` + structured `ctx`.
-3. Do you want a `hook_completion` (custom tab-completion) and
-   `hook_modifier` (weechat-style named text transforms) in the v1 surface,
-   or deferred? I propose deferring both to keep v1 tight.
-4. KV store scope: per-script (proposed) vs. a shared namespace plugins opt
-   into? Per-script is safer; shared can be added later.
-5. Sandbox allowlist contents — fine to settle in Phase 5, or do you want to
-   decide the exact removed modules now?
+1. Global table name is `stugan`, no alias.
+2. Command hooks use `fn(args, ctx)` with pre-split `args` and a structured
+   `ctx` (network, buffer, kind, nick).
+3. `hook_completion` and `hook_modifier` are deferred past v1.
+4. The KV store is per-script and survives reload. It currently lives in
+   host memory; SQLite-backed persistence is a TODO.
+5. The sandbox (`[plugins].sandbox = true`) removes `io`, `package`,
+   `require`, `dofile`, `loadfile`, `load`, and the process-affecting `os.*`
+   functions (`execute`, `exit`, `remove`, `rename`, `getenv`, …). It
+   defaults to `false` (full stdlib) for single-user, logged on load.
+
+## 3.10 Built-in commands
+
+A `/command` that no plugin claims falls back to built-ins: `/me`, `/msg`,
+`/notice`, `/join`, `/part`, `/nick`, `/quit`, and `/raw` (alias `/quote`).
+Anything else unrecognized prints an "unknown command" notice. A line
+starting with `//` is sent literally (an escaped leading slash).

@@ -17,6 +17,7 @@ import (
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/irc"
 	"github.com/klippelism/stugan/internal/logging"
+	"github.com/klippelism/stugan/internal/plugin"
 	"github.com/klippelism/stugan/internal/server"
 	"github.com/klippelism/stugan/internal/store"
 )
@@ -84,6 +85,23 @@ func run() error {
 	// terminal sink stays on for headless visibility.
 	engine := core.New(core.Options{Logger: log})
 	engine.AddSink(db)
+
+	// Plugin host: load Lua scripts from $STUGAN_HOME/scripts, hot-reload on
+	// change, and fire core hooks through it.
+	if cfg.Plugins.Enabled {
+		host, err := plugin.New(plugin.Options{
+			API:      engine.API(),
+			Logger:   log,
+			Dir:      cfg.ScriptsDir(),
+			Settings: cfg.Plugins.Settings,
+			Sandbox:  cfg.Plugins.Sandbox,
+		})
+		if err != nil {
+			return err
+		}
+		engine.SetHost(host)
+		log.Info("plugin host enabled", "scripts", cfg.ScriptsDir(), "sandbox", cfg.Plugins.Sandbox)
+	}
 
 	srv := server.New(engine, server.Options{
 		Logger:         log,

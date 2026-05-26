@@ -63,6 +63,23 @@ Config, scripts, and data live under one root, resolved in order:
 
 See [docs/config.md](docs/config.md) (to come) for the full reference.
 
+## Plugins
+
+Drop a Lua script in `$STUGAN_HOME/scripts/*.lua` and it loads live
+(hot-reloaded on save). Scripts register commands, filter/rewrite/drop
+messages, hook signals, and run timers via a `stugan.*` API — the
+weechat/irssi model. A crashing script is isolated and never takes down the
+daemon. See [docs/plugins.md](docs/plugins.md) for the full API and
+[docs/examples](docs/examples) for ready-to-use scripts (`greet`,
+`highlight_reply`, `auto_away`).
+
+```lua
+-- scripts/greet.lua
+stugan.hook_command("greet", function(args, ctx)
+  stugan.message(ctx.network, args[1], "hello from a plugin!")
+end)
+```
+
 ## Design docs
 
 - [docs/layout.md](docs/layout.md) — module & interface layout

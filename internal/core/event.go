@@ -26,6 +26,9 @@ const (
 	// change (e.g. Connecting) onto the engine loop so all state mutation
 	// stays single-threaded. Not dispatched to plugins.
 	evSetState EventType = "set_state"
+	// evPrint is internal: a plugin (via API.Print) injects a line into a
+	// buffer. Not dispatched to plugins, so it cannot recurse into hooks.
+	evPrint EventType = "print"
 )
 
 // Event is the unit that flows on the engine's bus. Which fields are set
@@ -38,6 +41,7 @@ const (
 //	EvTopic              → Channel, Text(topic), Nick(setter)
 //	EvConnect            → Nick(our nick)
 //	EvDisconnect         → Text(reason)
+//	EvCommand            → Channel(buffer), Command, Args, Text(arg string)
 //	evSetState           → State
 type Event struct {
 	Type    EventType
@@ -52,11 +56,9 @@ type Event struct {
 	Account string
 	Text    string
 	State   ConnState
-}
 
-// mutable reports whether plugin hooks may rewrite or drop this event.
-func (e Event) mutable() bool {
-	return e.Type == EvMessageIn || e.Type == EvMessageOut
+	Command string   // EvCommand: the command name (without leading slash)
+	Args    []string // EvCommand: whitespace-split arguments
 }
 
 // eqFold is a small ASCII case-insensitive compare used for channel/nick

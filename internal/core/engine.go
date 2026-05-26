@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
@@ -96,6 +97,17 @@ func New(opts Options) *Engine {
 // loop is running.
 func (e *Engine) AddSink(s Sink) { e.sinks = append(e.sinks, s) }
 
+// SetHost installs the plugin host. Call before Run. The host is
+// constructed with the engine's API (see API), so the wiring is:
+// New → SetHost(plugin.New(eng.API(), ...)). A nil host restores the
+// pass-through default.
+func (e *Engine) SetHost(h PluginHost) {
+	if h == nil {
+		h = nopHost{}
+	}
+	e.host = h
+}
+
 // AddNetwork registers a network's initial state and its connection. Call
 // before Run.
 func (e *Engine) AddNetwork(spec NetworkSpec, conn IRCConn) {
@@ -109,11 +121,24 @@ func (e *Engine) AddNetwork(spec NetworkSpec, conn IRCConn) {
 }
 
 // SendInput submits a line of user input for a buffer. It is goroutine-safe
-// (callable from server handlers): the line is enqueued as an outbound
-// event, runs through plugin hooks on the loop, and is then sent to IRC and
-// echoed locally (echo-message is not enabled yet, so the local echo is how
-// the sender sees their own line).
+// (callable from server handlers). A leading slash makes it a command
+// (handled by a plugin hook_command or a built-in); "//" escapes to a
+// literal message. Otherwise it is an outbound message: it runs through
+// hooks, is sent to IRC, and is echoed locally (echo-message is off, so the
+// local echo is how the sender sees their own line).
 func (e *Engine) SendInput(network, buffer, text string) {
+	if strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "//") {
+		rest := strings.TrimPrefix(text, "/")
+		name, argstr, _ := strings.Cut(rest, " ")
+		if name != "" {
+			e.HandleEvent(Event{
+				Type: EvCommand, Network: network, Channel: buffer, Time: time.Now(),
+				Command: name, Args: strings.Fields(argstr), Text: argstr,
+			})
+			return
+		}
+	}
+	text = strings.TrimPrefix(text, "/") // "//foo" → "/foo"
 	e.HandleEvent(Event{
 		Type:    EvMessageOut,
 		Network: network,
@@ -211,16 +236,37 @@ func (e *Engine) loop(ctx context.Context) {
 	}
 }
 
-// handle runs plugin hooks for mutable events, then applies the result.
+// handle dispatches an event to plugin hooks, then commits it. The hook
+// contract varies by event type:
+//
+//   - message in/out: hooks may rewrite or drop (keep=false) the message.
+//   - command: a plugin that handles the command returns keep=false; if no
+//     plugin claims it, the engine runs its built-in command handler.
+//   - signals: hooks are notified; the result is ignored.
+//
+// Internal events (state, print) bypass the host entirely.
 func (e *Engine) handle(ctx context.Context, ev Event) {
-	if ev.mutable() {
+	switch ev.Type {
+	case evSetState, evPrint:
+		e.apply(ev)
+
+	case EvMessageIn, EvMessageOut:
 		out, keep := e.host.Dispatch(ctx, ev)
 		if !keep {
 			return // a hook dropped it
 		}
-		ev = out
+		e.apply(out)
+
+	case EvCommand:
+		if _, keep := e.host.Dispatch(ctx, ev); !keep {
+			return // a plugin command consumed it
+		}
+		e.runBuiltinCommand(ev)
+
+	default: // join, part, quit, nick, topic, connect, disconnect
+		e.host.Dispatch(ctx, ev) // notify-only
+		e.apply(ev)
 	}
-	e.apply(ev)
 }
 
 // outbound describes an IRC send to perform after state mutation, outside
@@ -241,11 +287,7 @@ func (e *Engine) apply(ev Event) {
 		e.broadcast(m)
 	}
 	if netChanged {
-		if nc := e.SnapshotNetwork(ev.Network); nc != nil {
-			for _, s := range e.sinks {
-				s.NetworkChanged(nc)
-			}
-		}
+		e.notifyNetwork(ev.Network)
 	}
 	if send != nil {
 		if conn := e.conns[ev.Network]; conn != nil {
@@ -253,6 +295,38 @@ func (e *Engine) apply(ev Event) {
 				e.log.Warn("send failed", "network", ev.Network, "err", err)
 			}
 		}
+	}
+}
+
+// notifyNetwork pushes a fresh snapshot of one network to all sinks.
+func (e *Engine) notifyNetwork(id string) {
+	nc := e.SnapshotNetwork(id)
+	if nc == nil {
+		return
+	}
+	for _, s := range e.sinks {
+		s.NetworkChanged(nc)
+	}
+}
+
+// inject commits a synthetic line (from a plugin's Print, or a local echo of
+// a plugin-sent message) directly to state and sinks, bypassing the event
+// bus so it never recurses into plugin hooks. Safe to call from the plugin
+// goroutine, which runs while the engine loop is outside the state lock.
+func (e *Engine) inject(m Message) {
+	e.mu.Lock()
+	n := e.user.Network(m.Network)
+	created := false
+	if n != nil {
+		_, created = n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
+	}
+	e.mu.Unlock()
+	if n == nil {
+		return
+	}
+	e.broadcast(m)
+	if created {
+		e.notifyNetwork(m.Network)
 	}
 }
 
@@ -275,6 +349,14 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound, netChang
 	case evSetState:
 		n.State = ev.State
 		netChanged = true
+
+	case evPrint:
+		_, created := n.getOrCreate(ev.Channel, bufferKind(ev.Channel))
+		emit = append(emit, Message{
+			Network: n.ID, Buffer: ev.Channel, Time: time.Now(),
+			Kind: MsgSystem, Text: ev.Text,
+		})
+		netChanged = created
 
 	case EvConnect:
 		n.State = StateRegistered
