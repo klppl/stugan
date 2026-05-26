@@ -1,0 +1,25 @@
+# Binaries
+/stugan
+/dist/
+*.exe
+
+# Local runtime data (when STUGAN_HOME points inside the repo for dev)
+/data/
+/scripts/
+config.toml
+
+# Go
+*.test
+*.out
+/coverage.*
+
+# Frontend
+client/node_modules/
+client/dist/
+*.local
+
+# Editor/OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

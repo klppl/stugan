@@ -1,0 +1,32 @@
+# stugan example configuration.
+# Copy to $STUGAN_HOME/config.toml (default: ~/.config/stugan/config.toml).
+# All fields are optional; shown values are the defaults unless noted.
+
+[server]
+listen = "127.0.0.1:8080"
+# public_url = "https://irc.example.com"   # for absolute links / push
+
+[log]
+level  = "info"   # debug | info | warn | error
+format = "text"   # text | json
+
+[plugins]
+enabled = true
+sandbox = false   # single-user: full Lua stdlib (logged). See docs/plugins.md.
+
+# Per-plugin settings, keyed by script basename. Read via stugan.config(...).
+[plugins.settings.highlight_reply]
+word = "ping"
+
+# One [[networks]] block per IRC network.
+[[networks]]
+name     = "libera"
+addr     = "irc.libera.chat:6697"
+tls      = true
+nick     = "stuganuser"
+user     = "stuganuser"
+realname = "stugan"
+channels = ["#stugan"]
+connect  = true
+# sasl_user = "account"
+# sasl_pass = "secret"

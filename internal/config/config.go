@@ -1,0 +1,199 @@
+// Package config loads and validates stugan's TOML configuration.
+//
+// The configuration, scripts, and data all live under a single home
+// directory resolved by [Home]: $STUGAN_HOME if set, otherwise
+// $XDG_CONFIG_HOME/stugan, otherwise ~/.config/stugan.
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	toml "github.com/pelletier/go-toml/v2"
+)
+
+// Config is the root configuration document, loaded from config.toml.
+//
+// Field zero-values are filled with sensible defaults by [withDefaults]
+// after decoding, so a missing or partial config file still yields a
+// runnable daemon.
+type Config struct {
+	// home is the resolved root directory. Not part of the TOML document;
+	// set during Load. Accessed via Home, ScriptsDir, DataDir.
+	home string
+
+	Server  ServerConfig  `toml:"server"`
+	Log     LogConfig     `toml:"log"`
+	Plugins PluginsConfig `toml:"plugins"`
+
+	// Networks is the static list of IRC networks to connect on startup.
+	// In multi-user mode this moves into per-user state; for now it is a
+	// top-level list owned by the single implicit user.
+	Networks []NetworkConfig `toml:"networks"`
+}
+
+// ServerConfig controls the HTTP/WebSocket listener.
+type ServerConfig struct {
+	// Listen is the address the HTTP server binds, e.g. "127.0.0.1:8080".
+	Listen string `toml:"listen"`
+	// PublicURL is the externally reachable base URL, used for absolute
+	// links in link previews, uploads, and web-push payloads. Optional.
+	PublicURL string `toml:"public_url"`
+}
+
+// LogConfig controls structured logging.
+type LogConfig struct {
+	// Level is one of "debug", "info", "warn", "error".
+	Level string `toml:"level"`
+	// Format is "text" (human, default) or "json".
+	Format string `toml:"format"`
+}
+
+// PluginsConfig controls the Lua plugin host.
+type PluginsConfig struct {
+	// Enabled toggles the plugin host entirely.
+	Enabled bool `toml:"enabled"`
+	// Sandbox, when true, restricts the Lua stdlib exposed to scripts.
+	// Single-user defaults to false (full stdlib) but the load is logged.
+	// TODO(multi-user): default to true and back with a WASM host.
+	Sandbox bool `toml:"sandbox"`
+	// Settings holds arbitrary per-plugin configuration tables, keyed by
+	// script name. Exposed read-only to scripts via stugan.config.
+	Settings map[string]map[string]any `toml:"settings"`
+}
+
+// NetworkConfig describes one IRC network connection.
+type NetworkConfig struct {
+	// Name is the unique identifier shown in the UI, e.g. "libera".
+	Name string `toml:"name"`
+	// Addr is host:port, e.g. "irc.libera.chat:6697".
+	Addr string `toml:"addr"`
+	// TLS enables an encrypted connection.
+	TLS bool `toml:"tls"`
+	// Nick, User, and Realname identify the client to the server.
+	Nick     string `toml:"nick"`
+	User     string `toml:"user"`
+	Realname string `toml:"realname"`
+	// SASL credentials (PLAIN). EXTERNAL/client-cert lands later.
+	SASLUser string `toml:"sasl_user"`
+	SASLPass string `toml:"sasl_pass"`
+	// Channels to auto-join after connect/registration.
+	Channels []string `toml:"channels"`
+	// Connect, when false, leaves the network configured but idle.
+	Connect bool `toml:"connect"`
+}
+
+// Load resolves the home directory, reads config.toml from it (tolerating
+// a missing file), applies defaults, and validates the result.
+func Load() (*Config, error) {
+	home, err := Home()
+	if err != nil {
+		return nil, err
+	}
+	return LoadFrom(home)
+}
+
+// LoadFrom loads configuration rooted at an explicit home directory.
+// Useful for tests. A missing config.toml is not an error; defaults apply.
+func LoadFrom(home string) (*Config, error) {
+	cfg := &Config{home: home}
+
+	path := filepath.Join(home, "config.toml")
+	data, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// No file: run on defaults.
+	case err != nil:
+		return nil, fmt.Errorf("read config %s: %w", path, err)
+	default:
+		if err := toml.Unmarshal(data, cfg); err != nil {
+			return nil, fmt.Errorf("parse config %s: %w", path, err)
+		}
+	}
+
+	cfg.home = home
+	cfg.withDefaults()
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// withDefaults fills unset fields with defaults.
+func (c *Config) withDefaults() {
+	if c.Server.Listen == "" {
+		c.Server.Listen = "127.0.0.1:8080"
+	}
+	if c.Log.Level == "" {
+		c.Log.Level = "info"
+	}
+	if c.Log.Format == "" {
+		c.Log.Format = "text"
+	}
+}
+
+// validate reports configuration errors that should stop startup.
+func (c *Config) validate() error {
+	switch c.Log.Level {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("config: invalid log.level %q", c.Log.Level)
+	}
+	switch c.Log.Format {
+	case "text", "json":
+	default:
+		return fmt.Errorf("config: invalid log.format %q", c.Log.Format)
+	}
+	seen := make(map[string]bool, len(c.Networks))
+	for i, n := range c.Networks {
+		if n.Name == "" {
+			return fmt.Errorf("config: networks[%d] missing name", i)
+		}
+		if seen[n.Name] {
+			return fmt.Errorf("config: duplicate network name %q", n.Name)
+		}
+		seen[n.Name] = true
+		if n.Addr == "" {
+			return fmt.Errorf("config: network %q missing addr", n.Name)
+		}
+	}
+	return nil
+}
+
+// Home returns the resolved configuration root directory without reading
+// any file. Resolution order: $STUGAN_HOME, $XDG_CONFIG_HOME/stugan,
+// ~/.config/stugan.
+func Home() (string, error) {
+	if h := os.Getenv("STUGAN_HOME"); h != "" {
+		return h, nil
+	}
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "stugan"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir: %w", err)
+	}
+	return filepath.Join(home, ".config", "stugan"), nil
+}
+
+// Home returns the resolved root directory for this config.
+func (c *Config) Home() string { return c.home }
+
+// ScriptsDir is where Lua plugins live ($home/scripts).
+func (c *Config) ScriptsDir() string { return filepath.Join(c.home, "scripts") }
+
+// DataDir is where the SQLite database and uploads live ($home/data).
+func (c *Config) DataDir() string { return filepath.Join(c.home, "data") }
+
+// EnsureDirs creates the home, scripts, and data directories if absent.
+func (c *Config) EnsureDirs() error {
+	for _, dir := range []string{c.home, c.ScriptsDir(), c.DataDir()} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create dir %s: %w", dir, err)
+		}
+	}
+	return nil
+}
