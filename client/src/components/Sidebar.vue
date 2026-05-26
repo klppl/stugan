@@ -27,7 +27,13 @@ function isActive(network: string, buffer: string): boolean {
           :class="{ active: isActive(net.id, buf.name), [buf.kind]: true }"
           @click="connection.select(net.id, buf.name)"
         >
-          {{ buf.name }}
+          <span class="buf-name">{{ buf.name }}</span>
+          <span
+            v-if="buf.unread > 0 && !isActive(net.id, buf.name)"
+            class="badge"
+            :class="{ highlight: buf.highlight > 0 }"
+            >{{ buf.unread }}</span
+          >
         </li>
       </ul>
     </div>

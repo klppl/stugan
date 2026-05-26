@@ -20,9 +20,11 @@ const (
 	TInit      = "init"       // s2c
 	TMsg       = "msg"        // s2c
 	TNetUpdate = "net:update" // s2c
+	TBacklog   = "backlog"    // s2c (answers backlog:fetch)
 	TError     = "error"      // s2c
 
-	TMsgSend = "msg:send" // c2s
+	TMsgSend      = "msg:send"      // c2s
+	TBacklogFetch = "backlog:fetch" // c2s
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -106,6 +108,26 @@ type MsgSend struct {
 	Network string `json:"network"`
 	Buffer  string `json:"buffer"`
 	Text    string `json:"text"`
+}
+
+// BacklogFetch is a client→server request for a page of history. Before is
+// an RFC3339 timestamp cursor (empty = most recent page); the server
+// returns messages older than it. Carry an Envelope.ID to correlate the
+// reply.
+type BacklogFetch struct {
+	Network string `json:"network"`
+	Buffer  string `json:"buffer"`
+	Before  string `json:"before,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+}
+
+// BacklogResp answers a BacklogFetch with a page of history, oldest-first.
+// More reports whether older history remains before this page.
+type BacklogResp struct {
+	Network  string       `json:"network"`
+	Buffer   string       `json:"buffer"`
+	Messages []MessageDTO `json:"messages"`
+	More     bool         `json:"more"`
 }
 
 // WireError is a server→client error, correlated to a request id when set

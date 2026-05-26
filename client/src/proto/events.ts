@@ -9,8 +9,10 @@ export const T = {
   Init: "init",
   Msg: "msg",
   NetUpdate: "net:update",
+  Backlog: "backlog",
   Error: "error",
   MsgSend: "msg:send",
+  BacklogFetch: "backlog:fetch",
 } as const;
 
 export interface Envelope<D = unknown> {
@@ -74,6 +76,20 @@ export interface MsgSend {
   network: string;
   buffer: string;
   text: string;
+}
+
+export interface BacklogFetch {
+  network: string;
+  buffer: string;
+  before?: string;
+  limit?: number;
+}
+
+export interface BacklogResp {
+  network: string;
+  buffer: string;
+  messages: MessageDTO[];
+  more: boolean;
 }
 
 export interface WireError {

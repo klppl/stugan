@@ -106,23 +106,27 @@ func (s *Store) Print(m core.Message) {
 // when networks become runtime-mutable (Phase 6+); for now it is a no-op.
 func (s *Store) NetworkChanged(*core.Network) {}
 
-// Backlog returns up to limit messages for a buffer, those with id <
-// beforeID (use 0 for the most recent page), oldest-first. more reports
-// whether older history remains.
-func (s *Store) Backlog(ctx context.Context, network, buffer string, beforeID int64, limit int) (msgs []core.Message, more bool, err error) {
+// Backlog returns up to limit messages for a buffer that are older than the
+// before cursor (a zero time means the most recent page), oldest-first.
+// more reports whether older history remains. The client passes the time of
+// the oldest message it holds as the next before cursor to page backward.
+func (s *Store) Backlog(ctx context.Context, network, buffer string, before time.Time, limit int) (msgs []core.Message, more bool, err error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	if beforeID <= 0 {
-		beforeID = 1<<63 - 1
+	beforeMillis := int64(1<<63 - 1)
+	if !before.IsZero() {
+		beforeMillis = before.UnixMilli()
 	}
 	// Fetch limit+1 newest-first to detect whether more remain, then reverse.
+	// Order by id (insertion order) for a stable sequence; filter by ts so
+	// the wire-visible message time can serve as the paging cursor.
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, msgid, network, buffer, ts, from_nick, account, kind, text, self, tags
 		 FROM messages
-		 WHERE network = ? AND buffer = ? AND id < ?
+		 WHERE network = ? AND buffer = ? AND ts < ?
 		 ORDER BY id DESC LIMIT ?`,
-		network, buffer, beforeID, limit+1,
+		network, buffer, beforeMillis, limit+1,
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("backlog query: %w", err)

@@ -20,6 +20,13 @@ import (
 	"github.com/klippelism/stugan/internal/proto"
 )
 
+// History provides paged message backlog for replay. Implemented by
+// store.Store; the server depends only on this narrow interface, not on the
+// store package.
+type History interface {
+	Backlog(ctx context.Context, network, buffer string, before time.Time, limit int) ([]core.Message, bool, error)
+}
+
 // Options configures a Server.
 type Options struct {
 	Logger *slog.Logger
@@ -32,6 +39,9 @@ type Options struct {
 	// StaticDir, if set, is served at / (the built Vue client). When empty,
 	// only the API is served.
 	StaticDir string
+	// History, if set, answers backlog:fetch requests with replay from the
+	// message store. When nil, backlog requests return an error frame.
+	History History
 }
 
 // Server bridges the core engine to WebSocket clients. It implements
@@ -42,6 +52,7 @@ type Server struct {
 	serverName string
 	origins    []string
 	staticDir  string
+	history    History
 
 	mu      sync.Mutex
 	clients map[*client]struct{}
@@ -70,6 +81,7 @@ func New(engine *core.Engine, opts Options) *Server {
 		serverName: name,
 		origins:    origins,
 		staticDir:  opts.StaticDir,
+		history:    opts.History,
 		clients:    map[*client]struct{}{},
 	}
 }
@@ -190,12 +202,12 @@ func (s *Server) readPump(ctx context.Context, c *client) {
 		if err := wsjson.Read(ctx, c.ws, &env); err != nil {
 			return // disconnect or ctx cancelled
 		}
-		s.route(c, env)
+		s.route(ctx, c, env)
 	}
 }
 
 // route dispatches one decoded frame.
-func (s *Server) route(c *client, env proto.Envelope) {
+func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	switch env.T {
 	case proto.TMsgSend:
 		var d proto.MsgSend
@@ -208,7 +220,57 @@ func (s *Server) route(c *client, env proto.Envelope) {
 			return
 		}
 		s.engine.SendInput(d.Network, d.Buffer, d.Text)
+
+	case proto.TBacklogFetch:
+		s.handleBacklog(ctx, c, env)
+
 	default:
 		s.log.Debug("ignoring unknown frame", "t", env.T)
 	}
+}
+
+// handleBacklog answers a backlog:fetch with a page of history from the
+// store, correlated to the request id.
+func (s *Server) handleBacklog(ctx context.Context, c *client, env proto.Envelope) {
+	var d proto.BacklogFetch
+	if err := decode(env, &d); err != nil {
+		c.sendError(env.ID, "bad_request", "invalid backlog:fetch payload")
+		return
+	}
+	if d.Network == "" || d.Buffer == "" {
+		c.sendError(env.ID, "bad_request", "backlog:fetch requires network, buffer")
+		return
+	}
+	if s.history == nil {
+		c.sendError(env.ID, "unavailable", "history is not enabled")
+		return
+	}
+	var before time.Time
+	if d.Before != "" {
+		if t, err := time.Parse(time.RFC3339, d.Before); err == nil {
+			before = t
+		}
+	}
+	limit := d.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	msgs, more, err := s.history.Backlog(ctx, d.Network, d.Buffer, before, limit)
+	if err != nil {
+		s.log.Error("backlog query", "network", d.Network, "buffer", d.Buffer, "err", err)
+		c.sendError(env.ID, "internal", "backlog query failed")
+		return
+	}
+	dtos := make([]proto.MessageDTO, len(msgs))
+	for i, m := range msgs {
+		dtos[i] = toMessageDTO(m)
+	}
+	reply, err := proto.Frame(proto.TBacklog, proto.BacklogResp{
+		Network: d.Network, Buffer: d.Buffer, Messages: dtos, More: more,
+	})
+	if err != nil {
+		return
+	}
+	reply.ID = env.ID
+	c.trySend(reply)
 }

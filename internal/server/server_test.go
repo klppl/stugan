@@ -32,6 +32,16 @@ type noopSink struct{}
 func (noopSink) Print(core.Message)           {}
 func (noopSink) NetworkChanged(*core.Network) {}
 
+// fakeHistory returns a canned backlog page.
+type fakeHistory struct {
+	msgs []core.Message
+	more bool
+}
+
+func (f *fakeHistory) Backlog(_ context.Context, _, _ string, _ time.Time, _ int) ([]core.Message, bool, error) {
+	return f.msgs, f.more, nil
+}
+
 // readFrame reads one envelope with a timeout.
 func readFrame(t *testing.T, ctx context.Context, ws *websocket.Conn) proto.Envelope {
 	t.Helper()
@@ -113,6 +123,83 @@ func TestWebSocketLoop(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("conn.Message was not called")
+	}
+}
+
+func TestBacklogReplay(t *testing.T) {
+	hist := &fakeHistory{
+		msgs: []core.Message{
+			{Network: "n", Buffer: "#c", From: "a", Kind: core.MsgPrivmsg, Text: "old1", Time: time.Now()},
+			{Network: "n", Buffer: "#c", From: "b", Kind: core.MsgPrivmsg, Text: "old2", Time: time.Now()},
+		},
+		more: true,
+	}
+	eng := core.New(core.Options{Sink: noopSink{}})
+	srv := New(eng, Options{History: hist})
+	eng.AddSink(srv)
+	eng.AddNetwork(core.NetworkSpec{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = eng.Run(ctx) }()
+
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http") + "/ws"
+	ws, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer ws.CloseNow()
+	readFrame(t, ctx, ws) // hello
+	readFrame(t, ctx, ws) // init
+
+	req, _ := proto.Frame(proto.TBacklogFetch, proto.BacklogFetch{Network: "n", Buffer: "#c", Limit: 50})
+	req.ID = "req-1"
+	if err := wsjson.Write(ctx, ws, req); err != nil {
+		t.Fatal(err)
+	}
+	env := readFrame(t, ctx, ws)
+	if env.T != proto.TBacklog {
+		t.Fatalf("frame = %q, want backlog", env.T)
+	}
+	if env.ID != "req-1" {
+		t.Errorf("reply id = %q, want req-1 (uncorrelated)", env.ID)
+	}
+	var resp proto.BacklogResp
+	if err := decode(env, &resp); err != nil {
+		t.Fatalf("decode backlog: %v", err)
+	}
+	if resp.Buffer != "#c" || len(resp.Messages) != 2 || !resp.More {
+		t.Fatalf("backlog resp = %+v", resp)
+	}
+	if resp.Messages[0].Text != "old1" || resp.Messages[1].Text != "old2" {
+		t.Errorf("backlog order = %q,%q", resp.Messages[0].Text, resp.Messages[1].Text)
+	}
+}
+
+func TestBacklogWithoutHistory(t *testing.T) {
+	eng := core.New(core.Options{Sink: noopSink{}})
+	srv := New(eng, Options{}) // no History
+	eng.AddSink(srv)
+	eng.AddNetwork(core.NetworkSpec{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = eng.Run(ctx) }()
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http") + "/ws"
+	ws, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer ws.CloseNow()
+	readFrame(t, ctx, ws) // hello
+	readFrame(t, ctx, ws) // init
+	req, _ := proto.Frame(proto.TBacklogFetch, proto.BacklogFetch{Network: "n", Buffer: "#c"})
+	_ = wsjson.Write(ctx, ws, req)
+	if env := readFrame(t, ctx, ws); env.T != proto.TError {
+		t.Fatalf("frame = %q, want error", env.T)
 	}
 }
 

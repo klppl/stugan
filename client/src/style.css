@@ -92,6 +92,45 @@ body {
 .buffers li.query {
   font-style: italic;
 }
+.buffers li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.buf-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.badge {
+  flex-shrink: 0;
+  min-width: 18px;
+  text-align: center;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 9px;
+  background: var(--fg-dim);
+  color: var(--bg);
+}
+.badge.highlight {
+  background: #d97070;
+  color: #fff;
+}
+
+.load-older {
+  display: block;
+  width: 100%;
+  margin: 4px 0 8px;
+  padding: 6px;
+  border: none;
+  border-radius: 4px;
+  background: var(--bg-alt);
+  color: var(--accent);
+  cursor: pointer;
+}
+.load-older:hover {
+  background: var(--bg-sidebar);
+}
 
 /* Chat */
 .chat {

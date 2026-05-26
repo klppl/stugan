@@ -90,6 +90,7 @@ func run() error {
 		ServerName:     "stugan/" + version(),
 		StaticDir:      cfg.Server.StaticDir,
 		OriginPatterns: cfg.Server.OriginPatterns,
+		History:        db,
 	})
 	engine.AddSink(srv)
 
