@@ -16,6 +16,7 @@ config.toml
 # Frontend
 client/node_modules/
 client/dist/
+*.tsbuildinfo
 *.local
 
 # Editor/OS

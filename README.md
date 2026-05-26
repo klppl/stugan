@@ -36,8 +36,24 @@ library, or UI code.
 ```sh
 go build ./...
 go test ./...
+
+# Build the Vue client once (the daemon serves client/dist at /).
+cd client && npm install && npm run build && cd ..
+
 go run ./cmd/stugan            # uses $STUGAN_HOME or ~/.config/stugan
 go run ./cmd/stugan -home ./dev-home
+```
+
+Then open the listen address (default `http://127.0.0.1:8080`).
+
+### Frontend development
+
+For live-reload while working on the client, run the Vite dev server; it
+proxies the WebSocket to the Go daemon:
+
+```sh
+go run ./cmd/stugan &     # daemon on :8080
+cd client && npm run dev  # Vite on :5173, open that
 ```
 
 ## Configuration

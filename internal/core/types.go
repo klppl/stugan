@@ -54,6 +54,32 @@ func (u *User) Network(id string) *Network {
 	return nil
 }
 
+// clone returns a deep copy of the user state, so a reader can traverse it
+// without holding the engine lock or racing the mutating loop.
+func (u *User) clone() *User {
+	c := &User{ID: u.ID, Name: u.Name, Networks: make([]*Network, len(u.Networks))}
+	for i, n := range u.Networks {
+		nc := &Network{
+			ID: n.ID, Name: n.Name, Nick: n.Nick, State: n.State,
+			Channels: make([]*Channel, len(n.Channels)),
+		}
+		for j, ch := range n.Channels {
+			cc := &Channel{
+				Name: ch.Name, Kind: ch.Kind, Topic: ch.Topic,
+				Unread: ch.Unread, Highlight: ch.Highlight,
+				Members: make(map[string]*Member, len(ch.Members)),
+			}
+			for k, m := range ch.Members {
+				mc := *m
+				cc.Members[k] = &mc
+			}
+			nc.Channels[j] = cc
+		}
+		c.Networks[i] = nc
+	}
+	return c
+}
+
 // Network is one IRC connection's state.
 type Network struct {
 	ID       string

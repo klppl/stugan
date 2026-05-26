@@ -41,6 +41,12 @@ type ServerConfig struct {
 	// PublicURL is the externally reachable base URL, used for absolute
 	// links in link previews, uploads, and web-push payloads. Optional.
 	PublicURL string `toml:"public_url"`
+	// StaticDir is the directory of the built Vue client served at /.
+	// Defaults to "client/dist" (relative to the working directory).
+	StaticDir string `toml:"static_dir"`
+	// OriginPatterns authorizes WebSocket origins (path.Match patterns).
+	// Empty falls back to localhost variants.
+	OriginPatterns []string `toml:"origin_patterns"`
 }
 
 // LogConfig controls structured logging.
@@ -125,6 +131,9 @@ func LoadFrom(home string) (*Config, error) {
 func (c *Config) withDefaults() {
 	if c.Server.Listen == "" {
 		c.Server.Listen = "127.0.0.1:8080"
+	}
+	if c.Server.StaticDir == "" {
+		c.Server.StaticDir = "client/dist"
 	}
 	if c.Log.Level == "" {
 		c.Log.Level = "info"

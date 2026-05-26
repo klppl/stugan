@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/klippelism/stugan/internal/config"
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/irc"
 	"github.com/klippelism/stugan/internal/logging"
+	"github.com/klippelism/stugan/internal/server"
 )
 
 func main() {
@@ -60,14 +62,26 @@ func run() error {
 		"plugins_enabled", cfg.Plugins.Enabled,
 	)
 
-	// Root context cancelled on SIGINT/SIGTERM for graceful shutdown.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	// Root context cancelled on SIGINT/SIGTERM, or when either long-running
+	// service exits, so the whole daemon tears down together.
+	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	ctx, cancel := context.WithCancel(sigCtx)
+	defer cancel()
 
-	// Build the core engine and attach a connection per configured network.
-	// Phase 2+ adds the store sink and the HTTP/WebSocket server here; for
-	// now the engine's default sink prints buffer activity to the terminal.
+	// Build the core engine, the WebSocket server bridge, and a connection
+	// per configured network. The server is registered as an engine sink so
+	// committed buffer lines fan out to browsers; the default terminal sink
+	// stays on for headless visibility.
 	engine := core.New(core.Options{Logger: log})
+
+	srv := server.New(engine, server.Options{
+		Logger:         log,
+		ServerName:     "stugan/" + version(),
+		StaticDir:      cfg.Server.StaticDir,
+		OriginPatterns: cfg.Server.OriginPatterns,
+	})
+	engine.AddSink(srv)
 
 	for _, n := range cfg.Networks {
 		if !n.Connect {
@@ -97,11 +111,29 @@ func run() error {
 	}
 
 	log.Info("daemon ready")
-	if err := engine.Run(ctx); err != nil {
-		return err
-	}
+
+	// Run the engine and HTTP server concurrently; if either returns, cancel
+	// the shared context so the other unwinds, then surface the first error.
+	var wg sync.WaitGroup
+	var engErr, srvErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		defer cancel()
+		engErr = engine.Run(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		defer cancel()
+		srvErr = srv.ListenAndServe(ctx, cfg.Server.Listen)
+	}()
+	wg.Wait()
+
 	log.Info("shutdown complete")
-	return nil
+	if srvErr != nil {
+		return srvErr
+	}
+	return engErr
 }
 
 // version reports the build version. Replaced by -ldflags at release time.

@@ -36,10 +36,17 @@ type Options struct {
 
 // Engine owns the domain state and serializes all mutation onto a single
 // loop goroutine fed by the event bus. It implements ConnHandler.
+//
+// State (the user/networks/channels tree) is mutated only by the loop, but
+// it is also read concurrently by server goroutines (snapshots), so it is
+// guarded by mu: the loop write-locks for the brief mutation, readers
+// read-lock. I/O (sink fan-out, conn sends) happens outside the lock.
 type Engine struct {
-	log  *slog.Logger
-	host PluginHost
-	sink Sink
+	log   *slog.Logger
+	host  PluginHost
+	sinks []Sink
+
+	mu   sync.RWMutex
 	user *User
 
 	conns map[string]IRCConn
@@ -59,9 +66,11 @@ func New(opts Options) *Engine {
 	if host == nil {
 		host = nopHost{}
 	}
-	sink := opts.Sink
-	if sink == nil {
-		sink = logSink{log}
+	var sinks []Sink
+	if opts.Sink != nil {
+		sinks = append(sinks, opts.Sink)
+	} else {
+		sinks = append(sinks, logSink{log})
 	}
 	user := opts.User
 	if user == nil {
@@ -70,13 +79,18 @@ func New(opts Options) *Engine {
 	return &Engine{
 		log:    log,
 		host:   host,
-		sink:   sink,
+		sinks:  sinks,
 		user:   user,
 		conns:  map[string]IRCConn{},
 		events: make(chan Event, 256),
 		done:   make(chan struct{}),
 	}
 }
+
+// AddSink registers an additional committed-line sink (e.g. the WebSocket
+// server bridge or the store). Call before Run; not safe to call once the
+// loop is running.
+func (e *Engine) AddSink(s Sink) { e.sinks = append(e.sinks, s) }
 
 // AddNetwork registers a network's initial state and its connection. Call
 // before Run.
@@ -88,6 +102,35 @@ func (e *Engine) AddNetwork(spec NetworkSpec, conn IRCConn) {
 		State: StateDisconnected,
 	})
 	e.conns[spec.ID] = conn
+}
+
+// SendInput submits a line of user input for a buffer. It is goroutine-safe
+// (callable from server handlers): the line is enqueued as an outbound
+// event, runs through plugin hooks on the loop, and is then sent to IRC and
+// echoed locally (echo-message is not enabled yet, so the local echo is how
+// the sender sees their own line).
+func (e *Engine) SendInput(network, buffer, text string) {
+	e.HandleEvent(Event{
+		Type:    EvMessageOut,
+		Network: network,
+		Time:    time.Now(),
+		Message: &Message{
+			Network: network,
+			Buffer:  buffer,
+			Time:    time.Now(),
+			Kind:    MsgPrivmsg,
+			Text:    text,
+			Self:    true,
+		},
+	})
+}
+
+// Snapshot returns a deep copy of the user state, safe to read from any
+// goroutine. Used by the server to build the init snapshot.
+func (e *Engine) Snapshot() *User {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.user.clone()
 }
 
 // HandleEvent implements ConnHandler: it enqueues an inbound event onto the
@@ -176,12 +219,46 @@ func (e *Engine) handle(ctx context.Context, ev Event) {
 	e.apply(ev)
 }
 
-// apply commits an event to state and emits any resulting buffer line.
+// outbound describes an IRC send to perform after state mutation, outside
+// the state lock.
+type outbound struct {
+	target string
+	text   string
+}
+
+// apply commits an event: it mutates state under the write lock, then
+// performs I/O (sink fan-out, conn send) with the lock released.
 func (e *Engine) apply(ev Event) {
+	e.mu.Lock()
+	emit, send := e.applyLocked(ev)
+	e.mu.Unlock()
+
+	for _, m := range emit {
+		e.broadcast(m)
+	}
+	if send != nil {
+		if conn := e.conns[ev.Network]; conn != nil {
+			if err := conn.Message(send.target, send.text); err != nil {
+				e.log.Warn("send failed", "network", ev.Network, "err", err)
+			}
+		}
+	}
+}
+
+// applyLocked mutates state for ev and returns the buffer lines to emit and
+// an optional IRC send. The caller holds e.mu for writing.
+func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound) {
 	n := e.user.Network(ev.Network)
 	if n == nil {
-		return
+		return nil, nil
 	}
+	sys := func(buffer, text string) {
+		emit = append(emit, Message{
+			Network: n.ID, Buffer: buffer, Time: time.Now(),
+			Kind: MsgSystem, Text: text,
+		})
+	}
+
 	switch ev.Type {
 	case evSetState:
 		n.State = ev.State
@@ -191,7 +268,7 @@ func (e *Engine) apply(ev Event) {
 		if ev.Nick != "" {
 			n.Nick = ev.Nick
 		}
-		e.system(n, StatusBuffer, fmt.Sprintf("connected to %s as %s", n.Name, n.Nick))
+		sys(StatusBuffer, fmt.Sprintf("connected to %s as %s", n.Name, n.Nick))
 
 	case EvDisconnect:
 		n.State = StateDisconnected
@@ -199,24 +276,32 @@ func (e *Engine) apply(ev Event) {
 		if ev.Text != "" {
 			msg += ": " + ev.Text
 		}
-		e.system(n, StatusBuffer, msg)
+		sys(StatusBuffer, msg)
 
-	case EvMessageIn, EvMessageOut:
+	case EvMessageIn:
 		if ev.Message == nil {
-			return
+			return emit, nil
 		}
 		m := *ev.Message
-		kind := KindChannel
-		if !isChannelName(m.Buffer) {
-			kind = KindQuery
+		n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
+		emit = append(emit, m)
+
+	case EvMessageOut:
+		if ev.Message == nil {
+			return emit, nil
 		}
-		n.getOrCreate(m.Buffer, kind)
-		e.sink.Print(m)
+		m := *ev.Message
+		if m.From == "" {
+			m.From = n.Nick
+		}
+		n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
+		emit = append(emit, m)
+		send = &outbound{target: m.Buffer, text: m.Text}
 
 	case EvJoin:
 		c := n.getOrCreate(ev.Channel, KindChannel)
 		c.Members[lower(ev.Nick)] = &Member{Nick: ev.Nick, Account: ev.Account}
-		e.system(n, ev.Channel, fmt.Sprintf("%s has joined %s", ev.Nick, ev.Channel))
+		sys(ev.Channel, fmt.Sprintf("%s has joined %s", ev.Nick, ev.Channel))
 
 	case EvPart:
 		if c := n.Channel(ev.Channel); c != nil {
@@ -226,7 +311,7 @@ func (e *Engine) apply(ev Event) {
 		if ev.Text != "" {
 			line += " (" + ev.Text + ")"
 		}
-		e.system(n, ev.Channel, line)
+		sys(ev.Channel, line)
 
 	case EvQuit:
 		line := ev.Nick + " has quit"
@@ -236,7 +321,7 @@ func (e *Engine) apply(ev Event) {
 		for _, c := range n.Channels {
 			if _, ok := c.Members[lower(ev.Nick)]; ok {
 				delete(c.Members, lower(ev.Nick))
-				e.system(n, c.Name, line)
+				sys(c.Name, line)
 			}
 		}
 
@@ -249,7 +334,7 @@ func (e *Engine) apply(ev Event) {
 				delete(c.Members, lower(ev.Nick))
 				mem.Nick = ev.NewNick
 				c.Members[lower(ev.NewNick)] = mem
-				e.system(n, c.Name, fmt.Sprintf("%s is now known as %s", ev.Nick, ev.NewNick))
+				sys(c.Name, fmt.Sprintf("%s is now known as %s", ev.Nick, ev.NewNick))
 			}
 		}
 
@@ -260,23 +345,25 @@ func (e *Engine) apply(ev Event) {
 		if who == "" {
 			who = "topic"
 		}
-		e.system(n, ev.Channel, fmt.Sprintf("%s set topic: %s", who, ev.Text))
+		sys(ev.Channel, fmt.Sprintf("%s set topic: %s", who, ev.Text))
+	}
+	return emit, send
+}
+
+// broadcast fans a committed line out to every registered sink.
+func (e *Engine) broadcast(m Message) {
+	for _, s := range e.sinks {
+		s.Print(m)
 	}
 }
 
-// system emits a synthetic system line into a buffer.
-func (e *Engine) system(n *Network, buffer, text string) {
-	e.sink.Print(Message{
-		Network: n.ID,
-		Buffer:  buffer,
-		Time:    time.Now(),
-		Kind:    MsgSystem,
-		Text:    text,
-	})
+// bufferKind classifies a buffer name into channel vs query.
+func bufferKind(name string) ChannelKind {
+	if isChannelName(name) {
+		return KindChannel
+	}
+	return KindQuery
 }
-
-// User exposes the engine's user state (read-only use by server/plugins).
-func (e *Engine) User() *User { return e.user }
 
 // StatusBuffer is the per-network status/server buffer name.
 const StatusBuffer = "*status"
