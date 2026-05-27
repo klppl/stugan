@@ -1,5 +1,6 @@
-# Binaries
+# Binaries (the compiled daemon; anchored so it can't match cmd/stugan/)
 /stugan
+/client/stugan
 /dist/
 *.exe
 
