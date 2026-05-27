@@ -56,6 +56,21 @@ go run ./cmd/stugan &     # daemon on :8080
 cd client && npm run dev  # Vite on :5173, open that
 ```
 
+## Docker
+
+Images are built and published to GHCR by CI (`ghcr.io/klppl/stugan`) for
+`linux/amd64` and `linux/arm64`:
+
+```sh
+docker run -d --name stugan -p 8080:8080 -v stugan-data:/data \
+  ghcr.io/klppl/stugan:latest
+```
+
+Config, history, scripts, and uploads live in the `/data` volume. Put a
+`config.toml` there with `listen = "0.0.0.0:8080"` (so it's reachable
+outside the container); set `origin_patterns` / `public_url` when serving
+from a non-localhost host. Build locally with `docker build -t stugan .`.
+
 ## Configuration
 
 Config, scripts, and data live under one root, resolved in order:
