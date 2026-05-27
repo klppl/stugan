@@ -248,6 +248,7 @@ end)
 ## 3.10 Built-in commands
 
 A `/command` that no plugin claims falls back to built-ins: `/me`, `/msg`,
-`/notice`, `/join`, `/part`, `/nick`, `/quit`, and `/raw` (alias `/quote`).
+`/notice`, `/join`, `/part`, `/topic`, `/nick`, `/quit`, `/chathistory`
+(server-side history where supported), and `/raw` (alias `/quote`).
 Anything else unrecognized prints an "unknown command" notice. A line
 starting with `//` is sent literally (an escaped leading slash).

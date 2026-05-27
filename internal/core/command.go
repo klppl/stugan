@@ -2,6 +2,8 @@ package core
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -52,6 +54,23 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 		}
 	case "quit":
 		conn.SendRaw("QUIT :" + ev.Text)
+	case "chathistory":
+		// IRCv3 server-side history (bouncers/ergo). On servers without it,
+		// our SQLite backlog already covers history.
+		if !slices.Contains(conn.Caps(), "draft/chathistory") && !slices.Contains(conn.Caps(), "chathistory") {
+			e.inject(Message{
+				Network: ev.Network, Buffer: ev.Channel, Time: time.Now(),
+				Kind: MsgSystem, Text: "this server does not support chathistory",
+			})
+			return
+		}
+		n := 50
+		if len(ev.Args) > 0 {
+			if v, err := strconv.Atoi(ev.Args[0]); err == nil && v > 0 {
+				n = v
+			}
+		}
+		conn.SendRaw(fmt.Sprintf("CHATHISTORY LATEST %s * %d", ev.Channel, n))
 	case "raw", "quote":
 		conn.SendRaw(ev.Text)
 	default:

@@ -63,10 +63,13 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		SSL:         opts.TLS,
 		Version:     "stugan",
 		RecoverFunc: girc.DefaultRecoverHandler, // a handler panic never kills us
-		// echo-message isn't in girc's default cap set; request it so our own
-		// sent lines come back tagged with the server's msgid/server-time
-		// (and stay consistent across multiple clients).
-		SupportedCaps: map[string][]string{"echo-message": nil},
+		// Request caps girc doesn't enable by default: echo-message (own
+		// sent lines come back with the server's msgid/server-time) and
+		// draft/chathistory (server-side history on bouncers/ergo).
+		SupportedCaps: map[string][]string{
+			"echo-message":      nil,
+			"draft/chathistory": nil,
+		},
 	}
 	if opts.SASLUser != "" {
 		gcfg.SASL = &girc.SASLPlain{User: opts.SASLUser, Pass: opts.SASLPass}

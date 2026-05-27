@@ -27,22 +27,26 @@ func (c *captureSink) Typing(string, string, string, string) {}
 // fakeConnector / fakeRuntimeConn back runtime AddNetworkLive in tests.
 type fakeConnector struct {
 	dialed int
+	caps   []string // stamped onto dialed connections
 	conns  []*fakeRuntimeConn
 }
 
 func (f *fakeConnector) Dial(NetworkParams, ConnHandler) (IRCConn, error) {
 	f.dialed++
-	c := &fakeRuntimeConn{}
+	c := &fakeRuntimeConn{caps: f.caps}
 	f.conns = append(f.conns, c)
 	return c, nil
 }
 
-type fakeRuntimeConn struct{ raws []string }
+type fakeRuntimeConn struct {
+	raws []string
+	caps []string
+}
 
 func (c *fakeRuntimeConn) Connect(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
 func (c *fakeRuntimeConn) SendRaw(s string) error            { c.raws = append(c.raws, s); return nil }
 func (c *fakeRuntimeConn) Message(string, string) error      { return nil }
-func (c *fakeRuntimeConn) Caps() []string                    { return nil }
+func (c *fakeRuntimeConn) Caps() []string                    { return c.caps }
 func (c *fakeRuntimeConn) CurrentNick() string               { return "" }
 func (c *fakeRuntimeConn) Close() error                      { return nil }
 
@@ -369,6 +373,38 @@ func TestChannelListAccumulation(t *testing.T) {
 	}
 	if sink.lists[0][0].Name != "#a" || sink.lists[0][0].Users != 10 || sink.lists[0][1].Name != "#b" {
 		t.Errorf("list items = %+v", sink.lists[0])
+	}
+}
+
+func TestChatHistoryCommand(t *testing.T) {
+	// With the cap: sends a CHATHISTORY request.
+	conn := &fakeConnector{caps: []string{"draft/chathistory"}}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	if err := e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"}); err != nil {
+		t.Fatal(err)
+	}
+	e.runBuiltinCommand(Event{Type: EvCommand, Network: "n", Channel: "#c", Command: "chathistory", Args: []string{"10"}})
+	if !slices.Contains(conn.conns[0].raws, "CHATHISTORY LATEST #c * 10") {
+		t.Errorf("raws = %v", conn.conns[0].raws)
+	}
+
+	// Without the cap: a system notice, no raw.
+	conn2 := &fakeConnector{}
+	sink := &captureSink{}
+	e2 := New(Options{Sink: sink, Connector: conn2})
+	_ = e2.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"})
+	e2.runBuiltinCommand(Event{Type: EvCommand, Network: "n", Channel: "#c", Command: "chathistory"})
+	if len(conn2.conns[0].raws) != 0 {
+		t.Errorf("sent a raw without the cap: %v", conn2.conns[0].raws)
+	}
+	found := false
+	for _, m := range sink.msgs {
+		if m.Kind == MsgSystem && strings.Contains(m.Text, "does not support chathistory") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an unsupported notice; msgs=%+v", sink.msgs)
 	}
 }
 
