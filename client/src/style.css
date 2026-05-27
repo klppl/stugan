@@ -540,6 +540,46 @@ body {
   width: 60%;
 }
 
+/* Channel browser */
+.browser {
+  width: 560px;
+  max-width: 92vw;
+}
+.browser-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.browser-item {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 5px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.browser-item:hover {
+  background: var(--bg-alt);
+}
+.bc-name {
+  font-weight: 600;
+  flex-shrink: 0;
+  min-width: 140px;
+}
+.bc-users {
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  width: 56px;
+  flex-shrink: 0;
+}
+.bc-topic {
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Login + splash */
 .splash {
   display: flex;

@@ -13,11 +13,15 @@ type captureSink struct {
 	msgs    []Message
 	nets    []*Network
 	removed []string
+	lists   [][]ChannelListItem
 }
 
 func (c *captureSink) Print(m Message)           { c.msgs = append(c.msgs, m) }
 func (c *captureSink) NetworkChanged(n *Network) { c.nets = append(c.nets, n) }
 func (c *captureSink) NetworkRemoved(id string)  { c.removed = append(c.removed, id) }
+func (c *captureSink) ChannelList(_ string, items []ChannelListItem) {
+	c.lists = append(c.lists, items)
+}
 
 // fakeConnector / fakeRuntimeConn back runtime AddNetworkLive in tests.
 type fakeConnector struct {
@@ -348,6 +352,22 @@ func TestUpdateNetworkChannelsNoReconnect(t *testing.T) {
 	}
 	if !slices.Contains(conn.conns[0].raws, "PART #a") {
 		t.Errorf("expected PART #a, got %v", conn.conns[0].raws)
+	}
+}
+
+func TestChannelListAccumulation(t *testing.T) {
+	e, sink := newTestEngine(t)
+	e.apply(Event{Type: EvListItem, Network: "net", Channel: "#a", Count: 10, Text: "topic a"})
+	e.apply(Event{Type: EvListItem, Network: "net", Channel: "#b", Count: 5, Text: "topic b"})
+	if len(sink.lists) != 0 {
+		t.Fatal("list emitted before end")
+	}
+	e.apply(Event{Type: EvListEnd, Network: "net"})
+	if len(sink.lists) != 1 || len(sink.lists[0]) != 2 {
+		t.Fatalf("list result = %+v", sink.lists)
+	}
+	if sink.lists[0][0].Name != "#a" || sink.lists[0][0].Users != 10 || sink.lists[0][1].Name != "#b" {
+		t.Errorf("list items = %+v", sink.lists[0])
 	}
 }
 

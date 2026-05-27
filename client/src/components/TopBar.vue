@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { connection } from "../connection";
+import ChannelBrowser from "./ChannelBrowser.vue";
 
 const emit = defineEmits<{ settings: [] }>();
 const store = connection.store;
 const q = ref("");
+const browseNet = ref<string | null>(null);
+
+function browse() {
+  if (store.active) browseNet.value = store.active.network;
+}
 
 const mentionCount = computed(() => store.mentions.length);
 
@@ -31,8 +37,10 @@ function doSearch() {
       @ Mentions
       <span v-if="mentionCount" class="badge">{{ mentionCount }}</span>
     </button>
+    <button v-if="store.active" class="ghost" title="Browse channels" @click="browse">⊞ Channels</button>
     <span class="spacer" />
     <span class="conn-pill" :class="store.status">{{ statusLabel }}</span>
     <button class="ghost" title="Settings" @click="emit('settings')">⚙</button>
+    <ChannelBrowser v-if="browseNet" :network="browseNet" @close="browseNet = null" />
   </header>
 </template>

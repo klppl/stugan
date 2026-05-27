@@ -26,6 +26,10 @@ const (
 	EvNames EventType = "names"
 	// EvAway is an away-notify update: Nick changed away state to Away.
 	EvAway EventType = "away"
+	// EvListItem / EvListEnd carry the server's LIST reply (channel browser):
+	// one item per channel, then end. EvListItem uses Channel, Count, Text.
+	EvListItem EventType = "list_item"
+	EvListEnd  EventType = "list_end"
 
 	// evSetState is internal: it carries a transient connection-state
 	// change (e.g. Connecting) onto the engine loop so all state mutation
@@ -66,6 +70,7 @@ type Event struct {
 	Args    []string // EvCommand: whitespace-split arguments
 	Members []Member // EvNames: the listed channel members
 	Away    bool     // EvAway: whether Nick is now away
+	Count   int      // EvListItem: user count
 }
 
 // eqFold is a small ASCII case-insensitive compare used for channel/nick

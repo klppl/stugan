@@ -24,6 +24,7 @@ const (
 	TNetInfo      = "net:info"      // s2c (answers c2s net:info)
 	TBacklog      = "backlog"       // s2c (answers backlog:fetch)
 	TSearchResult = "search:result" // s2c (answers search)
+	TListResult   = "list:result"   // s2c (answers list)
 	TError        = "error"         // s2c
 
 	TMsgSend      = "msg:send"      // c2s
@@ -32,6 +33,7 @@ const (
 	TNetAdd       = "net:add"       // c2s
 	TNetEdit      = "net:edit"      // c2s
 	TNetConnect   = "net:connect"   // c2s
+	TList         = "list"          // c2s
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -170,6 +172,26 @@ type NetAdd struct {
 // server→client notification that one was removed.
 type NetRemove struct {
 	Network string `json:"network"`
+}
+
+// ListReq is a client→server channel-browser request. Query is passed to
+// the server's LIST verbatim (e.g. ">100"); empty lists everything.
+type ListReq struct {
+	Network string `json:"network"`
+	Query   string `json:"query,omitempty"`
+}
+
+// ListResp answers a ListReq with the network's channels.
+type ListResp struct {
+	Network  string        `json:"network"`
+	Channels []ListChannel `json:"channels"`
+}
+
+// ListChannel is one channel in a LIST result.
+type ListChannel struct {
+	Name  string `json:"name"`
+	Users int    `json:"users"`
+	Topic string `json:"topic"`
 }
 
 // NetConnect is a client→server request to connect or disconnect a network

@@ -2,6 +2,7 @@ package irc
 
 import (
 	"maps"
+	"strconv"
 	"strings"
 	"time"
 
@@ -137,6 +138,20 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			Type: core.EvAway, Network: network, Time: when,
 			Nick: from, Away: e.Last() != "",
 		}, true
+
+	case girc.RPL_LIST:
+		// 322: <me> <channel> <#users> :<topic>
+		if len(e.Params) < 3 {
+			return core.Event{}, false
+		}
+		users, _ := strconv.Atoi(e.Params[2])
+		return core.Event{
+			Type: core.EvListItem, Network: network, Time: when,
+			Channel: e.Params[1], Count: users, Text: e.Last(),
+		}, true
+
+	case girc.RPL_LISTEND:
+		return core.Event{Type: core.EvListEnd, Network: network, Time: when}, true
 
 	case girc.RPL_NAMREPLY:
 		// 353: <me> <=|*|@> <channel> :[prefix]nick[!user@host] ...

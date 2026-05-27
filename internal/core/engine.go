@@ -26,7 +26,20 @@ type Sink interface {
 	// NetworkRemoved signals that a network was removed at runtime so
 	// observers can drop it.
 	NetworkRemoved(networkID string)
+	// ChannelList delivers the result of a channel-browser LIST request.
+	ChannelList(network string, items []ChannelListItem)
 }
+
+// ChannelListItem is one entry in a LIST (channel-browser) result.
+type ChannelListItem struct {
+	Name  string
+	Users int
+	Topic string
+}
+
+// maxListItems caps a LIST result so a huge network can't exhaust memory or
+// produce an enormous frame.
+const maxListItems = 2000
 
 // Options configures a new Engine.
 type Options struct {
@@ -63,6 +76,7 @@ type Engine struct {
 	// conns and the run-state below are guarded by mu.
 	conns       map[string]IRCConn
 	connCancels map[string]context.CancelFunc
+	listAccum   map[string][]ChannelListItem // in-progress LIST results
 	running     bool
 	runCtx      context.Context
 	runWG       sync.WaitGroup
@@ -107,6 +121,7 @@ func New(opts Options) *Engine {
 		netStore:    opts.Networks,
 		conns:       map[string]IRCConn{},
 		connCancels: map[string]context.CancelFunc{},
+		listAccum:   map[string][]ChannelListItem{},
 		events:      make(chan Event, 256),
 		done:        make(chan struct{}),
 	}
@@ -316,6 +331,24 @@ func diffChannels(old, updated []string) (added, removed []string) {
 		}
 	}
 	return added, removed
+}
+
+// ListChannels asks a network for its channel list (the browser). Results
+// arrive asynchronously via the sink's ChannelList. query is passed to the
+// server's LIST verbatim (e.g. ">100" or "*term*"); empty lists everything.
+func (e *Engine) ListChannels(network, query string) error {
+	conn := e.connFor(network)
+	if conn == nil {
+		return errors.New("unknown or disconnected network")
+	}
+	e.mu.Lock()
+	e.listAccum[network] = nil // reset any prior in-progress list
+	e.mu.Unlock()
+	cmd := "LIST"
+	if query != "" {
+		cmd += " " + query
+	}
+	return conn.SendRaw(cmd)
 }
 
 // persistAndNotify saves a network's params and pushes a fresh snapshot.
@@ -578,6 +611,28 @@ type outbound struct {
 // apply commits an event: it mutates state under the write lock, then
 // performs I/O (sink fan-out, conn send) with the lock released.
 func (e *Engine) apply(ev Event) {
+	// LIST results accumulate, then flush to observers as one batch.
+	switch ev.Type {
+	case EvListItem:
+		e.mu.Lock()
+		if len(e.listAccum[ev.Network]) < maxListItems {
+			e.listAccum[ev.Network] = append(e.listAccum[ev.Network], ChannelListItem{
+				Name: ev.Channel, Users: ev.Count, Topic: ev.Text,
+			})
+		}
+		e.mu.Unlock()
+		return
+	case EvListEnd:
+		e.mu.Lock()
+		items := e.listAccum[ev.Network]
+		delete(e.listAccum, ev.Network)
+		e.mu.Unlock()
+		for _, s := range e.sinks {
+			s.ChannelList(ev.Network, items)
+		}
+		return
+	}
+
 	e.mu.Lock()
 	emit, send, netChanged := e.applyLocked(ev)
 	e.mu.Unlock()

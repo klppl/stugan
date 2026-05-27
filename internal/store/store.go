@@ -128,6 +128,9 @@ func (s *Store) NetworkChanged(*core.Network) {}
 // DeleteNetwork.
 func (s *Store) NetworkRemoved(string) {}
 
+// ChannelList is a no-op for the store (transient browser data).
+func (s *Store) ChannelList(string, []core.ChannelListItem) {}
+
 // SaveNetwork upserts a persisted network (core.NetworkStore).
 func (s *Store) SaveNetwork(p core.NetworkParams) error {
 	data, err := json.Marshal(p)

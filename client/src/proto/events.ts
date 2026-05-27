@@ -13,6 +13,7 @@ export const T = {
   NetInfo: "net:info",
   Backlog: "backlog",
   SearchResult: "search:result",
+  ListResult: "list:result",
   Error: "error",
   MsgSend: "msg:send",
   BacklogFetch: "backlog:fetch",
@@ -20,6 +21,7 @@ export const T = {
   NetAdd: "net:add",
   NetEdit: "net:edit",
   NetConnect: "net:connect",
+  List: "list",
 } as const;
 
 export interface Envelope<D = unknown> {
@@ -131,6 +133,22 @@ export interface NetRemove {
 export interface NetConnect {
   network: string;
   connect: boolean;
+}
+
+export interface ListReq {
+  network: string;
+  query?: string;
+}
+
+export interface ListChannel {
+  name: string;
+  users: number;
+  topic: string;
+}
+
+export interface ListResp {
+  network: string;
+  channels: ListChannel[];
 }
 
 export interface NetInfoReq {

@@ -324,6 +324,16 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			c.sendError(env.ID, "bad_request", err.Error())
 		}
 
+	case proto.TList:
+		var d proto.ListReq
+		if err := decode(env, &d); err != nil || d.Network == "" {
+			c.sendError(env.ID, "bad_request", "list requires network")
+			return
+		}
+		if err := c.tenant.Engine.ListChannels(d.Network, d.Query); err != nil {
+			c.sendError(env.ID, "bad_request", err.Error())
+		}
+
 	case proto.TNetConnect:
 		var d proto.NetConnect
 		if err := decode(env, &d); err != nil || d.Network == "" {
@@ -499,6 +509,16 @@ func (u *userSink) NetworkChanged(n *core.Network) {
 
 func (u *userSink) NetworkRemoved(networkID string) {
 	if env, err := proto.Frame(proto.TNetRemove, proto.NetRemove{Network: networkID}); err == nil {
+		u.s.routeToUser(u.user, env)
+	}
+}
+
+func (u *userSink) ChannelList(network string, items []core.ChannelListItem) {
+	chans := make([]proto.ListChannel, len(items))
+	for i, it := range items {
+		chans[i] = proto.ListChannel{Name: it.Name, Users: it.Users, Topic: it.Topic}
+	}
+	if env, err := proto.Frame(proto.TListResult, proto.ListResp{Network: network, Channels: chans}); err == nil {
 		u.s.routeToUser(u.user, env)
 	}
 }

@@ -29,9 +29,10 @@ func (f *fakeConn) Close() error        { return nil }
 
 type noopSink struct{}
 
-func (noopSink) Print(core.Message)           {}
-func (noopSink) NetworkChanged(*core.Network) {}
-func (noopSink) NetworkRemoved(string)        {}
+func (noopSink) Print(core.Message)                         {}
+func (noopSink) NetworkChanged(*core.Network)               {}
+func (noopSink) NetworkRemoved(string)                      {}
+func (noopSink) ChannelList(string, []core.ChannelListItem) {}
 
 // fakeHistory returns a canned backlog page.
 type fakeHistory struct {
