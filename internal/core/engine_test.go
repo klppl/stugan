@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,21 +20,26 @@ func (c *captureSink) NetworkChanged(n *Network) { c.nets = append(c.nets, n) }
 func (c *captureSink) NetworkRemoved(id string)  { c.removed = append(c.removed, id) }
 
 // fakeConnector / fakeRuntimeConn back runtime AddNetworkLive in tests.
-type fakeConnector struct{ dialed int }
+type fakeConnector struct {
+	dialed int
+	conns  []*fakeRuntimeConn
+}
 
 func (f *fakeConnector) Dial(NetworkParams, ConnHandler) (IRCConn, error) {
 	f.dialed++
-	return &fakeRuntimeConn{}, nil
+	c := &fakeRuntimeConn{}
+	f.conns = append(f.conns, c)
+	return c, nil
 }
 
-type fakeRuntimeConn struct{}
+type fakeRuntimeConn struct{ raws []string }
 
-func (fakeRuntimeConn) Connect(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
-func (fakeRuntimeConn) SendRaw(string) error              { return nil }
-func (fakeRuntimeConn) Message(string, string) error      { return nil }
-func (fakeRuntimeConn) Caps() []string                    { return nil }
-func (fakeRuntimeConn) CurrentNick() string               { return "" }
-func (fakeRuntimeConn) Close() error                      { return nil }
+func (c *fakeRuntimeConn) Connect(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+func (c *fakeRuntimeConn) SendRaw(s string) error            { c.raws = append(c.raws, s); return nil }
+func (c *fakeRuntimeConn) Message(string, string) error      { return nil }
+func (c *fakeRuntimeConn) Caps() []string                    { return nil }
+func (c *fakeRuntimeConn) CurrentNick() string               { return "" }
+func (c *fakeRuntimeConn) Close() error                      { return nil }
 
 // recordingNetStore records SaveNetwork/DeleteNetwork calls.
 type recordingNetStore struct {
@@ -309,6 +315,39 @@ func TestUpdateNetwork(t *testing.T) {
 	last := netStore.saved[len(netStore.saved)-1]
 	if last.Addr != "new:6697" || last.SASLUser != "acct" {
 		t.Errorf("update not persisted: %+v", last)
+	}
+}
+
+func TestUpdateNetworkChannelsNoReconnect(t *testing.T) {
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn, Networks: &recordingNetStore{}})
+	if err := e.AddNetworkLive(NetworkParams{ID: "libera", Name: "libera", Addr: "a:6697", Nick: "me", Channels: []string{"#a"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Mark registered so live JOIN/PART are sent over the connection.
+	e.apply(Event{Type: EvConnect, Network: "libera", Nick: "me"})
+
+	// Change only the channel list: must NOT re-dial.
+	if err := e.UpdateNetwork(NetworkParams{ID: "libera", Name: "libera", Addr: "a:6697", Nick: "me", Channels: []string{"#a", "#b"}}); err != nil {
+		t.Fatal(err)
+	}
+	if conn.dialed != 1 {
+		t.Errorf("channel-only change re-dialed (%d); should stay connected", conn.dialed)
+	}
+	raws := conn.conns[0].raws
+	if !slices.Contains(raws, "JOIN #b") {
+		t.Errorf("expected JOIN #b, got %v", raws)
+	}
+
+	// Removing a channel parts it, still no reconnect.
+	if err := e.UpdateNetwork(NetworkParams{ID: "libera", Name: "libera", Addr: "a:6697", Nick: "me", Channels: []string{"#b"}}); err != nil {
+		t.Fatal(err)
+	}
+	if conn.dialed != 1 {
+		t.Errorf("channel removal re-dialed (%d)", conn.dialed)
+	}
+	if !slices.Contains(conn.conns[0].raws, "PART #a") {
+		t.Errorf("expected PART #a, got %v", conn.conns[0].raws)
 	}
 }
 

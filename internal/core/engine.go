@@ -221,9 +221,11 @@ func (e *Engine) RemoveNetwork(id string) error {
 	return nil
 }
 
-// UpdateNetwork changes an existing network's connection settings and
-// reconnects with them. The network keeps its id (identity) and message
-// history. Safe to call from any goroutine.
+// UpdateNetwork changes an existing network's settings. Connection-level
+// changes (server address, TLS, user/realname, SASL) require re-dialing;
+// nick and channel changes are applied live (NICK/JOIN/PART) without
+// dropping the connection. The network keeps its id and message history.
+// Safe to call from any goroutine.
 func (e *Engine) UpdateNetwork(p NetworkParams) error {
 	e.mu.Lock()
 	n := e.user.Network(p.ID)
@@ -231,40 +233,99 @@ func (e *Engine) UpdateNetwork(p NetworkParams) error {
 		e.mu.Unlock()
 		return errors.New("unknown network")
 	}
-	if e.connector == nil {
+	old := n.Params
+
+	if needsReconnect(old, p) {
+		if e.connector == nil {
+			e.mu.Unlock()
+			return errNoConnector
+		}
+		conn, err := e.connector.Dial(p, e)
+		if err != nil {
+			e.mu.Unlock()
+			return err
+		}
+		if cancel := e.connCancels[p.ID]; cancel != nil {
+			cancel()
+			delete(e.connCancels, p.ID)
+		}
+		oldConn := e.conns[p.ID]
+		n.Params, n.Name, n.Nick = p, p.Name, p.Nick
+		e.conns[p.ID] = conn
+		if e.running {
+			e.startConnLocked(p.ID, conn)
+		}
 		e.mu.Unlock()
-		return errNoConnector
+		if oldConn != nil {
+			_ = oldConn.Close()
+		}
+		e.persistAndNotify(p)
+		return nil
 	}
-	conn, err := e.connector.Dial(p, e)
-	if err != nil {
-		e.mu.Unlock()
-		return err
-	}
-	// Stop the old connection and swap in the new one.
-	if cancel := e.connCancels[p.ID]; cancel != nil {
-		cancel()
-		delete(e.connCancels, p.ID)
-	}
-	old := e.conns[p.ID]
-	n.Params = p
-	n.Name = p.Name
-	n.Nick = p.Nick
-	e.conns[p.ID] = conn
-	if e.running {
-		e.startConnLocked(p.ID, conn)
-	}
+
+	// Live update: apply nick and channel changes over the open connection.
+	conn := e.conns[p.ID]
+	registered := n.State == StateRegistered
+	nickChanged := old.Nick != p.Nick
+	added, removed := diffChannels(old.Channels, p.Channels)
+	n.Params, n.Name = p, p.Name
 	e.mu.Unlock()
 
-	if old != nil {
-		_ = old.Close()
+	if conn != nil && registered {
+		if nickChanged {
+			_ = conn.SendRaw("NICK " + p.Nick)
+		}
+		for _, ch := range removed {
+			_ = conn.SendRaw("PART " + ch)
+		}
+		for _, ch := range added {
+			_ = conn.SendRaw("JOIN " + ch)
+		}
 	}
+	e.persistAndNotify(p)
+	return nil
+}
+
+// needsReconnect reports whether the change between old and p touches a
+// connection-level setting that can only take effect on a fresh connection.
+func needsReconnect(old, p NetworkParams) bool {
+	return old.Addr != p.Addr || old.TLS != p.TLS ||
+		old.User != p.User || old.Realname != p.Realname ||
+		old.SASLUser != p.SASLUser || old.SASLPass != p.SASLPass
+}
+
+// diffChannels returns the channels added to and removed from the auto-join
+// list (case-insensitive).
+func diffChannels(old, updated []string) (added, removed []string) {
+	has := func(list []string, s string) bool {
+		for _, x := range list {
+			if eqFold(x, s) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, c := range updated {
+		if c != "" && !has(old, c) {
+			added = append(added, c)
+		}
+	}
+	for _, c := range old {
+		if c != "" && !has(updated, c) {
+			removed = append(removed, c)
+		}
+	}
+	return added, removed
+}
+
+// persistAndNotify saves a network's params and pushes a fresh snapshot.
+func (e *Engine) persistAndNotify(p NetworkParams) {
 	if e.netStore != nil {
 		if err := e.netStore.SaveNetwork(p); err != nil {
 			e.log.Warn("persist network", "network", p.ID, "err", err)
 		}
 	}
 	e.notifyNetwork(p.ID)
-	return nil
 }
 
 // NetworkConfig returns the stored connection params for a network.

@@ -94,12 +94,15 @@ function remove() {
         <label class="row"><span>Channels</span><input v-model="form.channels" placeholder="#one, #two" /></label>
         <label class="row"><span>SASL user</span><input v-model="form.saslUser" placeholder="(optional)" /></label>
         <label class="row"><span>SASL pass</span><input v-model="form.saslPass" type="password" placeholder="(unchanged)" /></label>
-        <p class="hint">Saving reconnects the network with the new settings.</p>
+        <p class="hint">
+          Nick and channel changes apply live. Server, TLS, user/realname, or
+          SASL changes reconnect the network.
+        </p>
         <div class="row">
           <button type="button" class="danger" @click="remove">Remove network</button>
           <span class="spacer" />
           <button type="button" @click="emit('close')">Cancel</button>
-          <button type="submit">Save &amp; reconnect</button>
+          <button type="submit">Save</button>
         </div>
       </template>
     </form>
