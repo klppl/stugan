@@ -8,7 +8,23 @@ think [TheLounge](https://thelounge.chat/), rewritten in Go, with the
 deep IRCv3 discipline of [Halloy](https://github.com/squidowl/halloy) and
 a **weechat/irssi-style Lua plugin system** as the headline feature.
 
-> Status: **Phase 0** — foundations and design proposals. Not yet usable.
+## Features
+
+- Persistent IRC connections that survive browser disconnects; SQLite history
+  with backlog replay on reconnect.
+- Manage networks entirely from the web UI — add, edit, connect/disconnect, and
+  remove servers (no config edits required).
+- Full-text message search (SQLite FTS5), a mentions view, per-channel mute, and
+  unread/highlight counters with configurable highlight rules.
+- Link previews + inline image/video (via a local image proxy), drag-drop/paste
+  uploads, autocomplete (nicks, commands, channels, emoji), command aliases.
+- IRCv3: SASL, server-time, echo-message, away-notify, multi-prefix,
+  extended-join, message-tags, typing indicators, a channel browser (LIST), and
+  best-effort chathistory.
+- PWA: installable, mobile-responsive, with Web Push + desktop notifications.
+- Installable custom themes, plus built-in dark/midnight/light.
+- A weechat/irssi-style **Lua plugin system** (the headline feature).
+- Multi-user with bcrypt auth and full per-user isolation.
 
 ## Architecture
 
@@ -19,9 +35,10 @@ internal/
   logging/         structured logging (slog)
   irc/             IRCConn interface + girc impl (only place girc is used)
   core/            GUI/transport-independent brain: state machine + event bus
-  store/           SQLite history + FTS5 search
+  store/           SQLite history + FTS5 search + network persistence
   plugin/          PluginHost interface + Lua host (only place gopher-lua is used)
-  server/          HTTP + WebSocket, typed event router
+  auth/            bcrypt credentials + sessions (multi-user)
+  server/          HTTP + WebSocket, typed event router, multi-tenant hub
   proto/           shared wire-protocol structs (TS mirror in client/)
 client/            Vue 3 + TS + Vite frontend
 docs/              design proposals, protocol + plugin API reference
