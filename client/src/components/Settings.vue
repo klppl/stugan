@@ -2,16 +2,29 @@
 import { ref } from "vue";
 import { settings, THEMES } from "../settings";
 import { connection } from "../connection";
-import { enablePush, pushSupported } from "../pwa";
+import { enablePush } from "../pwa";
 import { authState, logout } from "../auth";
 
 const emit = defineEmits<{ close: [] }>();
 const pushMsg = ref("");
 
+const notifSupported = typeof Notification !== "undefined";
+
 async function enableNotifications() {
   pushMsg.value = "requesting…";
-  const ok = await enablePush();
-  pushMsg.value = ok ? "Notifications enabled ✓" : "Not enabled (permission denied or unsupported)";
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") {
+    pushMsg.value = "Not enabled (permission denied)";
+    return;
+  }
+  // Desktop notifications now work while the tab is open. Also register Web
+  // Push (notifications while away) when the server supports it.
+  if (connection.hasCap("push")) {
+    const ok = await enablePush();
+    pushMsg.value = ok ? "Notifications + push enabled ✓" : "Desktop notifications enabled (push failed)";
+  } else {
+    pushMsg.value = "Desktop notifications enabled ✓";
+  }
 }
 </script>
 
@@ -27,7 +40,7 @@ async function enableNotifications() {
         </select>
       </label>
 
-      <div v-if="connection.hasCap('push') && pushSupported()" class="row">
+      <div v-if="notifSupported" class="row">
         <span>Notifications</span>
         <button @click="enableNotifications">Enable</button>
       </div>

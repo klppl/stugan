@@ -338,6 +338,52 @@ func (e *Engine) NetworkConfig(id string) (NetworkParams, bool) {
 	return NetworkParams{}, false
 }
 
+// SetConnected connects or disconnects a network without forgetting it.
+// Disconnecting cancels its reconnect goroutine (so it stays down until
+// asked), and connecting dials a fresh connection. Safe from any goroutine.
+func (e *Engine) SetConnected(id string, connect bool) error {
+	e.mu.Lock()
+	n := e.user.Network(id)
+	if n == nil {
+		e.mu.Unlock()
+		return errors.New("unknown network")
+	}
+	if connect {
+		if e.connCancels[id] != nil { // already connected/connecting
+			e.mu.Unlock()
+			return nil
+		}
+		if e.connector == nil {
+			e.mu.Unlock()
+			return errNoConnector
+		}
+		conn, err := e.connector.Dial(n.Params, e)
+		if err != nil {
+			e.mu.Unlock()
+			return err
+		}
+		e.conns[id] = conn
+		if e.running {
+			e.startConnLocked(id, conn)
+		}
+		e.mu.Unlock()
+		return nil
+	}
+	// Disconnect: stop the reconnect goroutine and close the socket.
+	if cancel := e.connCancels[id]; cancel != nil {
+		cancel()
+		delete(e.connCancels, id)
+	}
+	conn := e.conns[id]
+	n.State = StateDisconnected
+	e.mu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
+	}
+	e.notifyNetwork(id)
+	return nil
+}
+
 // connFor returns the connection for a network id, race-safely.
 func (e *Engine) connFor(id string) IRCConn {
 	e.mu.RLock()

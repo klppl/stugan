@@ -324,6 +324,16 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			c.sendError(env.ID, "bad_request", err.Error())
 		}
 
+	case proto.TNetConnect:
+		var d proto.NetConnect
+		if err := decode(env, &d); err != nil || d.Network == "" {
+			c.sendError(env.ID, "bad_request", "net:connect requires network")
+			return
+		}
+		if err := c.tenant.Engine.SetConnected(d.Network, d.Connect); err != nil {
+			c.sendError(env.ID, "bad_request", err.Error())
+		}
+
 	case proto.TNetInfo:
 		var d proto.NetInfoReq
 		if err := decode(env, &d); err != nil || d.Network == "" {

@@ -31,6 +31,7 @@ const (
 	TSearch       = "search"        // c2s
 	TNetAdd       = "net:add"       // c2s
 	TNetEdit      = "net:edit"      // c2s
+	TNetConnect   = "net:connect"   // c2s
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -169,6 +170,13 @@ type NetAdd struct {
 // server→client notification that one was removed.
 type NetRemove struct {
 	Network string `json:"network"`
+}
+
+// NetConnect is a client→server request to connect or disconnect a network
+// without removing it.
+type NetConnect struct {
+	Network string `json:"network"`
+	Connect bool   `json:"connect"`
 }
 
 // NetInfoReq is a client→server request for a network's current config (to

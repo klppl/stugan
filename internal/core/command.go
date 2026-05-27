@@ -38,6 +38,14 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 			ch = ev.Args[0]
 		}
 		conn.SendRaw("PART " + ch)
+	case "topic":
+		// /topic <text> sets the current channel's topic; /topic alone
+		// queries it.
+		if ev.Text == "" {
+			conn.SendRaw("TOPIC " + ev.Channel)
+		} else {
+			conn.SendRaw("TOPIC " + ev.Channel + " :" + ev.Text)
+		}
 	case "nick":
 		if len(ev.Args) > 0 {
 			conn.SendRaw("NICK " + ev.Args[0])

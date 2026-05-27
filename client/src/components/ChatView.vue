@@ -62,6 +62,22 @@ function openQuery(nick: string) {
   if (store.active) connection.openQuery(store.active.network, nick);
 }
 
+// Inline topic editing for channel buffers.
+const editingTopic = ref(false);
+const topicDraft = ref("");
+const topicInput = ref<HTMLInputElement | null>(null);
+
+function startEditTopic() {
+  if (buffer.value?.kind !== "channel") return;
+  topicDraft.value = buffer.value.topic;
+  editingTopic.value = true;
+  nextTick(() => topicInput.value?.focus());
+}
+function saveTopic() {
+  if (store.active) connection.send(store.active.network, store.active.buffer, "/topic " + topicDraft.value.trim());
+  editingTopic.value = false;
+}
+
 async function onDrop(e: DragEvent) {
   dragging.value = false;
   const files = e.dataTransfer?.files;
@@ -98,7 +114,22 @@ async function onDrop(e: DragEvent) {
     <template v-else>
       <header v-if="buffer" class="chat-header">
         <span class="buffer-name">{{ buffer.name }}</span>
-        <span v-if="buffer.topic" class="topic">{{ buffer.topic }}</span>
+        <input
+          v-if="editingTopic"
+          ref="topicInput"
+          v-model="topicDraft"
+          class="topic-edit"
+          @keydown.enter="saveTopic"
+          @keydown.esc="editingTopic = false"
+          @blur="editingTopic = false"
+        />
+        <span
+          v-else
+          class="topic"
+          :class="{ editable: buffer.kind === 'channel' }"
+          :title="buffer.kind === 'channel' ? 'click to edit topic' : ''"
+          @click="startEditTopic"
+        >{{ buffer.topic || (buffer.kind === "channel" ? "(set topic…)" : "") }}</span>
       </header>
       <div v-else class="chat-header">no buffer selected</div>
 

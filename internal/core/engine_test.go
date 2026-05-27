@@ -351,6 +351,31 @@ func TestUpdateNetworkChannelsNoReconnect(t *testing.T) {
 	}
 }
 
+func TestSetConnected(t *testing.T) {
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	if err := e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"}); err != nil {
+		t.Fatal(err)
+	}
+	// Disconnect keeps the network but marks it down.
+	if err := e.SetConnected("n", false); err != nil {
+		t.Fatal(err)
+	}
+	if e.user.Network("n") == nil {
+		t.Fatal("network was removed by disconnect")
+	}
+	if got, _ := e.NetworkConfig("n"); got.ID != "n" {
+		t.Fatal("config lost after disconnect")
+	}
+	// Reconnect dials a fresh connection.
+	if err := e.SetConnected("n", true); err != nil {
+		t.Fatal(err)
+	}
+	if conn.dialed != 2 {
+		t.Errorf("dialed %d, want 2 (add + reconnect)", conn.dialed)
+	}
+}
+
 func TestAddNetworkLiveNoConnector(t *testing.T) {
 	e := New(Options{Sink: &captureSink{}}) // no connector
 	if err := e.AddNetworkLive(NetworkParams{ID: "n", Addr: "x:1"}); err == nil {

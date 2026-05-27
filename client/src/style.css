@@ -212,6 +212,27 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.topic.editable {
+  cursor: text;
+}
+.topic.editable:hover {
+  color: var(--fg);
+}
+.topic-edit {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+}
+.net-state {
+  color: var(--fg-dim);
+  font-weight: 400;
+  font-size: 14px;
+}
 .chat-body {
   flex: 1;
   display: flex;

@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { connection } from "../connection";
 import type { NetConfig } from "../proto/events";
 
 const props = defineProps<{ network: string }>();
 const emit = defineEmits<{ close: [] }>();
+
+const netState = computed(
+  () => connection.store.networks.find((n) => n.id === props.network)?.state ?? "disconnected",
+);
+const connected = computed(() => netState.value !== "disconnected");
+
+function toggleConnected() {
+  connection.setConnected(props.network, !connected.value);
+}
 
 const loaded = ref(false);
 const form = reactive({
@@ -82,7 +91,7 @@ function remove() {
 <template>
   <div class="settings-overlay" @click.self="emit('close')">
     <form class="settings addnet" @submit.prevent="save">
-      <h2>{{ network }} settings</h2>
+      <h2>{{ network }} settings <span class="net-state">· {{ netState }}</span></h2>
       <p v-if="!loaded" class="hint">Loading…</p>
       <template v-else>
         <label class="row"><span>Host</span><input v-model="form.host" /></label>
@@ -100,6 +109,7 @@ function remove() {
         </p>
         <div class="row">
           <button type="button" class="danger" @click="remove">Remove network</button>
+          <button type="button" @click="toggleConnected">{{ connected ? "Disconnect" : "Connect" }}</button>
           <span class="spacer" />
           <button type="button" @click="emit('close')">Cancel</button>
           <button type="submit">Save</button>

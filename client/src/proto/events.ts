@@ -19,6 +19,7 @@ export const T = {
   Search: "search",
   NetAdd: "net:add",
   NetEdit: "net:edit",
+  NetConnect: "net:connect",
 } as const;
 
 export interface Envelope<D = unknown> {
@@ -125,6 +126,11 @@ export interface NetAdd {
 
 export interface NetRemove {
   network: string;
+}
+
+export interface NetConnect {
+  network: string;
+  connect: boolean;
 }
 
 export interface NetInfoReq {
