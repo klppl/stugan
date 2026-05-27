@@ -117,10 +117,18 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
+function onInput() {
+  refresh();
+  if (!props.buffer) return;
+  if (text.value.trim()) connection.sendTyping(props.network, props.buffer.name, "active");
+  else connection.sendTyping(props.network, props.buffer.name, "done");
+}
+
 function submit() {
   const t = text.value.trim();
   if (!t || !props.buffer) return;
   connection.send(props.network, props.buffer.name, replaceEmoji(t));
+  connection.sendTyping(props.network, props.buffer.name, "done");
   text.value = "";
   ac.open = false;
 }
@@ -160,7 +168,7 @@ defineExpose({ inputEl, appendText });
         :disabled="!buffer"
         placeholder="Type a message… (Tab to complete, :emoji:, paste to upload)"
         autocomplete="off"
-        @input="refresh"
+        @input="onInput"
         @keydown="onKeydown"
         @paste="onPaste"
       />

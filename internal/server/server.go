@@ -324,6 +324,13 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			c.sendError(env.ID, "bad_request", err.Error())
 		}
 
+	case proto.TTyping:
+		var d proto.Typing
+		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" {
+			return // typing is best-effort; ignore malformed
+		}
+		c.tenant.Engine.SendTyping(d.Network, d.Buffer, d.State)
+
 	case proto.TList:
 		var d proto.ListReq
 		if err := decode(env, &d); err != nil || d.Network == "" {
@@ -509,6 +516,14 @@ func (u *userSink) NetworkChanged(n *core.Network) {
 
 func (u *userSink) NetworkRemoved(networkID string) {
 	if env, err := proto.Frame(proto.TNetRemove, proto.NetRemove{Network: networkID}); err == nil {
+		u.s.routeToUser(u.user, env)
+	}
+}
+
+func (u *userSink) Typing(network, buffer, nick, state string) {
+	if env, err := proto.Frame(proto.TTyping, proto.Typing{
+		Network: network, Buffer: buffer, Nick: nick, State: state,
+	}); err == nil {
 		u.s.routeToUser(u.user, env)
 	}
 }

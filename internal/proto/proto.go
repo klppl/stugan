@@ -25,6 +25,7 @@ const (
 	TBacklog      = "backlog"       // s2c (answers backlog:fetch)
 	TSearchResult = "search:result" // s2c (answers search)
 	TListResult   = "list:result"   // s2c (answers list)
+	TTyping       = "typing"        // s2c (and c2s)
 	TError        = "error"         // s2c
 
 	TMsgSend      = "msg:send"      // c2s
@@ -192,6 +193,16 @@ type ListChannel struct {
 	Name  string `json:"name"`
 	Users int    `json:"users"`
 	Topic string `json:"topic"`
+}
+
+// Typing is a typing notification. c2s carries Network/Buffer/State (the
+// user is typing); s2c additionally carries Nick (someone else is typing).
+// State is "active", "paused", or "done".
+type Typing struct {
+	Network string `json:"network"`
+	Buffer  string `json:"buffer"`
+	Nick    string `json:"nick,omitempty"`
+	State   string `json:"state"`
 }
 
 // NetConnect is a client→server request to connect or disconnect a network

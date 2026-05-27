@@ -393,6 +393,13 @@ body {
 }
 
 /* Input + autocomplete */
+.typing-indicator {
+  padding: 2px 16px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--fg-dim);
+  background: var(--bg-alt);
+}
 .chat-input {
   display: flex;
   padding: 10px;

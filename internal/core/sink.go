@@ -39,6 +39,9 @@ func (s logSink) NetworkRemoved(string) {}
 // ChannelList is a no-op for the terminal sink.
 func (s logSink) ChannelList(string, []ChannelListItem) {}
 
+// Typing is a no-op for the terminal sink.
+func (s logSink) Typing(string, string, string, string) {}
+
 // toLowerASCII lowercases a string for case-insensitive map keys. IRC
 // casemapping is server-defined; rfc1459 mapping arrives with ISUPPORT.
 func toLowerASCII(s string) string { return strings.ToLower(s) }

@@ -1,10 +1,20 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { connection } from "../connection";
+import { connection, bufKey } from "../connection";
 import MessageItem from "./MessageItem.vue";
 import ChatInput from "./ChatInput.vue";
 
 const store = connection.store;
+
+// "X is typing…" for the active buffer.
+const typingText = computed(() => {
+  if (!store.active) return "";
+  const who = store.typing[bufKey(store.active.network, store.active.buffer)] ?? [];
+  if (!who.length) return "";
+  if (who.length === 1) return `${who[0]} is typing…`;
+  if (who.length === 2) return `${who[0]} and ${who[1]} are typing…`;
+  return "several people are typing…";
+});
 const listEl = ref<HTMLElement | null>(null);
 const inputRef = ref<InstanceType<typeof ChatInput> | null>(null);
 const dragging = ref(false);
@@ -160,6 +170,7 @@ async function onDrop(e: DragEvent) {
         <div v-if="dragging" class="dropzone">Drop files to upload</div>
       </div>
 
+      <div v-if="typingText" class="typing-indicator">{{ typingText }}</div>
       <ChatInput
         ref="inputRef"
         :network="store.active?.network ?? ''"

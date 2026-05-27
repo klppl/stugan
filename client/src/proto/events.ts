@@ -14,6 +14,7 @@ export const T = {
   Backlog: "backlog",
   SearchResult: "search:result",
   ListResult: "list:result",
+  Typing: "typing",
   Error: "error",
   MsgSend: "msg:send",
   BacklogFetch: "backlog:fetch",
@@ -128,6 +129,13 @@ export interface NetAdd {
 
 export interface NetRemove {
   network: string;
+}
+
+export interface Typing {
+  network: string;
+  buffer: string;
+  nick?: string;
+  state: string; // active | paused | done
 }
 
 export interface NetConnect {

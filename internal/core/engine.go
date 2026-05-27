@@ -29,6 +29,9 @@ type Sink interface {
 	NetworkRemoved(networkID string)
 	// ChannelList delivers the result of a channel-browser LIST request.
 	ChannelList(network string, items []ChannelListItem)
+	// Typing delivers an inbound typing notification (state is
+	// active/paused/done).
+	Typing(network, buffer, nick, state string)
 }
 
 // ChannelListItem is one entry in a LIST (channel-browser) result.
@@ -628,6 +631,11 @@ func (e *Engine) apply(ev Event) {
 	case EvMessageOut:
 		e.applyMessageOut(ev)
 		return
+	case EvTyping:
+		for _, s := range e.sinks {
+			s.Typing(ev.Network, ev.Channel, ev.Nick, ev.Text)
+		}
+		return
 	}
 
 	e.mu.Lock()
@@ -676,6 +684,19 @@ func (e *Engine) applyMessageOut(ev Event) {
 	if created {
 		e.notifyNetwork(ev.Network)
 	}
+}
+
+// SendTyping sends a typing notification (state active/paused/done) to a
+// buffer as a +typing TAGMSG, if the network negotiated message-tags.
+func (e *Engine) SendTyping(network, buffer, state string) {
+	conn := e.connFor(network)
+	if conn == nil || !slices.Contains(conn.Caps(), "message-tags") {
+		return
+	}
+	if state != "active" && state != "paused" && state != "done" {
+		return
+	}
+	_ = conn.SendRaw("@+typing=" + state + " TAGMSG " + buffer)
 }
 
 // echoMessage reports whether the network's connection negotiated the

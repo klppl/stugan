@@ -30,6 +30,9 @@ const (
 	// one item per channel, then end. EvListItem uses Channel, Count, Text.
 	EvListItem EventType = "list_item"
 	EvListEnd  EventType = "list_end"
+	// EvTyping is an inbound +typing TAGMSG: Nick is typing in Channel
+	// (buffer), with Text the state (active/paused/done).
+	EvTyping EventType = "typing"
 
 	// evSetState is internal: it carries a transient connection-state
 	// change (e.g. Connecting) onto the engine loop so all state mutation

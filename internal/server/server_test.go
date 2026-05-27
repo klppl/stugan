@@ -33,6 +33,7 @@ func (noopSink) Print(core.Message)                         {}
 func (noopSink) NetworkChanged(*core.Network)               {}
 func (noopSink) NetworkRemoved(string)                      {}
 func (noopSink) ChannelList(string, []core.ChannelListItem) {}
+func (noopSink) Typing(string, string, string, string)      {}
 
 // fakeHistory returns a canned backlog page.
 type fakeHistory struct {

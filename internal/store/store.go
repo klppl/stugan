@@ -131,6 +131,9 @@ func (s *Store) NetworkRemoved(string) {}
 // ChannelList is a no-op for the store (transient browser data).
 func (s *Store) ChannelList(string, []core.ChannelListItem) {}
 
+// Typing is a no-op for the store (ephemeral).
+func (s *Store) Typing(string, string, string, string) {}
+
 // SaveNetwork upserts a persisted network (core.NetworkStore).
 func (s *Store) SaveNetwork(p core.NetworkParams) error {
 	data, err := json.Marshal(p)

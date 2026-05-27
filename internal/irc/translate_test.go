@@ -176,6 +176,23 @@ func TestToEventAway(t *testing.T) {
 	}
 }
 
+func TestToEventTyping(t *testing.T) {
+	// Inbound +typing TAGMSG from someone else → EvTyping.
+	e := girc.ParseEvent("@+typing=active :alice!u@h TAGMSG #go")
+	ev, ok := toEvent("n", e, "me")
+	if !ok || ev.Type != core.EvTyping || ev.Nick != "alice" || ev.Channel != "#go" || ev.Text != "active" {
+		t.Fatalf("typing event = %+v ok=%v", ev, ok)
+	}
+	// Our own typing echo is ignored.
+	if _, ok := toEvent("n", girc.ParseEvent("@+typing=active :me!u@h TAGMSG #go"), "me"); ok {
+		t.Error("own typing echo should be ignored")
+	}
+	// A TAGMSG without +typing is ignored.
+	if _, ok := toEvent("n", girc.ParseEvent("@+draft/react=x :a!u@h TAGMSG #go"), "me"); ok {
+		t.Error("non-typing TAGMSG should be ignored")
+	}
+}
+
 func TestToEventNames(t *testing.T) {
 	// 353 with multi-prefix and userhost-in-names entries.
 	e := girc.ParseEvent(":serv 353 me = #go :alice @bob +carol @+dave!u@h ~owner")

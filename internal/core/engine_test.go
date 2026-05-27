@@ -22,6 +22,7 @@ func (c *captureSink) NetworkRemoved(id string)  { c.removed = append(c.removed,
 func (c *captureSink) ChannelList(_ string, items []ChannelListItem) {
 	c.lists = append(c.lists, items)
 }
+func (c *captureSink) Typing(string, string, string, string) {}
 
 // fakeConnector / fakeRuntimeConn back runtime AddNetworkLive in tests.
 type fakeConnector struct {

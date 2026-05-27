@@ -151,6 +151,23 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 	case girc.RPL_LISTEND:
 		return core.Event{Type: core.EvListEnd, Network: network, Time: when}, true
 
+	case girc.CAP_TAGMSG:
+		// Typing indicators ride on TAGMSG via the +typing client tag. Ignore
+		// our own echo and tagless TAGMSGs.
+		state, ok := e.Tags.Get("+typing")
+		if !ok || from == "" || from == self || len(e.Params) == 0 {
+			return core.Event{}, false
+		}
+		target := e.Params[0]
+		buffer := target
+		if !isChannel(target) {
+			buffer = from // a direct typing notice → the sender's query
+		}
+		return core.Event{
+			Type: core.EvTyping, Network: network, Time: when,
+			Nick: from, Channel: buffer, Text: state,
+		}, true
+
 	case girc.RPL_NAMREPLY:
 		// 353: <me> <=|*|@> <channel> :[prefix]nick[!user@host] ...
 		// (multi-prefix and userhost-in-names may both be active).
