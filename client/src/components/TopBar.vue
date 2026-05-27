@@ -8,6 +8,11 @@ const q = ref("");
 
 const mentionCount = computed(() => store.mentions.length);
 
+// Map the raw WebSocket state to a friendly label.
+const statusLabel = computed(
+  () => ({ connecting: "connecting", open: "connected", closed: "disconnected" })[store.status],
+);
+
 function doSearch() {
   if (q.value.trim()) connection.search(q.value);
 }
@@ -27,7 +32,7 @@ function doSearch() {
       <span v-if="mentionCount" class="badge">{{ mentionCount }}</span>
     </button>
     <span class="spacer" />
-    <span class="conn-pill" :class="store.status">{{ store.status }}</span>
+    <span class="conn-pill" :class="store.status">{{ statusLabel }}</span>
     <button class="ghost" title="Settings" @click="emit('settings')">⚙</button>
   </header>
 </template>
