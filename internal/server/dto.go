@@ -27,6 +27,15 @@ func toMessageDTO(m core.Message) proto.MessageDTO {
 	}
 }
 
+// toMessageDTOs projects a slice of messages.
+func toMessageDTOs(ms []core.Message) []proto.MessageDTO {
+	out := make([]proto.MessageDTO, len(ms))
+	for i, m := range ms {
+		out[i] = toMessageDTO(m)
+	}
+	return out
+}
+
 // toInitState projects a user-state snapshot onto the init payload.
 func toInitState(u *core.User) proto.InitState {
 	nets := make([]proto.NetworkDTO, 0, len(u.Networks))

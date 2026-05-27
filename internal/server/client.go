@@ -19,9 +19,11 @@ const sendBuffer = 128
 // client is one connected browser socket. All writes funnel through
 // writePump, since a websocket.Conn is not safe for concurrent writes.
 type client struct {
-	ws   *websocket.Conn
-	send chan proto.Envelope
-	log  *slog.Logger
+	ws     *websocket.Conn
+	send   chan proto.Envelope
+	log    *slog.Logger
+	user   string
+	tenant *Tenant
 }
 
 func newClient(ws *websocket.Conn, log *slog.Logger) *client {

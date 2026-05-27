@@ -1,10 +1,10 @@
 import { createApp } from "vue";
 import App from "./App.vue";
-import { connection } from "./connection";
+import { refresh } from "./auth";
 import { registerServiceWorker } from "./pwa";
 import "./settings"; // applies the saved theme on load
 import "./style.css";
 
-connection.connect();
+refresh(); // resolves /api/me, then connects the socket if allowed
 registerServiceWorker();
 createApp(App).mount("#app");

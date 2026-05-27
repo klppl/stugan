@@ -63,6 +63,30 @@ Config, scripts, and data live under one root, resolved in order:
 
 See [docs/config.md](docs/config.md) (to come) for the full reference.
 
+## Multi-user
+
+By default stugan runs single-user and unauthenticated (localhost). To require
+login and isolate accounts, add `[[users]]` blocks — each user gets their own
+networks, history, and plugins, fully separated. Generate a password hash:
+
+```sh
+stugan -hashpw            # prompts for a password, prints a bcrypt hash
+```
+
+```toml
+[[users]]
+name = "alice"
+password_hash = "$2a$10$…"   # paste the hash from -hashpw
+  [[users.networks]]
+  name = "libera"
+  addr = "irc.libera.chat:6697"
+  tls  = true
+  nick = "alice"
+```
+
+Sessions are bcrypt-verified with HttpOnly, SameSite=Strict cookies; the
+plugin sandbox defaults on in multi-user mode.
+
 ## Plugins
 
 Drop a Lua script in `$STUGAN_HOME/scripts/*.lua` and it loads live

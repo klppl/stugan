@@ -16,7 +16,7 @@ func TestPushManagerPersistence(t *testing.T) {
 	if p.pubKey == "" || p.privKey == "" {
 		t.Fatal("VAPID keys not generated")
 	}
-	p.add(webpush.Subscription{Endpoint: "https://push.example/abc"})
+	p.add("alice", webpush.Subscription{Endpoint: "https://push.example/abc"})
 
 	// A second manager over the same dir reuses the keys and subscriptions.
 	p2, err := newPushManager(dir)
@@ -26,14 +26,14 @@ func TestPushManagerPersistence(t *testing.T) {
 	if p2.pubKey != p.pubKey || p2.privKey != p.privKey {
 		t.Error("VAPID keys not persisted across reload")
 	}
-	if _, ok := p2.subs["https://push.example/abc"]; !ok {
+	if _, ok := p2.subs["alice"]["https://push.example/abc"]; !ok {
 		t.Error("subscription not persisted across reload")
 	}
 
-	p2.remove("https://push.example/abc")
+	p2.remove("alice", "https://push.example/abc")
 	p3, _ := newPushManager(dir)
-	if len(p3.subs) != 0 {
-		t.Errorf("subscription not removed; have %d", len(p3.subs))
+	if len(p3.subs["alice"]) != 0 {
+		t.Errorf("subscription not removed; have %d", len(p3.subs["alice"]))
 	}
 }
 

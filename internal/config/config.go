@@ -39,6 +39,39 @@ type Config struct {
 	// Aliases maps a command name to a template expanded with $1..$9, $*
 	// (all args) and $N- (args from N onward). E.g. j = "/join #$1".
 	Aliases map[string]string `toml:"aliases"`
+
+	// Users enables multi-user mode. When non-empty, authentication is
+	// required and each user owns their own networks. When empty, the
+	// daemon runs single-user with the top-level Networks and no auth.
+	Users []UserConfig `toml:"users"`
+
+	// Auth tunes session behavior (only relevant when Users is set).
+	Auth AuthConfig `toml:"auth"`
+}
+
+// UserConfig is one account in multi-user mode.
+type UserConfig struct {
+	Name         string          `toml:"name"`
+	PasswordHash string          `toml:"password_hash"` // bcrypt; see `stugan -hashpw`
+	Networks     []NetworkConfig `toml:"networks"`
+}
+
+// AuthConfig tunes authentication.
+type AuthConfig struct {
+	// SessionHours is the session lifetime; 0 → 30 days.
+	SessionHours int `toml:"session_hours"`
+}
+
+// AuthEnabled reports whether multi-user authentication is in effect.
+func (c *Config) AuthEnabled() bool { return len(c.Users) > 0 }
+
+// EffectiveUsers returns the users to run: the configured accounts, or a
+// single implicit "default" user owning the top-level networks.
+func (c *Config) EffectiveUsers() []UserConfig {
+	if len(c.Users) > 0 {
+		return c.Users
+	}
+	return []UserConfig{{Name: "default", Networks: c.Networks}}
 }
 
 // HighlightConfig holds case-insensitive regex highlight rules. A nick
@@ -169,17 +202,41 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("config: invalid log.format %q", c.Log.Format)
 	}
-	seen := make(map[string]bool, len(c.Networks))
-	for i, n := range c.Networks {
+	if err := validateNetworks(c.Networks, "networks"); err != nil {
+		return err
+	}
+	seenUser := make(map[string]bool, len(c.Users))
+	for i, u := range c.Users {
+		if u.Name == "" {
+			return fmt.Errorf("config: users[%d] missing name", i)
+		}
+		if seenUser[u.Name] {
+			return fmt.Errorf("config: duplicate user name %q", u.Name)
+		}
+		seenUser[u.Name] = true
+		if u.PasswordHash == "" {
+			return fmt.Errorf("config: user %q missing password_hash (generate with `stugan -hashpw`)", u.Name)
+		}
+		if err := validateNetworks(u.Networks, "user "+u.Name+" networks"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNetworks checks a network list for unique names and addresses.
+func validateNetworks(nets []NetworkConfig, ctx string) error {
+	seen := make(map[string]bool, len(nets))
+	for i, n := range nets {
 		if n.Name == "" {
-			return fmt.Errorf("config: networks[%d] missing name", i)
+			return fmt.Errorf("config: %s[%d] missing name", ctx, i)
 		}
 		if seen[n.Name] {
-			return fmt.Errorf("config: duplicate network name %q", n.Name)
+			return fmt.Errorf("config: %s: duplicate network name %q", ctx, n.Name)
 		}
 		seen[n.Name] = true
 		if n.Addr == "" {
-			return fmt.Errorf("config: network %q missing addr", n.Name)
+			return fmt.Errorf("config: %s: network %q missing addr", ctx, n.Name)
 		}
 	}
 	return nil

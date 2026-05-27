@@ -61,8 +61,8 @@ func TestWebSocketLoop(t *testing.T) {
 	fc := &fakeConn{sent: make(chan [2]string, 1)}
 
 	eng := core.New(core.Options{Sink: noopSink{}})
-	srv := New(eng, Options{})
-	eng.AddSink(srv)
+	srv := New(SingleUser(&Tenant{Engine: eng}), Options{})
+	eng.AddSink(srv.Sink(defaultUser))
 	eng.AddNetwork(core.NetworkSpec{ID: "libera", Name: "libera", Nick: "me"}, fc)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -138,8 +138,8 @@ func TestBacklogReplay(t *testing.T) {
 		more: true,
 	}
 	eng := core.New(core.Options{Sink: noopSink{}})
-	srv := New(eng, Options{History: hist})
-	eng.AddSink(srv)
+	srv := New(SingleUser(&Tenant{Engine: eng, History: hist}), Options{})
+	eng.AddSink(srv.Sink(defaultUser))
 	eng.AddNetwork(core.NetworkSpec{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -183,8 +183,8 @@ func TestBacklogReplay(t *testing.T) {
 
 func TestBacklogWithoutHistory(t *testing.T) {
 	eng := core.New(core.Options{Sink: noopSink{}})
-	srv := New(eng, Options{}) // no History
-	eng.AddSink(srv)
+	srv := New(SingleUser(&Tenant{Engine: eng}), Options{}) // no History
+	eng.AddSink(srv.Sink(defaultUser))
 	eng.AddNetwork(core.NetworkSpec{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -208,8 +208,8 @@ func TestBacklogWithoutHistory(t *testing.T) {
 
 func TestRejectsBadMsgSend(t *testing.T) {
 	eng := core.New(core.Options{Sink: noopSink{}})
-	srv := New(eng, Options{})
-	eng.AddSink(srv)
+	srv := New(SingleUser(&Tenant{Engine: eng}), Options{})
+	eng.AddSink(srv.Sink(defaultUser))
 	eng.AddNetwork(core.NetworkSpec{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
 
 	ctx, cancel := context.WithCancel(context.Background())

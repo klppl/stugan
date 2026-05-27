@@ -21,7 +21,7 @@ type pushManager struct {
 	privKey string
 
 	mu   sync.Mutex
-	subs map[string]webpush.Subscription // keyed by endpoint
+	subs map[string]map[string]webpush.Subscription // user → endpoint → sub
 }
 
 // newPushManager loads or generates VAPID keys and loads saved subscriptions
@@ -33,7 +33,7 @@ func newPushManager(dir string) (*pushManager, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	p := &pushManager{dir: dir, subs: map[string]webpush.Subscription{}}
+	p := &pushManager{dir: dir, subs: map[string]map[string]webpush.Subscription{}}
 	if err := p.loadOrCreateKeys(); err != nil {
 		return nil, err
 	}
@@ -66,35 +66,44 @@ func (p *pushManager) loadSubs() {
 	if err != nil {
 		return
 	}
-	var list []webpush.Subscription
-	if json.Unmarshal(data, &list) != nil {
+	var byUser map[string][]webpush.Subscription
+	if json.Unmarshal(data, &byUser) != nil {
 		return
 	}
-	for _, s := range list {
-		p.subs[s.Endpoint] = s
+	for user, list := range byUser {
+		p.subs[user] = map[string]webpush.Subscription{}
+		for _, s := range list {
+			p.subs[user][s.Endpoint] = s
+		}
 	}
 }
 
+// saveSubs writes the per-user subscriptions; callers hold p.mu.
 func (p *pushManager) saveSubs() {
-	list := make([]webpush.Subscription, 0, len(p.subs))
-	for _, s := range p.subs {
-		list = append(list, s)
+	byUser := map[string][]webpush.Subscription{}
+	for user, m := range p.subs {
+		for _, s := range m {
+			byUser[user] = append(byUser[user], s)
+		}
 	}
-	data, _ := json.Marshal(list)
+	data, _ := json.Marshal(byUser)
 	_ = os.WriteFile(p.subsPath(), data, 0o600)
 }
 
-func (p *pushManager) add(s webpush.Subscription) {
+func (p *pushManager) add(user string, s webpush.Subscription) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.subs[s.Endpoint] = s
+	if p.subs[user] == nil {
+		p.subs[user] = map[string]webpush.Subscription{}
+	}
+	p.subs[user][s.Endpoint] = s
 	p.saveSubs()
 }
 
-func (p *pushManager) remove(endpoint string) {
+func (p *pushManager) remove(user, endpoint string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.subs, endpoint)
+	delete(p.subs[user], endpoint)
 	p.saveSubs()
 }
 
@@ -106,13 +115,13 @@ type pushPayload struct {
 	Buffer  string `json:"buffer"`
 }
 
-// notify sends a payload to every subscription, pruning ones the push
+// notify sends a payload to one user's subscriptions, pruning ones the push
 // service reports as gone (404/410).
-func (p *pushManager) notify(pl pushPayload, log loggerW) {
+func (p *pushManager) notify(user string, pl pushPayload, log loggerW) {
 	body, _ := json.Marshal(pl)
 	p.mu.Lock()
-	subs := make([]webpush.Subscription, 0, len(p.subs))
-	for _, s := range p.subs {
+	subs := make([]webpush.Subscription, 0, len(p.subs[user]))
+	for _, s := range p.subs[user] {
 		subs = append(subs, s)
 	}
 	p.mu.Unlock()
@@ -131,7 +140,7 @@ func (p *pushManager) notify(pl pushPayload, log loggerW) {
 		}
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
-			p.remove(sub.Endpoint)
+			p.remove(user, sub.Endpoint)
 		}
 	}
 }
@@ -155,33 +164,34 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	user, ok := s.userOf(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var sub webpush.Subscription
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&sub); err != nil || sub.Endpoint == "" {
 		http.Error(w, "bad subscription", http.StatusBadRequest)
 		return
 	}
-	s.push.add(sub)
+	s.push.add(user, sub)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // maybePush sends a push notification for a highlight if the user is away
-// (no browser connected). Called from the sink path; runs the send async so
-// it never blocks the engine loop.
-func (s *Server) maybePush(m core.Message) {
+// (no browser connected for that user). Called from the per-user sink; runs
+// the send async so it never blocks the engine loop.
+func (s *Server) maybePush(user string, m core.Message) {
 	if s.push == nil || !m.Highlight || m.Self {
 		return
 	}
-	s.mu.Lock()
-	connected := len(s.clients)
-	s.mu.Unlock()
-	if connected > 0 {
+	if s.connectedCount(user) > 0 {
 		return // user is here; the in-app highlight is enough
 	}
-	pl := pushPayload{
+	go s.push.notify(user, pushPayload{
 		Title:   m.From + " in " + m.Buffer,
 		Body:    m.Text,
 		Network: m.Network,
 		Buffer:  m.Buffer,
-	}
-	go s.push.notify(pl, s.log)
+	}, s.log)
 }

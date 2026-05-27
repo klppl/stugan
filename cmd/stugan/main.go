@@ -4,22 +4,21 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 
+	"github.com/klippelism/stugan/internal/auth"
 	"github.com/klippelism/stugan/internal/config"
-	"github.com/klippelism/stugan/internal/core"
-	"github.com/klippelism/stugan/internal/irc"
 	"github.com/klippelism/stugan/internal/logging"
-	"github.com/klippelism/stugan/internal/plugin"
 	"github.com/klippelism/stugan/internal/server"
-	"github.com/klippelism/stugan/internal/store"
 )
 
 func main() {
@@ -33,11 +32,23 @@ func run() error {
 	var (
 		configHome = flag.String("home", "", "config/data/scripts root (overrides $STUGAN_HOME)")
 		showVer    = flag.Bool("version", false, "print version and exit")
+		hashPw     = flag.Bool("hashpw", false, "read a password from stdin and print its bcrypt hash")
 	)
 	flag.Parse()
 
 	if *showVer {
 		fmt.Println("stugan", version())
+		return nil
+	}
+
+	if *hashPw {
+		fmt.Fprint(os.Stderr, "password: ")
+		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		hash, err := auth.HashPassword(strings.TrimRight(line, "\r\n"))
+		if err != nil {
+			return err
+		}
+		fmt.Println(hash)
 		return nil
 	}
 
@@ -72,107 +83,51 @@ func run() error {
 	ctx, cancel := context.WithCancel(sigCtx)
 	defer cancel()
 
-	// Open the SQLite history store; it persists every committed line.
-	db, err := store.Open(filepath.Join(cfg.DataDir(), "stugan.db"), log)
+	// Build one engine + store (+ plugin host) per user, plus auth/sessions.
+	hub, cleanup, err := buildHub(cfg, log)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer cleanup()
 
-	// Build the core engine, the WebSocket server bridge, and a connection
-	// per configured network. The server and store are registered as engine
-	// sinks so committed lines fan out to browsers and to disk; the default
-	// terminal sink stays on for headless visibility.
-	highlighter, err := core.NewHighlighter(cfg.Highlight.Patterns, cfg.Highlight.Exceptions)
-	if err != nil {
-		return err
-	}
-	engine := core.New(core.Options{
-		Logger:    log,
-		Highlight: highlighter,
-		Aliases:   cfg.Aliases,
-	})
-	engine.AddSink(db)
-
-	// Plugin host: load Lua scripts from $STUGAN_HOME/scripts, hot-reload on
-	// change, and fire core hooks through it.
-	if cfg.Plugins.Enabled {
-		host, err := plugin.New(plugin.Options{
-			API:      engine.API(),
-			Logger:   log,
-			Dir:      cfg.ScriptsDir(),
-			Settings: cfg.Plugins.Settings,
-			Sandbox:  cfg.Plugins.Sandbox,
-		})
-		if err != nil {
-			return err
-		}
-		engine.SetHost(host)
-		log.Info("plugin host enabled", "scripts", cfg.ScriptsDir(), "sandbox", cfg.Plugins.Sandbox)
-	}
-
-	srv := server.New(engine, server.Options{
+	srv := server.New(hub, server.Options{
 		Logger:         log,
 		ServerName:     "stugan/" + version(),
 		StaticDir:      cfg.Server.StaticDir,
 		OriginPatterns: cfg.Server.OriginPatterns,
-		History:        db,
 		UploadDir:      filepath.Join(cfg.DataDir(), "uploads"),
 		PushDir:        filepath.Join(cfg.DataDir(), "push"),
 	})
-	engine.AddSink(srv)
+	hub.registerSinks(srv)
 
-	for _, n := range cfg.Networks {
-		if !n.Connect {
-			log.Info("network configured but not auto-connecting", "network", n.Name)
-			continue
-		}
-		conn, err := irc.New(irc.Options{
-			Network:  n.Name,
-			Addr:     n.Addr,
-			TLS:      n.TLS,
-			Nick:     n.Nick,
-			User:     n.User,
-			Realname: n.Realname,
-			SASLUser: n.SASLUser,
-			SASLPass: n.SASLPass,
-			Channels: n.Channels,
-			Logger:   log,
-		}, engine)
-		if err != nil {
-			return fmt.Errorf("network %q: %w", n.Name, err)
-		}
-		engine.AddNetwork(core.NetworkSpec{ID: n.Name, Name: n.Name, Nick: n.Nick}, conn)
-	}
+	log.Info("daemon ready", "users", len(hub.Users()), "auth", cfg.AuthEnabled())
 
-	if len(cfg.Networks) == 0 {
-		log.Warn("no networks configured; daemon will idle until shutdown")
-	}
-
-	log.Info("daemon ready")
-
-	// Run the engine and HTTP server concurrently; if either returns, cancel
-	// the shared context so the other unwinds, then surface the first error.
+	// Run every user's engine and the HTTP server concurrently; if any
+	// returns, cancel the shared context so the rest unwind, then surface the
+	// first error.
 	var wg sync.WaitGroup
-	var engErr, srvErr error
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		defer cancel()
-		engErr = engine.Run(ctx)
-	}()
-	go func() {
-		defer wg.Done()
-		defer cancel()
-		srvErr = srv.ListenAndServe(ctx, cfg.Server.Listen)
-	}()
+	errc := make(chan error, 1)
+	fail := func(err error) {
+		if err != nil {
+			select {
+			case errc <- err:
+			default:
+			}
+		}
+	}
+	for _, eng := range hub.engines {
+		wg.Go(func() { defer cancel(); fail(eng.Run(ctx)) })
+	}
+	wg.Go(func() { defer cancel(); fail(srv.ListenAndServe(ctx, cfg.Server.Listen)) })
 	wg.Wait()
 
 	log.Info("shutdown complete")
-	if srvErr != nil {
-		return srvErr
+	select {
+	case err := <-errc:
+		return err
+	default:
+		return nil
 	}
-	return engErr
 }
 
 // version reports the build version. Replaced by -ldflags at release time.

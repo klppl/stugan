@@ -1,12 +1,14 @@
 // Package server hosts the HTTP and WebSocket endpoints and bridges core
-// events to and from browser sockets. It owns the typed event router
-// (encoding/decoding proto structs) and implements core.Sink to fan
-// committed buffer lines out to connected clients. It depends on core only
-// through the Engine's public API; core never imports server.
+// events to and from browser sockets. It is multi-tenant: every connection
+// is resolved to a user (via session cookie, or the single implicit user
+// when auth is disabled) and bridged to that user's engine. It depends on
+// core through the engine's public API and on a Hub for users/sessions;
+// core never imports server.
 package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -20,61 +22,68 @@ import (
 	"github.com/klippelism/stugan/internal/proto"
 )
 
+// sessionCookie is the name of the session cookie set on login.
+const sessionCookie = "stugan_session"
+
 // History provides paged message backlog for replay and full-text search.
-// Implemented by store.Store; the server depends only on this narrow
-// interface, not on the store package.
 type History interface {
 	Backlog(ctx context.Context, network, buffer string, before time.Time, limit int) ([]core.Message, bool, error)
 	Search(ctx context.Context, query, network, buffer string, limit int) ([]core.Message, error)
 }
 
-// Options configures a Server.
-type Options struct {
-	Logger *slog.Logger
-	// ServerName is advertised in the Hello frame.
-	ServerName string
-	// OriginPatterns authorizes WebSocket origins (path.Match patterns).
-	// Defaults to localhost variants, which suits the single-user
-	// localhost deployment and the Vite dev proxy.
-	OriginPatterns []string
-	// StaticDir, if set, is served at / (the built Vue client). When empty,
-	// only the API is served.
-	StaticDir string
-	// History, if set, answers backlog:fetch requests with replay from the
-	// message store. When nil, backlog requests return an error frame.
+// Tenant is one user's engine and history.
+type Tenant struct {
+	Engine  *core.Engine
 	History History
-	// UploadDir, if set, enables file uploads (POST /api/upload) served back
-	// from /uploads/.
-	UploadDir string
-	// MaxUpload caps an upload's size in bytes (default 10 MiB).
-	MaxUpload int64
-	// PushDir, if set, enables Web Push: VAPID keys and subscriptions are
-	// persisted there.
-	PushDir string
 }
 
-// Server bridges the core engine to WebSocket clients. It implements
-// core.Sink.
+// Hub resolves users, sessions, and per-user tenants. The composition root
+// (cmd/stugan) implements it; SingleUser provides a no-auth one for the
+// single-user case and for tests.
+type Hub interface {
+	AuthEnabled() bool
+	// Login verifies credentials and returns the user id.
+	Login(username, password string) (string, bool)
+	// Session resolves a token to a user id.
+	Session(token string) (string, bool)
+	// StartSession issues a token for a user and its max-age in seconds.
+	StartSession(userID string) (token string, maxAgeSec int)
+	// EndSession invalidates a token.
+	EndSession(token string)
+	// Tenant returns a user's engine + history.
+	Tenant(userID string) (*Tenant, bool)
+	// Users lists every user id (for sink registration at startup).
+	Users() []string
+}
+
+// Options configures a Server.
+type Options struct {
+	Logger         *slog.Logger
+	ServerName     string
+	OriginPatterns []string
+	StaticDir      string
+	UploadDir      string
+	MaxUpload      int64
+	PushDir        string
+}
+
+// Server bridges per-user engines to WebSocket clients.
 type Server struct {
-	engine     *core.Engine
+	hub        Hub
 	log        *slog.Logger
 	serverName string
 	origins    []string
 	staticDir  string
-	history    History
 	uploadDir  string
 	maxUpload  int64
 	push       *pushManager
 
 	mu      sync.Mutex
-	clients map[*client]struct{}
+	clients map[string]map[*client]struct{} // userID → connected clients
 }
 
-var _ core.Sink = (*Server)(nil)
-
-// New builds a Server bridging engine to clients. Register it with the
-// engine via engine.AddSink(srv) before starting the engine.
-func New(engine *core.Engine, opts Options) *Server {
+// New builds a Server over the given Hub.
+func New(hub Hub, opts Options) *Server {
 	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
@@ -96,36 +105,39 @@ func New(engine *core.Engine, opts Options) *Server {
 		log.Warn("web push disabled", "err", err)
 	}
 	return &Server{
-		engine:     engine,
+		hub:        hub,
 		log:        log,
 		serverName: name,
 		origins:    origins,
 		staticDir:  opts.StaticDir,
-		history:    opts.History,
 		uploadDir:  opts.UploadDir,
 		maxUpload:  maxUpload,
 		push:       push,
-		clients:    map[*client]struct{}{},
+		clients:    map[string]map[*client]struct{}{},
 	}
 }
 
-// Handler returns the HTTP handler: /ws for the WebSocket, and (if a static
-// dir is configured) the built client at /.
+// Sink returns a core.Sink that routes a user's committed lines to that
+// user's connected clients. Register it on the user's engine before Run.
+func (s *Server) Sink(userID string) core.Sink { return &userSink{s: s, user: userID} }
+
+// Handler returns the HTTP handler.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWS)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("/api/preview", s.handlePreview)
-	mux.HandleFunc("/api/proxy", s.handleProxy)
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/api/me", s.handleMe)
+	mux.HandleFunc("/api/login", s.handleLogin)
+	mux.HandleFunc("/api/logout", s.handleLogout)
+	mux.HandleFunc("/api/preview", s.requireUser(s.handlePreview))
+	mux.HandleFunc("/api/proxy", s.requireUser(s.handleProxy))
 	if s.uploadDir != "" {
-		mux.HandleFunc("/api/upload", s.handleUpload)
+		mux.HandleFunc("/api/upload", s.requireUser(s.handleUpload))
 		mux.Handle("/uploads/", s.uploadFileServer())
 	}
 	if s.push != nil {
 		mux.HandleFunc("/api/push/vapid", s.handleVAPID)
-		mux.HandleFunc("/api/push/subscribe", s.handleSubscribe)
+		mux.HandleFunc("/api/push/subscribe", s.requireUser(s.handleSubscribe))
 	}
 	if s.staticDir != "" {
 		mux.Handle("/", http.FileServer(http.Dir(s.staticDir)))
@@ -133,13 +145,9 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-// ListenAndServe serves until ctx is cancelled, then gracefully shuts down.
+// ListenAndServe serves until ctx is cancelled, then shuts down gracefully.
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           s.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	srv := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -153,64 +161,89 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	return nil
 }
 
-// Print implements core.Sink: it fans a committed line out to all clients
-// as a "msg" frame. Called from the engine loop goroutine; must not block.
-func (s *Server) Print(m core.Message) {
-	env, err := proto.Frame(proto.TMsg, toMessageDTO(m))
+// --- auth resolution -------------------------------------------------------
+
+// userOf resolves the request to a user id. When auth is disabled, the
+// single implicit user is returned.
+func (s *Server) userOf(r *http.Request) (string, bool) {
+	if !s.hub.AuthEnabled() {
+		users := s.hub.Users()
+		if len(users) == 0 {
+			return "", false
+		}
+		return users[0], true
+	}
+	c, err := r.Cookie(sessionCookie)
 	if err != nil {
-		s.log.Error("encode msg frame", "err", err)
+		return "", false
+	}
+	return s.hub.Session(c.Value)
+}
+
+// requireUser wraps a handler, rejecting unauthenticated requests.
+func (s *Server) requireUser(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := s.userOf(r); !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h(w, r)
+	}
+}
+
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.userOf(r)
+	resp := map[string]any{"authEnabled": s.hub.AuthEnabled(), "user": user, "authenticated": ok}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	s.broadcast(env)
-	s.maybePush(m)
-}
-
-// NetworkChanged implements core.Sink: it pushes a net:update with the
-// network's current snapshot to all clients.
-func (s *Server) NetworkChanged(n *core.Network) {
-	env, err := proto.Frame(proto.TNetUpdate, toNetworkDTO(n))
-	if err != nil {
-		s.log.Error("encode net:update frame", "err", err)
+	var body struct{ Username, Password string }
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	s.broadcast(env)
-}
-
-// caps lists the optional features this server supports, advertised in
-// Hello so the client can enable matching UI.
-func (s *Server) caps() []string {
-	caps := []string{"uploads", "previews"}
-	if s.history != nil {
-		caps = append(caps, "search")
+	user, ok := s.hub.Login(body.Username, body.Password)
+	if !ok {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
 	}
-	if s.push != nil {
-		caps = append(caps, "push")
+	tok, maxAge := s.hub.StartSession(user)
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: tok, Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Secure: r.TLS != nil,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"user": user})
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		s.hub.EndSession(c.Value)
 	}
-	return caps
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) broadcast(env proto.Envelope) {
-	s.mu.Lock()
-	for c := range s.clients {
-		c.trySend(env)
-	}
-	s.mu.Unlock()
-}
+// --- WebSocket -------------------------------------------------------------
 
-func (s *Server) addClient(c *client) {
-	s.mu.Lock()
-	s.clients[c] = struct{}{}
-	s.mu.Unlock()
-}
-
-func (s *Server) removeClient(c *client) {
-	s.mu.Lock()
-	delete(s.clients, c)
-	s.mu.Unlock()
-}
-
-// handleWS upgrades the connection and runs its read/write pumps.
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.userOf(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	tenant, ok := s.hub.Tenant(userID)
+	if !ok {
+		http.Error(w, "unknown user", http.StatusUnauthorized)
+		return
+	}
+
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: s.origins})
 	if err != nil {
 		s.log.Warn("ws accept failed", "err", err)
@@ -222,38 +255,31 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	c := newClient(ws, s.log)
+	c.user = userID
+	c.tenant = tenant
 	go c.writePump(ctx)
 
-	// Greet with hello + an authoritative state snapshot, then go live.
-	// Enqueueing before registering keeps wire order hello→init→live; the
-	// small window between snapshot and registration is reconciled by
-	// backlog replay in Phase 4.
-	hello, _ := proto.Frame(proto.THello, proto.Hello{
-		Protocol: proto.Protocol, Server: s.serverName, Caps: s.caps(),
-	})
-	init, _ := proto.Frame(proto.TInit, toInitState(s.engine.Snapshot()))
+	hello, _ := proto.Frame(proto.THello, proto.Hello{Protocol: proto.Protocol, Server: s.serverName, Caps: s.caps()})
+	init, _ := proto.Frame(proto.TInit, toInitState(tenant.Engine.Snapshot()))
 	c.trySend(hello)
 	c.trySend(init)
 
-	s.addClient(c)
-	defer s.removeClient(c)
+	s.addClient(userID, c)
+	defer s.removeClient(userID, c)
 
 	s.readPump(ctx, c)
 }
 
-// readPump decodes inbound frames and routes them until the client
-// disconnects or ctx is cancelled.
 func (s *Server) readPump(ctx context.Context, c *client) {
 	for {
 		var env proto.Envelope
 		if err := wsjson.Read(ctx, c.ws, &env); err != nil {
-			return // disconnect or ctx cancelled
+			return
 		}
 		s.route(ctx, c, env)
 	}
 }
 
-// route dispatches one decoded frame.
 func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	switch env.T {
 	case proto.TMsgSend:
@@ -266,7 +292,7 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			c.sendError(env.ID, "bad_request", "msg:send requires network, buffer, text")
 			return
 		}
-		s.engine.SendInput(d.Network, d.Buffer, d.Text)
+		c.tenant.Engine.SendInput(d.Network, d.Buffer, d.Text)
 
 	case proto.TBacklogFetch:
 		s.handleBacklog(ctx, c, env)
@@ -279,52 +305,13 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	}
 }
 
-// handleSearch answers a search request with full-text matches.
-func (s *Server) handleSearch(ctx context.Context, c *client, env proto.Envelope) {
-	var d proto.SearchReq
-	if err := decode(env, &d); err != nil || d.Query == "" {
-		c.sendError(env.ID, "bad_request", "search requires a query")
-		return
-	}
-	if s.history == nil {
-		c.sendError(env.ID, "unavailable", "search is not enabled")
-		return
-	}
-	limit := d.Limit
-	if limit <= 0 || limit > 500 {
-		limit = 50
-	}
-	msgs, err := s.history.Search(ctx, d.Query, d.Network, d.Buffer, limit)
-	if err != nil {
-		s.log.Error("search query", "err", err)
-		c.sendError(env.ID, "internal", "search failed")
-		return
-	}
-	results := make([]proto.MessageDTO, len(msgs))
-	for i, m := range msgs {
-		results[i] = toMessageDTO(m)
-	}
-	reply, err := proto.Frame(proto.TSearchResult, proto.SearchResp{Query: d.Query, Results: results})
-	if err != nil {
-		return
-	}
-	reply.ID = env.ID
-	c.trySend(reply)
-}
-
-// handleBacklog answers a backlog:fetch with a page of history from the
-// store, correlated to the request id.
 func (s *Server) handleBacklog(ctx context.Context, c *client, env proto.Envelope) {
 	var d proto.BacklogFetch
-	if err := decode(env, &d); err != nil {
-		c.sendError(env.ID, "bad_request", "invalid backlog:fetch payload")
-		return
-	}
-	if d.Network == "" || d.Buffer == "" {
+	if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" {
 		c.sendError(env.ID, "bad_request", "backlog:fetch requires network, buffer")
 		return
 	}
-	if s.history == nil {
+	if c.tenant.History == nil {
 		c.sendError(env.ID, "unavailable", "history is not enabled")
 		return
 	}
@@ -334,26 +321,113 @@ func (s *Server) handleBacklog(ctx context.Context, c *client, env proto.Envelop
 			before = t
 		}
 	}
-	limit := d.Limit
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	msgs, more, err := s.history.Backlog(ctx, d.Network, d.Buffer, before, limit)
+	limit := clampLimit(d.Limit, 100)
+	msgs, more, err := c.tenant.History.Backlog(ctx, d.Network, d.Buffer, before, limit)
 	if err != nil {
-		s.log.Error("backlog query", "network", d.Network, "buffer", d.Buffer, "err", err)
+		s.log.Error("backlog query", "err", err)
 		c.sendError(env.ID, "internal", "backlog query failed")
 		return
 	}
-	dtos := make([]proto.MessageDTO, len(msgs))
-	for i, m := range msgs {
-		dtos[i] = toMessageDTO(m)
-	}
-	reply, err := proto.Frame(proto.TBacklog, proto.BacklogResp{
-		Network: d.Network, Buffer: d.Buffer, Messages: dtos, More: more,
+	s.reply(c, env.ID, proto.TBacklog, proto.BacklogResp{
+		Network: d.Network, Buffer: d.Buffer, Messages: toMessageDTOs(msgs), More: more,
 	})
+}
+
+func (s *Server) handleSearch(ctx context.Context, c *client, env proto.Envelope) {
+	var d proto.SearchReq
+	if err := decode(env, &d); err != nil || d.Query == "" {
+		c.sendError(env.ID, "bad_request", "search requires a query")
+		return
+	}
+	if c.tenant.History == nil {
+		c.sendError(env.ID, "unavailable", "search is not enabled")
+		return
+	}
+	msgs, err := c.tenant.History.Search(ctx, d.Query, d.Network, d.Buffer, clampLimit(d.Limit, 50))
+	if err != nil {
+		s.log.Error("search query", "err", err)
+		c.sendError(env.ID, "internal", "search failed")
+		return
+	}
+	s.reply(c, env.ID, proto.TSearchResult, proto.SearchResp{Query: d.Query, Results: toMessageDTOs(msgs)})
+}
+
+// reply sends a correlated frame to one client.
+func (s *Server) reply(c *client, id, t string, d any) {
+	env, err := proto.Frame(t, d)
 	if err != nil {
 		return
 	}
-	reply.ID = env.ID
-	c.trySend(reply)
+	env.ID = id
+	c.trySend(env)
+}
+
+// --- client registry + fan-out --------------------------------------------
+
+func (s *Server) addClient(user string, c *client) {
+	s.mu.Lock()
+	if s.clients[user] == nil {
+		s.clients[user] = map[*client]struct{}{}
+	}
+	s.clients[user][c] = struct{}{}
+	s.mu.Unlock()
+}
+
+func (s *Server) removeClient(user string, c *client) {
+	s.mu.Lock()
+	delete(s.clients[user], c)
+	s.mu.Unlock()
+}
+
+// routeToUser fans a frame out to one user's clients.
+func (s *Server) routeToUser(user string, env proto.Envelope) {
+	s.mu.Lock()
+	for c := range s.clients[user] {
+		c.trySend(env)
+	}
+	s.mu.Unlock()
+}
+
+func (s *Server) connectedCount(user string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.clients[user])
+}
+
+// caps lists the optional features this server supports.
+func (s *Server) caps() []string {
+	caps := []string{"uploads", "previews"}
+	caps = append(caps, "search") // every tenant has a history store
+	if s.push != nil {
+		caps = append(caps, "push")
+	}
+	return caps
+}
+
+func clampLimit(n, def int) int {
+	if n <= 0 || n > 500 {
+		return def
+	}
+	return n
+}
+
+// userSink routes one user's committed lines to their clients.
+type userSink struct {
+	s    *Server
+	user string
+}
+
+var _ core.Sink = (*userSink)(nil)
+
+func (u *userSink) Print(m core.Message) {
+	if env, err := proto.Frame(proto.TMsg, toMessageDTO(m)); err == nil {
+		u.s.routeToUser(u.user, env)
+	}
+	u.s.maybePush(u.user, m)
+}
+
+func (u *userSink) NetworkChanged(n *core.Network) {
+	if env, err := proto.Frame(proto.TNetUpdate, toNetworkDTO(n)); err == nil {
+		u.s.routeToUser(u.user, env)
+	}
 }

@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { settings, THEMES } from "../settings";
 import { connection } from "../connection";
 import { enablePush, pushSupported } from "../pwa";
+import { authState, logout } from "../auth";
 
 const emit = defineEmits<{ close: [] }>();
 const pushMsg = ref("");
@@ -32,6 +33,11 @@ async function enableNotifications() {
       </div>
       <p v-if="pushMsg" class="hint">{{ pushMsg }}</p>
       <p class="hint">Mute a channel by right-clicking it in the sidebar.</p>
+
+      <div v-if="authState.authEnabled" class="row">
+        <span>Signed in as {{ authState.user }}</span>
+        <button @click="logout">Log out</button>
+      </div>
 
       <button class="close" @click="emit('close')">Close</button>
     </div>

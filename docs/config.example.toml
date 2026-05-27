@@ -18,7 +18,29 @@ sandbox = false   # single-user: full Lua stdlib (logged). See docs/plugins.md.
 [plugins.settings.highlight_reply]
 word = "ping"
 
-# One [[networks]] block per IRC network.
+# --- Single-user (default) ---------------------------------------------------
+# With no [[users]] blocks the daemon runs single-user and unauthenticated,
+# owning the top-level [[networks]] below.
+#
+# --- Multi-user --------------------------------------------------------------
+# Add [[users]] blocks to require login. Each user owns their own networks and
+# is fully isolated (separate connections, history, plugins). Generate a
+# password hash with:  stugan -hashpw   (reads the password from stdin)
+#
+# [auth]
+# session_hours = 720   # session lifetime (default 30 days)
+#
+# [[users]]
+# name = "alice"
+# password_hash = "$2a$10$....."   # from `stugan -hashpw`
+#   [[users.networks]]
+#   name = "libera"
+#   addr = "irc.libera.chat:6697"
+#   tls  = true
+#   nick = "alice"
+#   channels = ["#stugan"]
+
+# One [[networks]] block per IRC network (single-user mode).
 [[networks]]
 name     = "libera"
 addr     = "irc.libera.chat:6697"

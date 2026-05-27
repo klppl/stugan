@@ -60,7 +60,7 @@ func TestValidTarget(t *testing.T) {
 
 func TestUploadRoundTrip(t *testing.T) {
 	eng := core.New(core.Options{Sink: noopSink{}})
-	srv := New(eng, Options{UploadDir: t.TempDir(), MaxUpload: 1 << 20})
+	srv := New(SingleUser(&Tenant{Engine: eng}), Options{UploadDir: t.TempDir(), MaxUpload: 1 << 20})
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
