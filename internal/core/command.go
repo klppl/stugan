@@ -125,10 +125,12 @@ func (a engineAPI) Message(network, target, text string) error {
 	if err := c.Message(target, text); err != nil {
 		return err
 	}
-	a.e.inject(Message{
-		Network: network, Buffer: target, Time: time.Now(),
-		From: a.Nick(network), Kind: MsgPrivmsg, Text: text, Self: true,
-	})
+	if !a.e.echoMessage(network) {
+		a.e.inject(Message{
+			Network: network, Buffer: target, Time: time.Now(),
+			From: a.Nick(network), Kind: MsgPrivmsg, Text: text, Self: true,
+		})
+	}
 	return nil
 }
 
@@ -140,10 +142,12 @@ func (a engineAPI) Notice(network, target, text string) error {
 	if err := c.SendRaw(fmt.Sprintf("NOTICE %s :%s", target, text)); err != nil {
 		return err
 	}
-	a.e.inject(Message{
-		Network: network, Buffer: target, Time: time.Now(),
-		From: a.Nick(network), Kind: MsgNotice, Text: text, Self: true,
-	})
+	if !a.e.echoMessage(network) {
+		a.e.inject(Message{
+			Network: network, Buffer: target, Time: time.Now(),
+			From: a.Nick(network), Kind: MsgNotice, Text: text, Self: true,
+		})
+	}
 	return nil
 }
 
@@ -155,10 +159,12 @@ func (a engineAPI) Action(network, target, text string) error {
 	if err := c.SendRaw(fmt.Sprintf("PRIVMSG %s :\x01ACTION %s\x01", target, text)); err != nil {
 		return err
 	}
-	a.e.inject(Message{
-		Network: network, Buffer: target, Time: time.Now(),
-		From: a.Nick(network), Kind: MsgAction, Text: text, Self: true,
-	})
+	if !a.e.echoMessage(network) {
+		a.e.inject(Message{
+			Network: network, Buffer: target, Time: time.Now(),
+			From: a.Nick(network), Kind: MsgAction, Text: text, Self: true,
+		})
+	}
 	return nil
 }
 

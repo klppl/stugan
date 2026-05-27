@@ -63,6 +63,10 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		SSL:         opts.TLS,
 		Version:     "stugan",
 		RecoverFunc: girc.DefaultRecoverHandler, // a handler panic never kills us
+		// echo-message isn't in girc's default cap set; request it so our own
+		// sent lines come back tagged with the server's msgid/server-time
+		// (and stay consistent across multiple clients).
+		SupportedCaps: map[string][]string{"echo-message": nil},
 	}
 	if opts.SASLUser != "" {
 		gcfg.SASL = &girc.SASLPlain{User: opts.SASLUser, Pass: opts.SASLPass}
@@ -103,6 +107,17 @@ func (c *Conn) registerHandlers() {
 			}
 		})
 	}
+
+	// echo-message events are NOT delivered to command-specific handlers by
+	// girc (only to ALLEVENTS), so handle our own echoed PRIVMSG/NOTICE here.
+	// Gating on e.Echo avoids double-processing the normal events above.
+	h.Add(girc.ALL_EVENTS, func(gc *girc.Client, e girc.Event) {
+		if e.Echo {
+			if ev, ok := toEvent(c.opts.Network, &e, gc.GetNick()); ok {
+				c.emit(ev)
+			}
+		}
+	})
 }
 
 func (c *Conn) emit(ev core.Event) {
@@ -142,9 +157,24 @@ func (c *Conn) Message(target, text string) error {
 	return nil
 }
 
-// Caps returns the negotiated IRCv3 capabilities.
-// TODO(phase-2+): surface girc's negotiated caps once tracking is wired.
-func (c *Conn) Caps() []string { return nil }
+// knownCaps are the IRCv3 capabilities stugan cares about; Caps reports
+// which of them the server negotiated.
+var knownCaps = []string{
+	"echo-message", "server-time", "away-notify", "account-notify",
+	"message-tags", "multi-prefix", "extended-join", "userhost-in-names",
+	"chghost", "setname", "invite-notify", "draft/chathistory", "chathistory",
+}
+
+// Caps returns the negotiated IRCv3 capabilities (from the set stugan uses).
+func (c *Conn) Caps() []string {
+	var caps []string
+	for _, name := range knownCaps {
+		if c.client.HasCapability(name) {
+			caps = append(caps, name)
+		}
+	}
+	return caps
+}
 
 // CurrentNick returns our current nick on this network.
 func (c *Conn) CurrentNick() string { return c.client.GetNick() }

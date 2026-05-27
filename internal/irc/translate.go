@@ -84,11 +84,9 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			Tags:    copyTags(e.Tags),
 			Self:    e.Echo,
 		}
-		typ := core.EvMessageIn
-		if e.Echo {
-			typ = core.EvMessageOut
-		}
-		return core.Event{Type: typ, Network: network, Time: when, Message: msg}, true
+		// An echo-message of our own line is an inbound display copy (Self),
+		// never a new outbound — EvMessageOut is reserved for user input.
+		return core.Event{Type: core.EvMessageIn, Network: network, Time: when, Message: msg}, true
 
 	case girc.JOIN:
 		// With extended-join the params are [channel, account, realname],

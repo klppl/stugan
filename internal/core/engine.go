@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -601,15 +602,8 @@ func (e *Engine) handle(ctx context.Context, ev Event) {
 	}
 }
 
-// outbound describes an IRC send to perform after state mutation, outside
-// the state lock.
-type outbound struct {
-	target string
-	text   string
-}
-
 // apply commits an event: it mutates state under the write lock, then
-// performs I/O (sink fan-out, conn send) with the lock released.
+// performs I/O (sink fan-out) with the lock released.
 func (e *Engine) apply(ev Event) {
 	// LIST results accumulate, then flush to observers as one batch.
 	switch ev.Type {
@@ -631,10 +625,13 @@ func (e *Engine) apply(ev Event) {
 			s.ChannelList(ev.Network, items)
 		}
 		return
+	case EvMessageOut:
+		e.applyMessageOut(ev)
+		return
 	}
 
 	e.mu.Lock()
-	emit, send, netChanged := e.applyLocked(ev)
+	emit, netChanged := e.applyLocked(ev)
 	e.mu.Unlock()
 
 	for _, m := range emit {
@@ -643,13 +640,52 @@ func (e *Engine) apply(ev Event) {
 	if netChanged {
 		e.notifyNetwork(ev.Network)
 	}
-	if send != nil {
-		if conn := e.connFor(ev.Network); conn != nil {
-			if err := conn.Message(send.target, send.text); err != nil {
-				e.log.Warn("send failed", "network", ev.Network, "err", err)
-			}
+}
+
+// applyMessageOut sends an outbound message to IRC and locally echoes it —
+// unless the connection negotiated echo-message, in which case the server's
+// own echo (an EvMessageIn with Self set) is the displayed copy, so we skip
+// the local one to avoid a duplicate.
+func (e *Engine) applyMessageOut(ev Event) {
+	if ev.Message == nil {
+		return
+	}
+	echo := e.echoMessage(ev.Network)
+
+	e.mu.Lock()
+	n := e.user.Network(ev.Network)
+	if n == nil {
+		e.mu.Unlock()
+		return
+	}
+	m := *ev.Message
+	if m.From == "" {
+		m.From = n.Nick
+	}
+	_, created := n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
+	e.mu.Unlock()
+
+	if conn := e.connFor(ev.Network); conn != nil {
+		if err := conn.Message(m.Buffer, m.Text); err != nil {
+			e.log.Warn("send failed", "network", ev.Network, "err", err)
 		}
 	}
+	if !echo {
+		e.broadcast(m)
+	}
+	if created {
+		e.notifyNetwork(ev.Network)
+	}
+}
+
+// echoMessage reports whether the network's connection negotiated the
+// echo-message capability (so the server will echo our sent lines back).
+func (e *Engine) echoMessage(network string) bool {
+	conn := e.connFor(network)
+	if conn == nil {
+		return false
+	}
+	return slices.Contains(conn.Caps(), "echo-message")
 }
 
 // notifyNetwork pushes a fresh snapshot of one network to all sinks.
@@ -684,13 +720,15 @@ func (e *Engine) inject(m Message) {
 	}
 }
 
-// applyLocked mutates state for ev and returns the buffer lines to emit, an
-// optional IRC send, and whether the network's structure changed (so a
-// snapshot should be pushed to observers). The caller holds e.mu for writing.
-func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound, netChanged bool) {
+// applyLocked mutates state for ev and returns the buffer lines to emit and
+// whether the network's structure changed (so a snapshot should be pushed to
+// observers). The caller holds e.mu for writing. EvMessageOut is handled
+// separately (see applyMessageOut) because it needs the echo-message
+// capability check, which can't take the lock that this holds.
+func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged bool) {
 	n := e.user.Network(ev.Network)
 	if n == nil {
-		return nil, nil, false
+		return nil, false
 	}
 	sys := func(buffer, text string) {
 		emit = append(emit, Message{
@@ -731,7 +769,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound, netChang
 
 	case EvMessageIn:
 		if ev.Message == nil {
-			return emit, nil, false
+			return emit, false
 		}
 		m := *ev.Message
 		if !m.Self && (m.Kind == MsgPrivmsg || m.Kind == MsgNotice || m.Kind == MsgAction) {
@@ -739,19 +777,6 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound, netChang
 		}
 		_, created := n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
 		emit = append(emit, m)
-		netChanged = created
-
-	case EvMessageOut:
-		if ev.Message == nil {
-			return emit, nil, false
-		}
-		m := *ev.Message
-		if m.From == "" {
-			m.From = n.Nick
-		}
-		_, created := n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
-		emit = append(emit, m)
-		send = &outbound{target: m.Buffer, text: m.Text}
 		netChanged = created
 
 	case EvNames:
@@ -833,7 +858,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound, netChang
 		sys(ev.Channel, fmt.Sprintf("%s set topic: %s", who, ev.Text))
 		netChanged = true
 	}
-	return emit, send, netChanged
+	return emit, netChanged
 }
 
 // broadcast fans a committed line out to every registered sink.

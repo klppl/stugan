@@ -144,15 +144,16 @@ func TestToEventQueryBufferRouting(t *testing.T) {
 	}
 
 	// Our own echo'd DM to alice → query keyed by alice (the target), and
-	// classified as outbound.
+	// classified as an inbound display copy (EvMessageIn + Self), not a new
+	// outbound — so it isn't re-sent.
 	out := girc.ParseEvent("@batch=1 :me!u@h PRIVMSG alice :hi back")
 	out.Echo = true
 	ev, ok = toEvent("n", out, self)
 	if !ok {
 		t.Fatal("echo event not ok")
 	}
-	if ev.Type != core.EvMessageOut {
-		t.Errorf("Type = %q, want message_out", ev.Type)
+	if ev.Type != core.EvMessageIn {
+		t.Errorf("Type = %q, want message_in", ev.Type)
 	}
 	if ev.Message.Buffer != "alice" {
 		t.Errorf("echo DM buffer = %q, want alice", ev.Message.Buffer)
