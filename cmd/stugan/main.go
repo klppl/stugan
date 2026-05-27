@@ -117,6 +117,8 @@ func run() error {
 		StaticDir:      cfg.Server.StaticDir,
 		OriginPatterns: cfg.Server.OriginPatterns,
 		History:        db,
+		UploadDir:      filepath.Join(cfg.DataDir(), "uploads"),
+		PushDir:        filepath.Join(cfg.DataDir(), "push"),
 	})
 	engine.AddSink(srv)
 

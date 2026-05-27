@@ -43,6 +43,14 @@ type Options struct {
 	// History, if set, answers backlog:fetch requests with replay from the
 	// message store. When nil, backlog requests return an error frame.
 	History History
+	// UploadDir, if set, enables file uploads (POST /api/upload) served back
+	// from /uploads/.
+	UploadDir string
+	// MaxUpload caps an upload's size in bytes (default 10 MiB).
+	MaxUpload int64
+	// PushDir, if set, enables Web Push: VAPID keys and subscriptions are
+	// persisted there.
+	PushDir string
 }
 
 // Server bridges the core engine to WebSocket clients. It implements
@@ -54,6 +62,9 @@ type Server struct {
 	origins    []string
 	staticDir  string
 	history    History
+	uploadDir  string
+	maxUpload  int64
+	push       *pushManager
 
 	mu      sync.Mutex
 	clients map[*client]struct{}
@@ -76,6 +87,14 @@ func New(engine *core.Engine, opts Options) *Server {
 	if name == "" {
 		name = "stugan"
 	}
+	maxUpload := opts.MaxUpload
+	if maxUpload <= 0 {
+		maxUpload = 10 << 20
+	}
+	push, err := newPushManager(opts.PushDir)
+	if err != nil {
+		log.Warn("web push disabled", "err", err)
+	}
 	return &Server{
 		engine:     engine,
 		log:        log,
@@ -83,6 +102,9 @@ func New(engine *core.Engine, opts Options) *Server {
 		origins:    origins,
 		staticDir:  opts.StaticDir,
 		history:    opts.History,
+		uploadDir:  opts.UploadDir,
+		maxUpload:  maxUpload,
+		push:       push,
 		clients:    map[*client]struct{}{},
 	}
 }
@@ -95,6 +117,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	mux.HandleFunc("/api/preview", s.handlePreview)
+	mux.HandleFunc("/api/proxy", s.handleProxy)
+	if s.uploadDir != "" {
+		mux.HandleFunc("/api/upload", s.handleUpload)
+		mux.Handle("/uploads/", s.uploadFileServer())
+	}
+	if s.push != nil {
+		mux.HandleFunc("/api/push/vapid", s.handleVAPID)
+		mux.HandleFunc("/api/push/subscribe", s.handleSubscribe)
+	}
 	if s.staticDir != "" {
 		mux.Handle("/", http.FileServer(http.Dir(s.staticDir)))
 	}
@@ -130,6 +162,7 @@ func (s *Server) Print(m core.Message) {
 		return
 	}
 	s.broadcast(env)
+	s.maybePush(m)
 }
 
 // NetworkChanged implements core.Sink: it pushes a net:update with the
@@ -149,6 +182,9 @@ func (s *Server) caps() []string {
 	caps := []string{"uploads", "previews"}
 	if s.history != nil {
 		caps = append(caps, "search")
+	}
+	if s.push != nil {
+		caps = append(caps, "push")
 	}
 	return caps
 }
