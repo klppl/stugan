@@ -511,6 +511,42 @@ body {
 .settings .close {
   align-self: flex-end;
 }
+.theme-row {
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+.settings .link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+}
+.install-theme {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-alt);
+  border-radius: 4px;
+}
+.install-theme input,
+.install-theme textarea {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: inherit;
+}
+.install-theme textarea {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+.install-theme code {
+  font-family: ui-monospace, monospace;
+}
 .settings .danger {
   background: var(--hl);
   color: #fff;
