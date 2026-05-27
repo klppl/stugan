@@ -21,6 +21,7 @@ const (
 	TMsg          = "msg"           // s2c
 	TNetUpdate    = "net:update"    // s2c
 	TNetRemove    = "net:remove"    // s2c (and c2s)
+	TNetInfo      = "net:info"      // s2c (answers c2s net:info)
 	TBacklog      = "backlog"       // s2c (answers backlog:fetch)
 	TSearchResult = "search:result" // s2c (answers search)
 	TError        = "error"         // s2c
@@ -29,6 +30,7 @@ const (
 	TBacklogFetch = "backlog:fetch" // c2s
 	TSearch       = "search"        // c2s
 	TNetAdd       = "net:add"       // c2s
+	TNetEdit      = "net:edit"      // c2s
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -167,6 +169,29 @@ type NetAdd struct {
 // server→client notification that one was removed.
 type NetRemove struct {
 	Network string `json:"network"`
+}
+
+// NetInfoReq is a client→server request for a network's current config (to
+// populate the settings form). The reply is a net:info frame carrying a
+// NetConfig.
+type NetInfoReq struct {
+	Network string `json:"network"`
+}
+
+// NetConfig is a network's full editable configuration, used for the
+// net:info reply and the net:edit request. Network identifies the existing
+// network being edited.
+type NetConfig struct {
+	Network  string   `json:"network"`
+	Name     string   `json:"name"`
+	Addr     string   `json:"addr"`
+	TLS      bool     `json:"tls"`
+	Nick     string   `json:"nick"`
+	User     string   `json:"user"`
+	Realname string   `json:"realname"`
+	SASLUser string   `json:"sasl_user"`
+	SASLPass string   `json:"sasl_pass"`
+	Channels []string `json:"channels"`
 }
 
 // WireError is a server→client error, correlated to a request id when set

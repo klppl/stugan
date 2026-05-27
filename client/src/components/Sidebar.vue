@@ -3,18 +3,14 @@ import { ref } from "vue";
 import { connection, bufKey } from "../connection";
 import { isMuted, toggleMute } from "../settings";
 import AddNetwork from "./AddNetwork.vue";
+import NetworkSettings from "./NetworkSettings.vue";
 
 const store = connection.store;
 const showAdd = ref(false);
+const settingsFor = ref<string | null>(null);
 
 function isActive(network: string, buffer: string): boolean {
   return store.view === "chat" && store.active?.network === network && store.active?.buffer === buffer;
-}
-
-function removeNetwork(id: string, name: string) {
-  if (confirm(`Remove network "${name}"? This disconnects and forgets it.`)) {
-    connection.removeNetwork(id);
-  }
 }
 </script>
 
@@ -23,9 +19,9 @@ function removeNetwork(id: string, name: string) {
     <div class="brand">stugan</div>
 
     <div v-for="net in store.networks" :key="net.id" class="network">
-      <div class="network-name" @contextmenu.prevent="removeNetwork(net.id, net.name)" title="right-click to remove">
-        {{ net.name }}
-        <span class="nick">({{ net.nick }})</span>
+      <div class="network-name" @click="settingsFor = net.id" title="network settings">
+        <span>{{ net.name }} <span class="nick">({{ net.nick }})</span></span>
+        <span class="net-gear" @click.stop="settingsFor = net.id">⚙</span>
       </div>
       <ul class="buffers">
         <li
@@ -50,5 +46,6 @@ function removeNetwork(id: string, name: string) {
 
     <button class="add-network" @click="showAdd = true">+ Add network</button>
     <AddNetwork v-if="showAdd" @close="showAdd = false" />
+    <NetworkSettings v-if="settingsFor" :network="settingsFor" @close="settingsFor = null" />
   </nav>
 </template>

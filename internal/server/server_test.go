@@ -64,7 +64,7 @@ func TestWebSocketLoop(t *testing.T) {
 	eng := core.New(core.Options{Sink: noopSink{}})
 	srv := New(SingleUser(&Tenant{Engine: eng}), Options{})
 	eng.AddSink(srv.Sink(defaultUser))
-	eng.AddNetwork(core.NetworkSpec{ID: "libera", Name: "libera", Nick: "me"}, fc)
+	eng.AddNetwork(core.NetworkParams{ID: "libera", Name: "libera", Nick: "me"}, fc)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -141,7 +141,7 @@ func TestBacklogReplay(t *testing.T) {
 	eng := core.New(core.Options{Sink: noopSink{}})
 	srv := New(SingleUser(&Tenant{Engine: eng, History: hist}), Options{})
 	eng.AddSink(srv.Sink(defaultUser))
-	eng.AddNetwork(core.NetworkSpec{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
+	eng.AddNetwork(core.NetworkParams{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -186,7 +186,7 @@ func TestBacklogWithoutHistory(t *testing.T) {
 	eng := core.New(core.Options{Sink: noopSink{}})
 	srv := New(SingleUser(&Tenant{Engine: eng}), Options{}) // no History
 	eng.AddSink(srv.Sink(defaultUser))
-	eng.AddNetwork(core.NetworkSpec{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
+	eng.AddNetwork(core.NetworkParams{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = eng.Run(ctx) }()
@@ -207,11 +207,50 @@ func TestBacklogWithoutHistory(t *testing.T) {
 	}
 }
 
+func TestNetInfo(t *testing.T) {
+	eng := core.New(core.Options{Sink: noopSink{}})
+	srv := New(SingleUser(&Tenant{Engine: eng}), Options{})
+	eng.AddSink(srv.Sink(defaultUser))
+	eng.AddNetwork(core.NetworkParams{
+		ID: "libera", Name: "libera", Addr: "irc.libera.chat:6697", TLS: true,
+		Nick: "me", SASLUser: "acct", Channels: []string{"#go"},
+	}, &fakeConn{sent: make(chan [2]string, 1)})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = eng.Run(ctx) }()
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http") + "/ws"
+	ws, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	readFrame(t, ctx, ws) // hello
+	readFrame(t, ctx, ws) // init
+
+	req, _ := proto.Frame(proto.TNetInfo, proto.NetInfoReq{Network: "libera"})
+	req.ID = "i1"
+	_ = wsjson.Write(ctx, ws, req)
+	env := readFrame(t, ctx, ws)
+	if env.T != proto.TNetInfo || env.ID != "i1" {
+		t.Fatalf("frame = %q id=%q, want net:info i1", env.T, env.ID)
+	}
+	var cfg proto.NetConfig
+	if err := decode(env, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Addr != "irc.libera.chat:6697" || !cfg.TLS || cfg.SASLUser != "acct" || len(cfg.Channels) != 1 {
+		t.Fatalf("net:info config = %+v", cfg)
+	}
+}
+
 func TestRejectsBadMsgSend(t *testing.T) {
 	eng := core.New(core.Options{Sink: noopSink{}})
 	srv := New(SingleUser(&Tenant{Engine: eng}), Options{})
 	eng.AddSink(srv.Sink(defaultUser))
-	eng.AddNetwork(core.NetworkSpec{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
+	eng.AddNetwork(core.NetworkParams{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

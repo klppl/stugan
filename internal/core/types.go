@@ -67,7 +67,7 @@ func (u *User) clone() *User {
 // clone returns a deep copy of a network (channels and members included).
 func (n *Network) clone() *Network {
 	nc := &Network{
-		ID: n.ID, Name: n.Name, Nick: n.Nick, State: n.State,
+		ID: n.ID, Name: n.Name, Nick: n.Nick, State: n.State, Params: n.Params,
 		Channels: make([]*Channel, len(n.Channels)),
 	}
 	for j, ch := range n.Channels {
@@ -92,6 +92,9 @@ type Network struct {
 	Nick     string
 	State    ConnState
 	Channels []*Channel
+	// Params is the full connection config (addr, TLS, SASL, …). Retained
+	// so the GUI can read/edit it; never included in the wire snapshot.
+	Params NetworkParams
 }
 
 // Channel returns the buffer with the given name (case-insensitive), or nil.

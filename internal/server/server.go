@@ -324,6 +324,37 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			c.sendError(env.ID, "bad_request", err.Error())
 		}
 
+	case proto.TNetInfo:
+		var d proto.NetInfoReq
+		if err := decode(env, &d); err != nil || d.Network == "" {
+			c.sendError(env.ID, "bad_request", "net:info requires network")
+			return
+		}
+		p, ok := c.tenant.Engine.NetworkConfig(d.Network)
+		if !ok {
+			c.sendError(env.ID, "not_found", "unknown network")
+			return
+		}
+		s.reply(c, env.ID, proto.TNetInfo, proto.NetConfig{
+			Network: p.ID, Name: p.Name, Addr: p.Addr, TLS: p.TLS,
+			Nick: p.Nick, User: p.User, Realname: p.Realname,
+			SASLUser: p.SASLUser, SASLPass: p.SASLPass, Channels: p.Channels,
+		})
+
+	case proto.TNetEdit:
+		var d proto.NetConfig
+		if err := decode(env, &d); err != nil || d.Network == "" || d.Addr == "" {
+			c.sendError(env.ID, "bad_request", "net:edit requires network and addr")
+			return
+		}
+		if err := c.tenant.Engine.UpdateNetwork(core.NetworkParams{
+			ID: d.Network, Name: d.Network, Addr: d.Addr, TLS: d.TLS,
+			Nick: d.Nick, User: d.User, Realname: d.Realname,
+			SASLUser: d.SASLUser, SASLPass: d.SASLPass, Channels: d.Channels,
+		}); err != nil {
+			c.sendError(env.ID, "bad_request", err.Error())
+		}
+
 	default:
 		s.log.Debug("ignoring unknown frame", "t", env.T)
 	}

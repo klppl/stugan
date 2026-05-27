@@ -14,13 +14,6 @@ import (
 	"time"
 )
 
-// NetworkSpec seeds a network's initial state when it is registered.
-type NetworkSpec struct {
-	ID   string
-	Name string
-	Nick string
-}
-
 // Sink observes committed state changes (post-hook, post-state-update),
 // the read side of the bus. Print receives each new buffer line;
 // NetworkChanged receives a snapshot of a network whose structure changed
@@ -137,12 +130,12 @@ func (e *Engine) SetHost(h PluginHost) {
 
 // AddNetwork registers a pre-built connection and its initial state. Call
 // before Run (used for networks loaded at startup).
-func (e *Engine) AddNetwork(spec NetworkSpec, conn IRCConn) {
+func (e *Engine) AddNetwork(p NetworkParams, conn IRCConn) {
 	e.mu.Lock()
 	e.user.Networks = append(e.user.Networks, &Network{
-		ID: spec.ID, Name: spec.Name, Nick: spec.Nick, State: StateDisconnected,
+		ID: p.ID, Name: p.Name, Nick: p.Nick, State: StateDisconnected, Params: p,
 	})
-	e.conns[spec.ID] = conn
+	e.conns[p.ID] = conn
 	e.mu.Unlock()
 }
 
@@ -175,7 +168,7 @@ func (e *Engine) AddNetworkLive(p NetworkParams) error {
 		return err
 	}
 	e.user.Networks = append(e.user.Networks, &Network{
-		ID: p.ID, Name: p.Name, Nick: p.Nick, State: StateDisconnected,
+		ID: p.ID, Name: p.Name, Nick: p.Nick, State: StateDisconnected, Params: p,
 	})
 	e.conns[p.ID] = conn
 	if e.running {
@@ -226,6 +219,62 @@ func (e *Engine) RemoveNetwork(id string) error {
 		s.NetworkRemoved(id)
 	}
 	return nil
+}
+
+// UpdateNetwork changes an existing network's connection settings and
+// reconnects with them. The network keeps its id (identity) and message
+// history. Safe to call from any goroutine.
+func (e *Engine) UpdateNetwork(p NetworkParams) error {
+	e.mu.Lock()
+	n := e.user.Network(p.ID)
+	if n == nil {
+		e.mu.Unlock()
+		return errors.New("unknown network")
+	}
+	if e.connector == nil {
+		e.mu.Unlock()
+		return errNoConnector
+	}
+	conn, err := e.connector.Dial(p, e)
+	if err != nil {
+		e.mu.Unlock()
+		return err
+	}
+	// Stop the old connection and swap in the new one.
+	if cancel := e.connCancels[p.ID]; cancel != nil {
+		cancel()
+		delete(e.connCancels, p.ID)
+	}
+	old := e.conns[p.ID]
+	n.Params = p
+	n.Name = p.Name
+	n.Nick = p.Nick
+	e.conns[p.ID] = conn
+	if e.running {
+		e.startConnLocked(p.ID, conn)
+	}
+	e.mu.Unlock()
+
+	if old != nil {
+		_ = old.Close()
+	}
+	if e.netStore != nil {
+		if err := e.netStore.SaveNetwork(p); err != nil {
+			e.log.Warn("persist network", "network", p.ID, "err", err)
+		}
+	}
+	e.notifyNetwork(p.ID)
+	return nil
+}
+
+// NetworkConfig returns the stored connection params for a network.
+func (e *Engine) NetworkConfig(id string) (NetworkParams, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if n := e.user.Network(id); n != nil {
+		return n.Params, true
+	}
+	return NetworkParams{}, false
 }
 
 // connFor returns the connection for a network id, race-safely.

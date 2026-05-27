@@ -158,7 +158,7 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 			if err != nil {
 				return nil, nil, fmt.Errorf("user %q network %q: %w", u.Name, p.Name, err)
 			}
-			eng.AddNetwork(core.NetworkSpec{ID: p.ID, Name: p.Name, Nick: p.Nick}, conn)
+			eng.AddNetwork(p, conn)
 		}
 
 		h.engines[u.Name] = eng

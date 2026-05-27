@@ -41,7 +41,7 @@ func (h *fakeHub) Users() []string                 { return []string{"alice", "b
 
 func startEngine(t *testing.T, ctx context.Context, network string) *core.Engine {
 	eng := core.New(core.Options{Sink: noopSink{}})
-	eng.AddNetwork(core.NetworkSpec{ID: network, Name: network, Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
+	eng.AddNetwork(core.NetworkParams{ID: network, Name: network, Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
 	go func() { _ = eng.Run(ctx) }()
 	return eng
 }

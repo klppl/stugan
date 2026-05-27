@@ -56,7 +56,7 @@ func newTestEngine(t *testing.T) (*Engine, *captureSink) {
 	t.Helper()
 	sink := &captureSink{}
 	e := New(Options{Sink: sink})
-	e.AddNetwork(NetworkSpec{ID: "net", Name: "net", Nick: "me"}, nil)
+	e.AddNetwork(NetworkParams{ID: "net", Name: "net", Nick: "me"}, nil)
 	return e, sink
 }
 
@@ -286,6 +286,32 @@ func TestAddRemoveNetworkLive(t *testing.T) {
 	}
 }
 
+func TestUpdateNetwork(t *testing.T) {
+	sink := &captureSink{}
+	conn := &fakeConnector{}
+	netStore := &recordingNetStore{}
+	e := New(Options{Sink: sink, Connector: conn, Networks: netStore})
+
+	if err := e.AddNetworkLive(NetworkParams{ID: "libera", Name: "libera", Addr: "old:6697", Nick: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.UpdateNetwork(NetworkParams{ID: "libera", Name: "libera", Addr: "new:6697", Nick: "newnick", SASLUser: "acct"}); err != nil {
+		t.Fatalf("UpdateNetwork: %v", err)
+	}
+	if conn.dialed != 2 {
+		t.Errorf("dialed %d times, want 2 (add + reconnect)", conn.dialed)
+	}
+	got, ok := e.NetworkConfig("libera")
+	if !ok || got.Addr != "new:6697" || got.Nick != "newnick" || got.SASLUser != "acct" {
+		t.Fatalf("config not updated: %+v", got)
+	}
+	// Persisted with the new values.
+	last := netStore.saved[len(netStore.saved)-1]
+	if last.Addr != "new:6697" || last.SASLUser != "acct" {
+		t.Errorf("update not persisted: %+v", last)
+	}
+}
+
 func TestAddNetworkLiveNoConnector(t *testing.T) {
 	e := New(Options{Sink: &captureSink{}}) // no connector
 	if err := e.AddNetworkLive(NetworkParams{ID: "n", Addr: "x:1"}); err == nil {
@@ -317,7 +343,7 @@ func (dropHost) Close() error       { return nil }
 func TestHostCanDropMessage(t *testing.T) {
 	sink := &captureSink{}
 	e := New(Options{Sink: sink, Host: dropHost{}})
-	e.AddNetwork(NetworkSpec{ID: "net", Name: "net", Nick: "me"}, nil)
+	e.AddNetwork(NetworkParams{ID: "net", Name: "net", Nick: "me"}, nil)
 
 	ctx := context.Background()
 	e.handle(ctx, Event{Type: EvMessageIn, Network: "net", Message: &Message{
