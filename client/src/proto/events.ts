@@ -9,12 +9,14 @@ export const T = {
   Init: "init",
   Msg: "msg",
   NetUpdate: "net:update",
+  NetRemove: "net:remove",
   Backlog: "backlog",
   SearchResult: "search:result",
   Error: "error",
   MsgSend: "msg:send",
   BacklogFetch: "backlog:fetch",
   Search: "search",
+  NetAdd: "net:add",
 } as const;
 
 export interface Envelope<D = unknown> {
@@ -105,6 +107,22 @@ export interface SearchReq {
 export interface SearchResp {
   query: string;
   results: MessageDTO[];
+}
+
+export interface NetAdd {
+  name: string;
+  addr: string;
+  tls: boolean;
+  nick: string;
+  user?: string;
+  realname?: string;
+  sasl_user?: string;
+  sasl_pass?: string;
+  channels?: string[];
+}
+
+export interface NetRemove {
+  network: string;
 }
 
 export interface WireError {

@@ -300,6 +300,30 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	case proto.TSearch:
 		s.handleSearch(ctx, c, env)
 
+	case proto.TNetAdd:
+		var d proto.NetAdd
+		if err := decode(env, &d); err != nil || d.Name == "" || d.Addr == "" {
+			c.sendError(env.ID, "bad_request", "net:add requires name and addr")
+			return
+		}
+		if err := c.tenant.Engine.AddNetworkLive(core.NetworkParams{
+			ID: d.Name, Name: d.Name, Addr: d.Addr, TLS: d.TLS,
+			Nick: d.Nick, User: d.User, Realname: d.Realname,
+			SASLUser: d.SASLUser, SASLPass: d.SASLPass, Channels: d.Channels,
+		}); err != nil {
+			c.sendError(env.ID, "bad_request", err.Error())
+		}
+
+	case proto.TNetRemove:
+		var d proto.NetRemove
+		if err := decode(env, &d); err != nil || d.Network == "" {
+			c.sendError(env.ID, "bad_request", "net:remove requires network")
+			return
+		}
+		if err := c.tenant.Engine.RemoveNetwork(d.Network); err != nil {
+			c.sendError(env.ID, "bad_request", err.Error())
+		}
+
 	default:
 		s.log.Debug("ignoring unknown frame", "t", env.T)
 	}
@@ -428,6 +452,12 @@ func (u *userSink) Print(m core.Message) {
 
 func (u *userSink) NetworkChanged(n *core.Network) {
 	if env, err := proto.Frame(proto.TNetUpdate, toNetworkDTO(n)); err == nil {
+		u.s.routeToUser(u.user, env)
+	}
+}
+
+func (u *userSink) NetworkRemoved(networkID string) {
+	if env, err := proto.Frame(proto.TNetRemove, proto.NetRemove{Network: networkID}); err == nil {
 		u.s.routeToUser(u.user, env)
 	}
 }

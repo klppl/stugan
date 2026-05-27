@@ -20,6 +20,7 @@ const (
 	TInit         = "init"          // s2c
 	TMsg          = "msg"           // s2c
 	TNetUpdate    = "net:update"    // s2c
+	TNetRemove    = "net:remove"    // s2c (and c2s)
 	TBacklog      = "backlog"       // s2c (answers backlog:fetch)
 	TSearchResult = "search:result" // s2c (answers search)
 	TError        = "error"         // s2c
@@ -27,6 +28,7 @@ const (
 	TMsgSend      = "msg:send"      // c2s
 	TBacklogFetch = "backlog:fetch" // c2s
 	TSearch       = "search"        // c2s
+	TNetAdd       = "net:add"       // c2s
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -146,6 +148,25 @@ type SearchReq struct {
 type SearchResp struct {
 	Query   string       `json:"query"`
 	Results []MessageDTO `json:"results"`
+}
+
+// NetAdd is a client→server request to add and connect a network at runtime.
+type NetAdd struct {
+	Name     string   `json:"name"`
+	Addr     string   `json:"addr"`
+	TLS      bool     `json:"tls"`
+	Nick     string   `json:"nick"`
+	User     string   `json:"user,omitempty"`
+	Realname string   `json:"realname,omitempty"`
+	SASLUser string   `json:"sasl_user,omitempty"`
+	SASLPass string   `json:"sasl_pass,omitempty"`
+	Channels []string `json:"channels,omitempty"`
+}
+
+// NetRemove is a client→server request to remove a network, and the
+// server→client notification that one was removed.
+type NetRemove struct {
+	Network string `json:"network"`
 }
 
 // WireError is a server→client error, correlated to a request id when set

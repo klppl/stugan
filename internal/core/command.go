@@ -10,7 +10,7 @@ import (
 // common slash-commands; anything unrecognized is sent as a raw IRC line
 // (uppercased), matching the weechat/irssi habit of /FOO being raw FOO.
 func (e *Engine) runBuiltinCommand(ev Event) {
-	conn := e.conns[ev.Network]
+	conn := e.connFor(ev.Network)
 	if conn == nil {
 		return
 	}
@@ -99,7 +99,7 @@ type engineAPI struct{ e *Engine }
 // API returns the plugin-facing API for this engine.
 func (e *Engine) API() API { return engineAPI{e} }
 
-func (a engineAPI) conn(network string) IRCConn { return a.e.conns[network] }
+func (a engineAPI) conn(network string) IRCConn { return a.e.connFor(network) }
 
 func (a engineAPI) Send(network, raw string) error {
 	c := a.conn(network)

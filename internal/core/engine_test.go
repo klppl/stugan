@@ -9,12 +9,46 @@ import (
 
 // captureSink records printed lines and network snapshots for assertions.
 type captureSink struct {
-	msgs []Message
-	nets []*Network
+	msgs    []Message
+	nets    []*Network
+	removed []string
 }
 
 func (c *captureSink) Print(m Message)           { c.msgs = append(c.msgs, m) }
 func (c *captureSink) NetworkChanged(n *Network) { c.nets = append(c.nets, n) }
+func (c *captureSink) NetworkRemoved(id string)  { c.removed = append(c.removed, id) }
+
+// fakeConnector / fakeRuntimeConn back runtime AddNetworkLive in tests.
+type fakeConnector struct{ dialed int }
+
+func (f *fakeConnector) Dial(NetworkParams, ConnHandler) (IRCConn, error) {
+	f.dialed++
+	return &fakeRuntimeConn{}, nil
+}
+
+type fakeRuntimeConn struct{}
+
+func (fakeRuntimeConn) Connect(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+func (fakeRuntimeConn) SendRaw(string) error              { return nil }
+func (fakeRuntimeConn) Message(string, string) error      { return nil }
+func (fakeRuntimeConn) Caps() []string                    { return nil }
+func (fakeRuntimeConn) CurrentNick() string               { return "" }
+func (fakeRuntimeConn) Close() error                      { return nil }
+
+// recordingNetStore records SaveNetwork/DeleteNetwork calls.
+type recordingNetStore struct {
+	saved   []NetworkParams
+	deleted []string
+}
+
+func (r *recordingNetStore) SaveNetwork(p NetworkParams) error {
+	r.saved = append(r.saved, p)
+	return nil
+}
+func (r *recordingNetStore) DeleteNetwork(id string) error {
+	r.deleted = append(r.deleted, id)
+	return nil
+}
 
 // newTestEngine returns an engine with one registered network and a
 // capture sink, without starting the run loop (apply is exercised directly).
@@ -186,6 +220,56 @@ func TestPartSelfRemovesBuffer(t *testing.T) {
 	e.apply(Event{Type: EvPart, Network: "net", Nick: "me", Channel: "#go"})
 	if net0(e).Channel("#go") != nil {
 		t.Error("our own part did not remove the buffer")
+	}
+}
+
+func TestAddRemoveNetworkLive(t *testing.T) {
+	sink := &captureSink{}
+	conn := &fakeConnector{}
+	netStore := &recordingNetStore{}
+	e := New(Options{Sink: sink, Connector: conn, Networks: netStore})
+
+	// Add a network at runtime.
+	if err := e.AddNetworkLive(NetworkParams{ID: "libera", Name: "libera", Addr: "irc.libera.chat:6697", Nick: "me"}); err != nil {
+		t.Fatalf("AddNetworkLive: %v", err)
+	}
+	if conn.dialed != 1 {
+		t.Errorf("connector dialed %d times, want 1", conn.dialed)
+	}
+	if e.user.Network("libera") == nil {
+		t.Fatal("network not registered")
+	}
+	if len(netStore.saved) != 1 || netStore.saved[0].ID != "libera" {
+		t.Errorf("network not persisted: %+v", netStore.saved)
+	}
+	if len(sink.nets) == 0 {
+		t.Error("no net:update emitted on add")
+	}
+
+	// Duplicate is rejected.
+	if err := e.AddNetworkLive(NetworkParams{ID: "libera", Addr: "x:1"}); err == nil {
+		t.Error("duplicate network accepted")
+	}
+
+	// Remove it.
+	if err := e.RemoveNetwork("libera"); err != nil {
+		t.Fatalf("RemoveNetwork: %v", err)
+	}
+	if e.user.Network("libera") != nil {
+		t.Error("network still present after remove")
+	}
+	if len(netStore.deleted) != 1 || netStore.deleted[0] != "libera" {
+		t.Errorf("removal not persisted: %+v", netStore.deleted)
+	}
+	if len(sink.removed) != 1 || sink.removed[0] != "libera" {
+		t.Errorf("no net:remove emitted: %+v", sink.removed)
+	}
+}
+
+func TestAddNetworkLiveNoConnector(t *testing.T) {
+	e := New(Options{Sink: &captureSink{}}) // no connector
+	if err := e.AddNetworkLive(NetworkParams{ID: "n", Addr: "x:1"}); err == nil {
+		t.Error("expected error without a connector")
 	}
 }
 

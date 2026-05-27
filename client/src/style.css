@@ -463,6 +463,33 @@ body {
   align-self: flex-end;
 }
 
+.add-network {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 12px;
+  padding: 7px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.add-network:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.addnet .row input[type="text"],
+.addnet .row input:not([type]),
+.addnet .row input[type="password"],
+.addnet .row input[type="number"] {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  width: 60%;
+}
+
 /* Login + splash */
 .splash {
   display: flex;

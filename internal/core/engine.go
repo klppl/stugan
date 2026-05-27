@@ -6,6 +6,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -29,6 +30,9 @@ type NetworkSpec struct {
 type Sink interface {
 	Print(m Message)
 	NetworkChanged(n *Network)
+	// NetworkRemoved signals that a network was removed at runtime so
+	// observers can drop it.
+	NetworkRemoved(networkID string)
 }
 
 // Options configures a new Engine.
@@ -39,6 +43,8 @@ type Options struct {
 	User      *User             // nil → a single implicit user
 	Highlight *Highlighter      // nil → only nick mentions highlight (via a default)
 	Aliases   map[string]string // command aliases with $1/$2/$* substitution
+	Connector Connector         // builds connections for runtime AddNetwork
+	Networks  NetworkStore      // persists GUI-added networks (optional)
 }
 
 // Engine owns the domain state and serializes all mutation onto a single
@@ -58,7 +64,15 @@ type Engine struct {
 
 	highlight *Highlighter
 	aliases   map[string]string
-	conns     map[string]IRCConn
+	connector Connector
+	netStore  NetworkStore
+
+	// conns and the run-state below are guarded by mu.
+	conns       map[string]IRCConn
+	connCancels map[string]context.CancelFunc
+	running     bool
+	runCtx      context.Context
+	runWG       sync.WaitGroup
 
 	events chan Event
 	done   chan struct{}
@@ -90,15 +104,18 @@ func New(opts Options) *Engine {
 		hl, _ = NewHighlighter(nil, nil) // nick mentions only
 	}
 	return &Engine{
-		log:       log,
-		host:      host,
-		sinks:     sinks,
-		user:      user,
-		highlight: hl,
-		aliases:   opts.Aliases,
-		conns:     map[string]IRCConn{},
-		events:    make(chan Event, 256),
-		done:      make(chan struct{}),
+		log:         log,
+		host:        host,
+		sinks:       sinks,
+		user:        user,
+		highlight:   hl,
+		aliases:     opts.Aliases,
+		connector:   opts.Connector,
+		netStore:    opts.Networks,
+		conns:       map[string]IRCConn{},
+		connCancels: map[string]context.CancelFunc{},
+		events:      make(chan Event, 256),
+		done:        make(chan struct{}),
 	}
 }
 
@@ -118,16 +135,104 @@ func (e *Engine) SetHost(h PluginHost) {
 	e.host = h
 }
 
-// AddNetwork registers a network's initial state and its connection. Call
-// before Run.
+// AddNetwork registers a pre-built connection and its initial state. Call
+// before Run (used for networks loaded at startup).
 func (e *Engine) AddNetwork(spec NetworkSpec, conn IRCConn) {
+	e.mu.Lock()
 	e.user.Networks = append(e.user.Networks, &Network{
-		ID:    spec.ID,
-		Name:  spec.Name,
-		Nick:  spec.Nick,
-		State: StateDisconnected,
+		ID: spec.ID, Name: spec.Name, Nick: spec.Nick, State: StateDisconnected,
 	})
 	e.conns[spec.ID] = conn
+	e.mu.Unlock()
+}
+
+// AddNetwork-related runtime errors.
+var (
+	errNetworkExists = errors.New("network already exists")
+	errNoConnector   = errors.New("runtime networks not supported")
+)
+
+// AddNetworkLive adds a network at runtime: it dials via the Connector,
+// registers it, persists it (if a NetworkStore is set), starts its
+// connection goroutine when the engine is running, and notifies observers.
+// Safe to call from any goroutine (e.g. a server handler).
+func (e *Engine) AddNetworkLive(p NetworkParams) error {
+	if p.ID == "" || p.Addr == "" {
+		return errors.New("network requires id and addr")
+	}
+	e.mu.Lock()
+	if e.connector == nil {
+		e.mu.Unlock()
+		return errNoConnector
+	}
+	if e.user.Network(p.ID) != nil {
+		e.mu.Unlock()
+		return errNetworkExists
+	}
+	conn, err := e.connector.Dial(p, e)
+	if err != nil {
+		e.mu.Unlock()
+		return err
+	}
+	e.user.Networks = append(e.user.Networks, &Network{
+		ID: p.ID, Name: p.Name, Nick: p.Nick, State: StateDisconnected,
+	})
+	e.conns[p.ID] = conn
+	if e.running {
+		e.startConnLocked(p.ID, conn)
+	}
+	e.mu.Unlock()
+
+	if e.netStore != nil {
+		if err := e.netStore.SaveNetwork(p); err != nil {
+			e.log.Warn("persist network", "network", p.ID, "err", err)
+		}
+	}
+	e.notifyNetwork(p.ID)
+	return nil
+}
+
+// RemoveNetwork disconnects and removes a network at runtime, deletes it
+// from persistence, and notifies observers.
+func (e *Engine) RemoveNetwork(id string) error {
+	e.mu.Lock()
+	if e.user.Network(id) == nil {
+		e.mu.Unlock()
+		return errors.New("unknown network")
+	}
+	if cancel := e.connCancels[id]; cancel != nil {
+		cancel()
+		delete(e.connCancels, id)
+	}
+	conn := e.conns[id]
+	delete(e.conns, id)
+	for i, n := range e.user.Networks {
+		if n.ID == id {
+			e.user.Networks = append(e.user.Networks[:i], e.user.Networks[i+1:]...)
+			break
+		}
+	}
+	e.mu.Unlock()
+
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if e.netStore != nil {
+		if err := e.netStore.DeleteNetwork(id); err != nil {
+			e.log.Warn("delete persisted network", "network", id, "err", err)
+		}
+	}
+	for _, s := range e.sinks {
+		s.NetworkRemoved(id)
+	}
+	return nil
+}
+
+// connFor returns the connection for a network id, race-safely.
+func (e *Engine) connFor(id string) IRCConn {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.conns[id]
 }
 
 // SendInput submits a line of user input for a buffer. It is goroutine-safe
@@ -193,27 +298,45 @@ func (e *Engine) HandleEvent(ev Event) {
 
 // Run starts the event loop and a goroutine per connection, then blocks
 // until ctx is cancelled, after which it closes connections and drains.
+// Networks added at runtime (AddNetwork) start their own goroutines.
 func (e *Engine) Run(ctx context.Context) error {
-	var wg sync.WaitGroup
-
-	wg.Go(func() { e.loop(ctx) })
-
+	e.mu.Lock()
+	e.running = true
+	e.runCtx = ctx
+	e.runWG.Go(func() { e.loop(ctx) })
 	for id, conn := range e.conns {
-		wg.Go(func() { e.runConn(ctx, id, conn) })
+		e.startConnLocked(id, conn)
 	}
+	e.mu.Unlock()
 
 	<-ctx.Done()
 	e.closeo.Do(func() { close(e.done) })
-	for id, conn := range e.conns {
-		if err := conn.Close(); err != nil {
-			e.log.Warn("closing connection", "network", id, "err", err)
-		}
+
+	e.mu.Lock()
+	e.running = false
+	conns := make([]IRCConn, 0, len(e.conns))
+	for _, conn := range e.conns {
+		conns = append(conns, conn)
 	}
-	wg.Wait()
+	e.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
+
+	e.runWG.Wait()
 	if err := e.host.Close(); err != nil {
 		e.log.Warn("closing plugin host", "err", err)
 	}
 	return nil
+}
+
+// startConnLocked launches a connection's reconnect goroutine under a child
+// context so it can be cancelled individually (on RemoveNetwork) or by Run's
+// context. The caller holds e.mu.
+func (e *Engine) startConnLocked(id string, conn IRCConn) {
+	connCtx, cancel := context.WithCancel(e.runCtx)
+	e.connCancels[id] = cancel
+	e.runWG.Go(func() { e.runConn(connCtx, id, conn) })
 }
 
 // runConn drives one connection with simple exponential reconnect backoff.
@@ -310,7 +433,7 @@ func (e *Engine) apply(ev Event) {
 		e.notifyNetwork(ev.Network)
 	}
 	if send != nil {
-		if conn := e.conns[ev.Network]; conn != nil {
+		if conn := e.connFor(ev.Network); conn != nil {
 			if err := conn.Message(send.target, send.text); err != nil {
 				e.log.Warn("send failed", "network", ev.Network, "err", err)
 			}

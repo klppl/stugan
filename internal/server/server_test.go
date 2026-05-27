@@ -31,6 +31,7 @@ type noopSink struct{}
 
 func (noopSink) Print(core.Message)           {}
 func (noopSink) NetworkChanged(*core.Network) {}
+func (noopSink) NetworkRemoved(string)        {}
 
 // fakeHistory returns a canned backlog page.
 type fakeHistory struct {

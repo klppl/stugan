@@ -119,4 +119,40 @@ func TestSearch(t *testing.T) {
 	}
 }
 
+func TestNetworkPersistence(t *testing.T) {
+	s := openTest(t)
+	if err := s.SaveNetwork(core.NetworkParams{ID: "libera", Name: "libera", Addr: "irc.libera.chat:6697", TLS: true, Nick: "me", Channels: []string{"#go"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveNetwork(core.NetworkParams{ID: "oftc", Name: "oftc", Addr: "irc.oftc.net:6697", TLS: true, Nick: "me"}); err != nil {
+		t.Fatal(err)
+	}
+	nets, err := s.Networks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nets) != 2 {
+		t.Fatalf("got %d networks, want 2", len(nets))
+	}
+	// Upsert (same id) replaces, not duplicates.
+	if err := s.SaveNetwork(core.NetworkParams{ID: "libera", Name: "libera", Addr: "newaddr:6697", Nick: "me2"}); err != nil {
+		t.Fatal(err)
+	}
+	nets, _ = s.Networks()
+	if len(nets) != 2 {
+		t.Fatalf("upsert duplicated; got %d", len(nets))
+	}
+
+	if err := s.DeleteNetwork("oftc"); err != nil {
+		t.Fatal(err)
+	}
+	nets, _ = s.Networks()
+	if len(nets) != 1 || nets[0].ID != "libera" || nets[0].Addr != "newaddr:6697" {
+		t.Fatalf("after delete = %+v", nets)
+	}
+	if len(nets[0].Channels) != 0 {
+		t.Errorf("upserted network kept stale channels: %+v", nets[0].Channels)
+	}
+}
+
 func text(i int) string { return string(rune('a'+i)) + "-line" }

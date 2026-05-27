@@ -109,11 +109,14 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 		}
 		h.stores = append(h.stores, db)
 
+		connector := ircConnector{log: log.With("user", u.Name)}
 		eng := core.New(core.Options{
 			Logger:    log.With("user", u.Name),
 			Highlight: highlighter,
 			Aliases:   cfg.Aliases,
 			User:      &core.User{ID: u.Name, Name: u.Name},
+			Connector: connector,
+			Networks:  db, // persist GUI-added networks
 		})
 		eng.AddSink(db)
 
@@ -131,21 +134,31 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 			eng.SetHost(host)
 		}
 
-		for _, n := range u.Networks {
-			if !n.Connect {
-				log.Info("network configured but not auto-connecting", "user", u.Name, "network", n.Name)
-				continue
+		// The store is the source of truth for networks. On first run it is
+		// seeded from the config's auto-connect networks; thereafter networks
+		// are managed from the GUI (add/remove are persisted).
+		nets, err := db.Networks()
+		if err != nil {
+			return nil, nil, fmt.Errorf("user %q load networks: %w", u.Name, err)
+		}
+		if len(nets) == 0 {
+			for _, n := range u.Networks {
+				if !n.Connect {
+					continue
+				}
+				p := paramsFromConfig(n)
+				if err := db.SaveNetwork(p); err != nil {
+					return nil, nil, err
+				}
+				nets = append(nets, p)
 			}
-			conn, err := irc.New(irc.Options{
-				Network: n.Name, Addr: n.Addr, TLS: n.TLS,
-				Nick: n.Nick, User: n.User, Realname: n.Realname,
-				SASLUser: n.SASLUser, SASLPass: n.SASLPass,
-				Channels: n.Channels, Logger: log,
-			}, eng)
+		}
+		for _, p := range nets {
+			conn, err := connector.Dial(p, eng)
 			if err != nil {
-				return nil, nil, fmt.Errorf("user %q network %q: %w", u.Name, n.Name, err)
+				return nil, nil, fmt.Errorf("user %q network %q: %w", u.Name, p.Name, err)
 			}
-			eng.AddNetwork(core.NetworkSpec{ID: n.Name, Name: n.Name, Nick: n.Nick}, conn)
+			eng.AddNetwork(core.NetworkSpec{ID: p.ID, Name: p.Name, Nick: p.Nick}, conn)
 		}
 
 		h.engines[u.Name] = eng
@@ -165,6 +178,28 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 func (h *hub) registerSinks(srv *server.Server) {
 	for id, eng := range h.engines {
 		eng.AddSink(srv.Sink(id))
+	}
+}
+
+// ircConnector builds core connections from params, wrapping internal/irc so
+// core can dial at runtime without importing the IRC library.
+type ircConnector struct{ log *slog.Logger }
+
+func (c ircConnector) Dial(p core.NetworkParams, h core.ConnHandler) (core.IRCConn, error) {
+	return irc.New(irc.Options{
+		Network: p.ID, Addr: p.Addr, TLS: p.TLS,
+		Nick: p.Nick, User: p.User, Realname: p.Realname,
+		SASLUser: p.SASLUser, SASLPass: p.SASLPass,
+		Channels: p.Channels, Logger: c.log,
+	}, h)
+}
+
+// paramsFromConfig converts a config network into runtime params.
+func paramsFromConfig(n config.NetworkConfig) core.NetworkParams {
+	return core.NetworkParams{
+		ID: n.Name, Name: n.Name, Addr: n.Addr, TLS: n.TLS,
+		Nick: n.Nick, User: n.User, Realname: n.Realname,
+		SASLUser: n.SASLUser, SASLPass: n.SASLPass, Channels: n.Channels,
 	}
 }
 

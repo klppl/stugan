@@ -40,6 +40,11 @@ word = "ping"
 #   nick = "alice"
 #   channels = ["#stugan"]
 
+# Networks can be added, removed, and connected entirely from the web UI
+# (the "+ Add network" button). Any [[networks]] below are used only to SEED
+# the store on first run; after that the store is authoritative, so manage
+# networks from the GUI rather than editing this file.
+#
 # One [[networks]] block per IRC network (single-user mode).
 [[networks]]
 name     = "libera"

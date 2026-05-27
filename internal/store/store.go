@@ -25,7 +25,10 @@ type Store struct {
 	log *slog.Logger
 }
 
-var _ core.Sink = (*Store)(nil)
+var (
+	_ core.Sink         = (*Store)(nil)
+	_ core.NetworkStore = (*Store)(nil)
+)
 
 const schema = `
 CREATE TABLE IF NOT EXISTS messages (
@@ -53,6 +56,11 @@ END;
 CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
   INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.id, old.text);
 END;
+
+CREATE TABLE IF NOT EXISTS networks (
+  id   TEXT PRIMARY KEY,
+  data TEXT NOT NULL      -- JSON of core.NetworkParams
+);
 `
 
 // Open opens (creating if needed) the database at path and applies the
@@ -113,9 +121,51 @@ func (s *Store) Print(m core.Message) {
 	}
 }
 
-// NetworkChanged implements core.Sink. Network/session persistence lands
-// when networks become runtime-mutable (Phase 6+); for now it is a no-op.
+// NetworkChanged is a no-op for the store: only committed lines are saved.
 func (s *Store) NetworkChanged(*core.Network) {}
+
+// NetworkRemoved is a no-op for the store; removal is persisted via
+// DeleteNetwork.
+func (s *Store) NetworkRemoved(string) {}
+
+// SaveNetwork upserts a persisted network (core.NetworkStore).
+func (s *Store) SaveNetwork(p core.NetworkParams) error {
+	data, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO networks(id, data) VALUES(?, ?)
+		ON CONFLICT(id) DO UPDATE SET data = excluded.data`, p.ID, string(data))
+	return err
+}
+
+// DeleteNetwork removes a persisted network (core.NetworkStore).
+func (s *Store) DeleteNetwork(id string) error {
+	_, err := s.db.Exec(`DELETE FROM networks WHERE id = ?`, id)
+	return err
+}
+
+// Networks returns all persisted networks.
+func (s *Store) Networks() ([]core.NetworkParams, error) {
+	rows, err := s.db.Query(`SELECT data FROM networks ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []core.NetworkParams
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		var p core.NetworkParams
+		if err := json.Unmarshal([]byte(data), &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
 
 // Backlog returns up to limit messages for a buffer that are older than the
 // before cursor (a zero time means the most recent page), oldest-first.
