@@ -10,9 +10,11 @@ export const T = {
   Msg: "msg",
   NetUpdate: "net:update",
   Backlog: "backlog",
+  SearchResult: "search:result",
   Error: "error",
   MsgSend: "msg:send",
   BacklogFetch: "backlog:fetch",
+  Search: "search",
 } as const;
 
 export interface Envelope<D = unknown> {
@@ -69,6 +71,7 @@ export interface MessageDTO {
   kind: string;
   text: string;
   self: boolean;
+  highlight?: boolean;
   tags?: Record<string, string>;
 }
 
@@ -90,6 +93,18 @@ export interface BacklogResp {
   buffer: string;
   messages: MessageDTO[];
   more: boolean;
+}
+
+export interface SearchReq {
+  query: string;
+  network?: string;
+  buffer?: string;
+  limit?: number;
+}
+
+export interface SearchResp {
+  query: string;
+  results: MessageDTO[];
 }
 
 export interface WireError {
