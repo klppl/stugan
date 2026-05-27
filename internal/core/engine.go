@@ -33,10 +33,12 @@ type Sink interface {
 
 // Options configures a new Engine.
 type Options struct {
-	Logger *slog.Logger
-	Host   PluginHost // nil → events pass through unchanged
-	Sink   Sink       // nil → a logger-backed sink
-	User   *User      // nil → a single implicit user
+	Logger    *slog.Logger
+	Host      PluginHost        // nil → events pass through unchanged
+	Sink      Sink              // nil → a logger-backed sink
+	User      *User             // nil → a single implicit user
+	Highlight *Highlighter      // nil → only nick mentions highlight (via a default)
+	Aliases   map[string]string // command aliases with $1/$2/$* substitution
 }
 
 // Engine owns the domain state and serializes all mutation onto a single
@@ -54,7 +56,9 @@ type Engine struct {
 	mu   sync.RWMutex
 	user *User
 
-	conns map[string]IRCConn
+	highlight *Highlighter
+	aliases   map[string]string
+	conns     map[string]IRCConn
 
 	events chan Event
 	done   chan struct{}
@@ -81,14 +85,20 @@ func New(opts Options) *Engine {
 	if user == nil {
 		user = &User{ID: "default", Name: "default"}
 	}
+	hl := opts.Highlight
+	if hl == nil {
+		hl, _ = NewHighlighter(nil, nil) // nick mentions only
+	}
 	return &Engine{
-		log:    log,
-		host:   host,
-		sinks:  sinks,
-		user:   user,
-		conns:  map[string]IRCConn{},
-		events: make(chan Event, 256),
-		done:   make(chan struct{}),
+		log:       log,
+		host:      host,
+		sinks:     sinks,
+		user:      user,
+		highlight: hl,
+		aliases:   opts.Aliases,
+		conns:     map[string]IRCConn{},
+		events:    make(chan Event, 256),
+		done:      make(chan struct{}),
 	}
 }
 
@@ -127,10 +137,20 @@ func (e *Engine) AddNetwork(spec NetworkSpec, conn IRCConn) {
 // hooks, is sent to IRC, and is echoed locally (echo-message is off, so the
 // local echo is how the sender sees their own line).
 func (e *Engine) SendInput(network, buffer, text string) {
+	e.sendInput(network, buffer, text, 0)
+}
+
+func (e *Engine) sendInput(network, buffer, text string, depth int) {
 	if strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "//") {
 		rest := strings.TrimPrefix(text, "/")
 		name, argstr, _ := strings.Cut(rest, " ")
 		if name != "" {
+			// Expand a command alias, then re-process the result (guarded
+			// against alias loops).
+			if tmpl, ok := e.aliases[strings.ToLower(name)]; ok && depth < 8 {
+				e.sendInput(network, buffer, expandAlias(tmpl, strings.Fields(argstr)), depth+1)
+				return
+			}
 			e.HandleEvent(Event{
 				Type: EvCommand, Network: network, Channel: buffer, Time: time.Now(),
 				Command: name, Args: strings.Fields(argstr), Text: argstr,
@@ -380,6 +400,9 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound, netChang
 			return emit, nil, false
 		}
 		m := *ev.Message
+		if !m.Self && (m.Kind == MsgPrivmsg || m.Kind == MsgNotice || m.Kind == MsgAction) {
+			m.Highlight = e.highlight.Match(m.Text, n.Nick)
+		}
 		_, created := n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
 		emit = append(emit, m)
 		netChanged = created

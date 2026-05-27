@@ -20,11 +20,12 @@ import (
 	"github.com/klippelism/stugan/internal/proto"
 )
 
-// History provides paged message backlog for replay. Implemented by
-// store.Store; the server depends only on this narrow interface, not on the
-// store package.
+// History provides paged message backlog for replay and full-text search.
+// Implemented by store.Store; the server depends only on this narrow
+// interface, not on the store package.
 type History interface {
 	Backlog(ctx context.Context, network, buffer string, before time.Time, limit int) ([]core.Message, bool, error)
+	Search(ctx context.Context, query, network, buffer string, limit int) ([]core.Message, error)
 }
 
 // Options configures a Server.
@@ -142,6 +143,16 @@ func (s *Server) NetworkChanged(n *core.Network) {
 	s.broadcast(env)
 }
 
+// caps lists the optional features this server supports, advertised in
+// Hello so the client can enable matching UI.
+func (s *Server) caps() []string {
+	caps := []string{"uploads", "previews"}
+	if s.history != nil {
+		caps = append(caps, "search")
+	}
+	return caps
+}
+
 func (s *Server) broadcast(env proto.Envelope) {
 	s.mu.Lock()
 	for c := range s.clients {
@@ -182,7 +193,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	// small window between snapshot and registration is reconciled by
 	// backlog replay in Phase 4.
 	hello, _ := proto.Frame(proto.THello, proto.Hello{
-		Protocol: proto.Protocol, Server: s.serverName, Caps: []string{},
+		Protocol: proto.Protocol, Server: s.serverName, Caps: s.caps(),
 	})
 	init, _ := proto.Frame(proto.TInit, toInitState(s.engine.Snapshot()))
 	c.trySend(hello)
@@ -224,9 +235,45 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	case proto.TBacklogFetch:
 		s.handleBacklog(ctx, c, env)
 
+	case proto.TSearch:
+		s.handleSearch(ctx, c, env)
+
 	default:
 		s.log.Debug("ignoring unknown frame", "t", env.T)
 	}
+}
+
+// handleSearch answers a search request with full-text matches.
+func (s *Server) handleSearch(ctx context.Context, c *client, env proto.Envelope) {
+	var d proto.SearchReq
+	if err := decode(env, &d); err != nil || d.Query == "" {
+		c.sendError(env.ID, "bad_request", "search requires a query")
+		return
+	}
+	if s.history == nil {
+		c.sendError(env.ID, "unavailable", "search is not enabled")
+		return
+	}
+	limit := d.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	msgs, err := s.history.Search(ctx, d.Query, d.Network, d.Buffer, limit)
+	if err != nil {
+		s.log.Error("search query", "err", err)
+		c.sendError(env.ID, "internal", "search failed")
+		return
+	}
+	results := make([]proto.MessageDTO, len(msgs))
+	for i, m := range msgs {
+		results[i] = toMessageDTO(m)
+	}
+	reply, err := proto.Frame(proto.TSearchResult, proto.SearchResp{Query: d.Query, Results: results})
+	if err != nil {
+		return
+	}
+	reply.ID = env.ID
+	c.trySend(reply)
 }
 
 // handleBacklog answers a backlog:fetch with a page of history from the

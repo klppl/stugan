@@ -114,7 +114,7 @@ func TestSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scoped search: %v", err)
 	}
-	if len(res) != 1 || res[0].Message.Buffer != "#d" {
+	if len(res) != 1 || res[0].Buffer != "#d" {
 		t.Fatalf("scoped search = %+v", res)
 	}
 }

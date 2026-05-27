@@ -146,14 +146,15 @@ type Member struct {
 // Message is a single line in a buffer. It is the unit plugin hooks
 // inspect/mutate and that the wire protocol carries.
 type Message struct {
-	ID      string
-	Network string
-	Buffer  string // channel or query name
-	Time    time.Time
-	From    string
-	Account string
-	Kind    MsgKind
-	Text    string
-	Tags    map[string]string
-	Self    bool // echo-message: we sent this
+	ID        string
+	Network   string
+	Buffer    string // channel or query name
+	Time      time.Time
+	From      string
+	Account   string
+	Kind      MsgKind
+	Text      string
+	Tags      map[string]string
+	Self      bool // echo-message: we sent this
+	Highlight bool // matched a highlight rule / nick mention
 }

@@ -16,15 +16,17 @@ const Protocol = 1
 
 // Event type discriminators (the Envelope.T field). Convention: domain:verb.
 const (
-	THello     = "hello"      // s2c
-	TInit      = "init"       // s2c
-	TMsg       = "msg"        // s2c
-	TNetUpdate = "net:update" // s2c
-	TBacklog   = "backlog"    // s2c (answers backlog:fetch)
-	TError     = "error"      // s2c
+	THello        = "hello"         // s2c
+	TInit         = "init"          // s2c
+	TMsg          = "msg"           // s2c
+	TNetUpdate    = "net:update"    // s2c
+	TBacklog      = "backlog"       // s2c (answers backlog:fetch)
+	TSearchResult = "search:result" // s2c (answers search)
+	TError        = "error"         // s2c
 
 	TMsgSend      = "msg:send"      // c2s
 	TBacklogFetch = "backlog:fetch" // c2s
+	TSearch       = "search"        // c2s
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -91,15 +93,16 @@ type MemberDTO struct {
 
 // MessageDTO is the wire projection of core.Message. Time is RFC3339.
 type MessageDTO struct {
-	ID      string            `json:"id"`
-	Network string            `json:"network"`
-	Buffer  string            `json:"buffer"`
-	Time    string            `json:"time"`
-	From    string            `json:"from"`
-	Kind    string            `json:"kind"`
-	Text    string            `json:"text"`
-	Self    bool              `json:"self"`
-	Tags    map[string]string `json:"tags,omitempty"`
+	ID        string            `json:"id"`
+	Network   string            `json:"network"`
+	Buffer    string            `json:"buffer"`
+	Time      string            `json:"time"`
+	From      string            `json:"from"`
+	Kind      string            `json:"kind"`
+	Text      string            `json:"text"`
+	Self      bool              `json:"self"`
+	Highlight bool              `json:"highlight,omitempty"`
+	Tags      map[string]string `json:"tags,omitempty"`
 }
 
 // MsgSend is a client→server request to send text to a buffer. Text may be
@@ -128,6 +131,21 @@ type BacklogResp struct {
 	Buffer   string       `json:"buffer"`
 	Messages []MessageDTO `json:"messages"`
 	More     bool         `json:"more"`
+}
+
+// SearchReq is a client→server full-text search. Network/Buffer scope it
+// when set. Carry an Envelope.ID to correlate the reply.
+type SearchReq struct {
+	Query   string `json:"query"`
+	Network string `json:"network,omitempty"`
+	Buffer  string `json:"buffer,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+}
+
+// SearchResp answers a SearchReq, newest matches first.
+type SearchResp struct {
+	Query   string       `json:"query"`
+	Results []MessageDTO `json:"results"`
 }
 
 // WireError is a server→client error, correlated to a request id when set

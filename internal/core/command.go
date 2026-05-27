@@ -54,6 +54,45 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 	}
 }
 
+// expandAlias substitutes $1..$9, $* (all args), and $N- (args from N
+// onward) in an alias template. An unmatched placeholder expands to empty.
+func expandAlias(tmpl string, args []string) string {
+	arg := func(i int) string {
+		if i >= 1 && i <= len(args) {
+			return args[i-1]
+		}
+		return ""
+	}
+	var b strings.Builder
+	for i := 0; i < len(tmpl); i++ {
+		if tmpl[i] != '$' || i == len(tmpl)-1 {
+			b.WriteByte(tmpl[i])
+			continue
+		}
+		next := tmpl[i+1]
+		switch {
+		case next == '*':
+			b.WriteString(strings.Join(args, " "))
+			i++
+		case next >= '1' && next <= '9':
+			n := int(next - '0')
+			// "$N-" means args from N to the end.
+			if i+2 < len(tmpl) && tmpl[i+2] == '-' {
+				if n <= len(args) {
+					b.WriteString(strings.Join(args[n-1:], " "))
+				}
+				i += 2
+			} else {
+				b.WriteString(arg(n))
+				i++
+			}
+		default:
+			b.WriteByte('$')
+		}
+	}
+	return b.String()
+}
+
 // engineAPI adapts *Engine to the core.API surface handed to the plugin host.
 type engineAPI struct{ e *Engine }
 

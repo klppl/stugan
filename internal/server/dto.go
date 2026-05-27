@@ -14,15 +14,16 @@ func toMessageDTO(m core.Message) proto.MessageDTO {
 		t = m.Time.UTC().Format(time.RFC3339)
 	}
 	return proto.MessageDTO{
-		ID:      m.ID,
-		Network: m.Network,
-		Buffer:  m.Buffer,
-		Time:    t,
-		From:    m.From,
-		Kind:    string(m.Kind),
-		Text:    m.Text,
-		Self:    m.Self,
-		Tags:    m.Tags,
+		ID:        m.ID,
+		Network:   m.Network,
+		Buffer:    m.Buffer,
+		Time:      t,
+		From:      m.From,
+		Kind:      string(m.Kind),
+		Text:      m.Text,
+		Self:      m.Self,
+		Highlight: m.Highlight,
+		Tags:      m.Tags,
 	}
 }
 

@@ -83,7 +83,15 @@ func run() error {
 	// per configured network. The server and store are registered as engine
 	// sinks so committed lines fan out to browsers and to disk; the default
 	// terminal sink stays on for headless visibility.
-	engine := core.New(core.Options{Logger: log})
+	highlighter, err := core.NewHighlighter(cfg.Highlight.Patterns, cfg.Highlight.Exceptions)
+	if err != nil {
+		return err
+	}
+	engine := core.New(core.Options{
+		Logger:    log,
+		Highlight: highlighter,
+		Aliases:   cfg.Aliases,
+	})
 	engine.AddSink(db)
 
 	// Plugin host: load Lua scripts from $STUGAN_HOME/scripts, hot-reload on

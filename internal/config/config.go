@@ -32,6 +32,20 @@ type Config struct {
 	// In multi-user mode this moves into per-user state; for now it is a
 	// top-level list owned by the single implicit user.
 	Networks []NetworkConfig `toml:"networks"`
+
+	// Highlight configures which incoming messages are flagged.
+	Highlight HighlightConfig `toml:"highlight"`
+
+	// Aliases maps a command name to a template expanded with $1..$9, $*
+	// (all args) and $N- (args from N onward). E.g. j = "/join #$1".
+	Aliases map[string]string `toml:"aliases"`
+}
+
+// HighlightConfig holds case-insensitive regex highlight rules. A nick
+// mention always highlights; Exceptions suppress a would-be highlight.
+type HighlightConfig struct {
+	Patterns   []string `toml:"patterns"`
+	Exceptions []string `toml:"exceptions"`
 }
 
 // ServerConfig controls the HTTP/WebSocket listener.

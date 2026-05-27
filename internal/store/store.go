@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS messages (
   kind      TEXT NOT NULL,
   text      TEXT NOT NULL,
   self      INTEGER NOT NULL DEFAULT 0,
+  highlight INTEGER NOT NULL DEFAULT 0,
   tags      TEXT NOT NULL DEFAULT ''     -- JSON object
 );
 CREATE INDEX IF NOT EXISTS idx_messages_buffer ON messages(network, buffer, id);
@@ -73,6 +75,15 @@ func Open(path string, log *slog.Logger) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	// Tolerant migrations for databases created by earlier versions.
+	for _, alter := range []string{
+		`ALTER TABLE messages ADD COLUMN highlight INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("migrate: %w", err)
+		}
+	}
 	return &Store{db: db, log: log}, nil
 }
 
@@ -92,10 +103,10 @@ func (s *Store) Print(m core.Message) {
 		ts = time.Now()
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO messages(msgid, network, buffer, ts, from_nick, account, kind, text, self, tags)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO messages(msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.Network, m.Buffer, ts.UnixMilli(), m.From, m.Account,
-		string(m.Kind), m.Text, boolToInt(m.Self), tags,
+		string(m.Kind), m.Text, boolToInt(m.Self), boolToInt(m.Highlight), tags,
 	)
 	if err != nil {
 		s.log.Error("persist message", "network", m.Network, "buffer", m.Buffer, "err", err)
@@ -122,7 +133,7 @@ func (s *Store) Backlog(ctx context.Context, network, buffer string, before time
 	// Order by id (insertion order) for a stable sequence; filter by ts so
 	// the wire-visible message time can serve as the paging cursor.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, msgid, network, buffer, ts, from_nick, account, kind, text, self, tags
+		`SELECT id, msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags
 		 FROM messages
 		 WHERE network = ? AND buffer = ? AND ts < ?
 		 ORDER BY id DESC LIMIT ?`,
@@ -156,19 +167,13 @@ func (s *Store) Backlog(ctx context.Context, network, buffer string, before time
 	return msgs, more, nil
 }
 
-// SearchResult is a message plus its stable row id (cursor).
-type SearchResult struct {
-	ID      int64
-	Message core.Message
-}
-
 // Search runs a full-text query over message text, newest matches first.
 // network and/or buffer narrow the scope when non-empty.
-func (s *Store) Search(ctx context.Context, query, network, buffer string, limit int) ([]SearchResult, error) {
+func (s *Store) Search(ctx context.Context, query, network, buffer string, limit int) ([]core.Message, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	q := `SELECT m.id, m.msgid, m.network, m.buffer, m.ts, m.from_nick, m.account, m.kind, m.text, m.self, m.tags
+	q := `SELECT m.id, m.msgid, m.network, m.buffer, m.ts, m.from_nick, m.account, m.kind, m.text, m.self, m.highlight, m.tags
 	      FROM messages_fts f JOIN messages m ON m.id = f.rowid
 	      WHERE messages_fts MATCH ?`
 	args := []any{query}
@@ -189,13 +194,13 @@ func (s *Store) Search(ctx context.Context, query, network, buffer string, limit
 	}
 	defer rows.Close()
 
-	var out []SearchResult
+	var out []core.Message
 	for rows.Next() {
-		m, id, err := scanMessage(rows)
+		m, _, err := scanMessage(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, SearchResult{ID: id, Message: m})
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }
@@ -203,18 +208,20 @@ func (s *Store) Search(ctx context.Context, query, network, buffer string, limit
 // scanMessage scans one row into a core.Message and its row id.
 func scanMessage(rows *sql.Rows) (core.Message, int64, error) {
 	var (
-		id   int64
-		ts   int64
-		self int
-		tags string
-		m    core.Message
+		id        int64
+		ts        int64
+		self      int
+		highlight int
+		tags      string
+		m         core.Message
 	)
 	if err := rows.Scan(&id, &m.ID, &m.Network, &m.Buffer, &ts, &m.From,
-		&m.Account, &m.Kind, &m.Text, &self, &tags); err != nil {
+		&m.Account, &m.Kind, &m.Text, &self, &highlight, &tags); err != nil {
 		return core.Message{}, 0, err
 	}
 	m.Time = time.UnixMilli(ts).UTC()
 	m.Self = self != 0
+	m.Highlight = highlight != 0
 	if tags != "" {
 		_ = json.Unmarshal([]byte(tags), &m.Tags)
 	}
