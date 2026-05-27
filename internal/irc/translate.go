@@ -2,11 +2,26 @@ package irc
 
 import (
 	"maps"
+	"strings"
 	"time"
 
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/lrstanley/girc"
 )
+
+// membershipPrefixes are the IRC channel-membership prefix characters
+// (owner/admin/op/halfop/voice). With multi-prefix a nick may carry several.
+const membershipPrefixes = "~&@%+"
+
+// splitPrefixes separates leading membership prefixes from the rest of a
+// NAMES token, e.g. "@+nick" → ("@+", "nick").
+func splitPrefixes(tok string) (modes, rest string) {
+	i := 0
+	for i < len(tok) && strings.IndexByte(membershipPrefixes, tok[i]) >= 0 {
+		i++
+	}
+	return tok[:i], tok[i:]
+}
 
 // toEvent maps a parsed girc wire event into a normalized core.Event for
 // the given network. self is our current nick, used to route direct
@@ -115,6 +130,29 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			Type: core.EvNick, Network: network, Time: when,
 			Nick: from, NewNick: e.Last(),
 		}, true
+
+	case girc.RPL_NAMREPLY:
+		// 353: <me> <=|*|@> <channel> :[prefix]nick[!user@host] ...
+		// (multi-prefix and userhost-in-names may both be active).
+		if len(e.Params) < 4 {
+			return core.Event{}, false
+		}
+		channel := e.Params[2]
+		var members []core.Member
+		for tok := range strings.FieldsSeq(e.Last()) {
+			modes, rest := splitPrefixes(tok)
+			nick := rest
+			if i := strings.IndexByte(nick, '!'); i >= 0 {
+				nick = nick[:i] // strip userhost-in-names hostmask
+			}
+			if nick != "" {
+				members = append(members, core.Member{Nick: nick, Modes: modes})
+			}
+		}
+		if len(members) == 0 {
+			return core.Event{}, false
+		}
+		return core.Event{Type: core.EvNames, Network: network, Time: when, Channel: channel, Members: members}, true
 
 	case girc.TOPIC:
 		ch := ""

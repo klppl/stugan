@@ -119,6 +119,26 @@ func TestApplyJoinPartQuit(t *testing.T) {
 	}
 }
 
+func TestApplyNames(t *testing.T) {
+	e, sink := newTestEngine(t)
+	e.apply(Event{Type: EvNames, Network: "net", Channel: "#go", Members: []Member{
+		{Nick: "alice"}, {Nick: "bob", Modes: "@"}, {Nick: "carol", Modes: "+"},
+	}})
+	c := net0(e).Channel("#go")
+	if c == nil || len(c.Members) != 3 {
+		t.Fatalf("members not populated from NAMES: %+v", c)
+	}
+	if c.Members["bob"].Modes != "@" {
+		t.Errorf("bob modes = %q, want @", c.Members["bob"].Modes)
+	}
+	// NAMES must not emit join system lines.
+	for _, m := range sink.msgs {
+		if m.Kind == MsgSystem {
+			t.Errorf("NAMES emitted a system line: %q", m.Text)
+		}
+	}
+}
+
 func TestApplyNickRename(t *testing.T) {
 	e, _ := newTestEngine(t)
 	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Channel: "#go"})

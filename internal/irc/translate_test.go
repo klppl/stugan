@@ -162,6 +162,30 @@ func TestToEventQueryBufferRouting(t *testing.T) {
 	}
 }
 
+func TestToEventNames(t *testing.T) {
+	// 353 with multi-prefix and userhost-in-names entries.
+	e := girc.ParseEvent(":serv 353 me = #go :alice @bob +carol @+dave!u@h ~owner")
+	if e == nil {
+		t.Fatal("ParseEvent nil")
+	}
+	ev, ok := toEvent("n", e, "me")
+	if !ok || ev.Type != core.EvNames {
+		t.Fatalf("type = %q ok=%v, want names", ev.Type, ok)
+	}
+	if ev.Channel != "#go" {
+		t.Errorf("channel = %q", ev.Channel)
+	}
+	want := map[string]string{"alice": "", "bob": "@", "carol": "+", "dave": "@+", "owner": "~"}
+	if len(ev.Members) != len(want) {
+		t.Fatalf("got %d members, want %d: %+v", len(ev.Members), len(want), ev.Members)
+	}
+	for _, m := range ev.Members {
+		if want[m.Nick] != m.Modes {
+			t.Errorf("member %q modes = %q, want %q", m.Nick, m.Modes, want[m.Nick])
+		}
+	}
+}
+
 // A NOTICE from the server itself (no user/host in the source) routes to
 // the status buffer rather than creating a query named after the server.
 func TestServerNoticeRoutesToStatus(t *testing.T) {

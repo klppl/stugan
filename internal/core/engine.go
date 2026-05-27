@@ -543,6 +543,16 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound, netChang
 		send = &outbound{target: m.Buffer, text: m.Text}
 		netChanged = created
 
+	case EvNames:
+		// The server's NAMES reply on join: merge the listed members
+		// without emitting join lines.
+		c, _ := n.getOrCreate(ev.Channel, KindChannel)
+		for _, m := range ev.Members {
+			mc := m
+			c.Members[lower(m.Nick)] = &mc
+		}
+		netChanged = true
+
 	case EvJoin:
 		c, _ := n.getOrCreate(ev.Channel, KindChannel)
 		c.Members[lower(ev.Nick)] = &Member{Nick: ev.Nick, Account: ev.Account}
