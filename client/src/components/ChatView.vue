@@ -58,6 +58,10 @@ watch(
   },
 );
 
+function openQuery(nick: string) {
+  if (store.active) connection.openQuery(store.active.network, nick);
+}
+
 async function onDrop(e: DragEvent) {
   dragging.value = false;
   const files = e.dataTransfer?.files;
@@ -111,7 +115,13 @@ async function onDrop(e: DragEvent) {
         <aside v-if="members.length" class="members">
           <div class="members-head">{{ members.length }} users</div>
           <ul>
-            <li v-for="mem in members" :key="mem.nick">
+            <li
+              v-for="mem in members"
+              :key="mem.nick"
+              :class="{ away: mem.away }"
+              :title="mem.away ? mem.nick + ' (away)' : 'open query with ' + mem.nick"
+              @click="openQuery(mem.nick)"
+            >
               <span class="modes">{{ mem.modes }}</span>{{ mem.nick }}
             </li>
           </ul>

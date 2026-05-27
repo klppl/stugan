@@ -131,6 +131,13 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			Nick: from, NewNick: e.Last(),
 		}, true
 
+	case girc.AWAY:
+		// away-notify: a trailing message means now-away; empty means back.
+		return core.Event{
+			Type: core.EvAway, Network: network, Time: when,
+			Nick: from, Away: e.Last() != "",
+		}, true
+
 	case girc.RPL_NAMREPLY:
 		// 353: <me> <=|*|@> <channel> :[prefix]nick[!user@host] ...
 		// (multi-prefix and userhost-in-names may both be active).

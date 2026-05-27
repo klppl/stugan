@@ -162,6 +162,19 @@ func TestToEventQueryBufferRouting(t *testing.T) {
 	}
 }
 
+func TestToEventAway(t *testing.T) {
+	// Now-away (trailing message present).
+	ev, ok := toEvent("n", girc.ParseEvent(":alice!u@h AWAY :lunch"), "me")
+	if !ok || ev.Type != core.EvAway || ev.Nick != "alice" || !ev.Away {
+		t.Fatalf("away event = %+v ok=%v", ev, ok)
+	}
+	// Back (no trailing message).
+	ev, ok = toEvent("n", girc.ParseEvent(":alice!u@h AWAY"), "me")
+	if !ok || ev.Type != core.EvAway || ev.Away {
+		t.Fatalf("back event = %+v ok=%v", ev, ok)
+	}
+}
+
 func TestToEventNames(t *testing.T) {
 	// 353 with multi-prefix and userhost-in-names entries.
 	e := girc.ParseEvent(":serv 353 me = #go :alice @bob +carol @+dave!u@h ~owner")

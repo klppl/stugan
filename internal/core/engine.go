@@ -663,6 +663,16 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, send *outbound, netChang
 		}
 		netChanged = true
 
+	case EvAway:
+		// away-notify: update the member's away flag in every channel we
+		// share, without a system line.
+		for _, c := range n.Channels {
+			if m, ok := c.Members[lower(ev.Nick)]; ok {
+				m.Away = ev.Away
+				netChanged = true
+			}
+		}
+
 	case EvJoin:
 		c, _ := n.getOrCreate(ev.Channel, KindChannel)
 		c.Members[lower(ev.Nick)] = &Member{Nick: ev.Nick, Account: ev.Account}

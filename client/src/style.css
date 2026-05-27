@@ -357,6 +357,13 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
+}
+.members li:hover {
+  background: var(--bg-alt);
+}
+.members li.away {
+  opacity: 0.45;
 }
 .members .modes {
   color: var(--accent);

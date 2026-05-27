@@ -94,7 +94,7 @@ func (c *Conn) registerHandlers() {
 
 	for _, cmd := range []string{
 		girc.PRIVMSG, girc.NOTICE, girc.JOIN, girc.PART,
-		girc.QUIT, girc.NICK, girc.TOPIC, girc.RPL_NAMREPLY,
+		girc.QUIT, girc.NICK, girc.TOPIC, girc.RPL_NAMREPLY, girc.AWAY,
 	} {
 		h.Add(cmd, func(gc *girc.Client, e girc.Event) {
 			if ev, ok := toEvent(c.opts.Network, &e, gc.GetNick()); ok {

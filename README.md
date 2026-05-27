@@ -104,6 +104,11 @@ stugan.hook_command("greet", function(args, ctx)
 end)
 ```
 
+## License
+
+stugan is released under the [Lagom License](LICENSE) — not too much, not
+too little.
+
 ## Design docs
 
 - [docs/layout.md](docs/layout.md) — module & interface layout

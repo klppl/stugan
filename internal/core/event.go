@@ -24,6 +24,8 @@ const (
 	// EvNames carries a channel's member list from the server's NAMES reply
 	// (sent on join). Members is set; no system line is emitted.
 	EvNames EventType = "names"
+	// EvAway is an away-notify update: Nick changed away state to Away.
+	EvAway EventType = "away"
 
 	// evSetState is internal: it carries a transient connection-state
 	// change (e.g. Connecting) onto the engine loop so all state mutation
@@ -63,6 +65,7 @@ type Event struct {
 	Command string   // EvCommand: the command name (without leading slash)
 	Args    []string // EvCommand: whitespace-split arguments
 	Members []Member // EvNames: the listed channel members
+	Away    bool     // EvAway: whether Nick is now away
 }
 
 // eqFold is a small ASCII case-insensitive compare used for channel/nick
