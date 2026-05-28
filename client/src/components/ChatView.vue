@@ -23,11 +23,19 @@ const buffer = computed(() => connection.activeBuffer());
 
 const members = computed(() => {
   const ms = buffer.value?.members ?? [];
-  const rank = (mode: string) => "~&@%+".indexOf(mode[0] ?? "");
+  // IRC prefix order: owner, admin, op, halfop, voice, then everyone else.
+  // (Guard against the empty-mode case: "".indexOf("") is 0, which used to
+  // bury ops below the unprefixed crowd.)
+  const rank = (mode: string) => {
+    const c = mode[0];
+    if (!c) return 99;
+    const i = "~&@%+".indexOf(c);
+    return i < 0 ? 99 : i;
+  };
   return [...ms].sort((a, b) => {
     const ra = rank(a.modes);
     const rb = rank(b.modes);
-    if (ra !== rb) return (ra < 0 ? 99 : ra) - (rb < 0 ? 99 : rb);
+    if (ra !== rb) return ra - rb;
     return a.nick.toLowerCase().localeCompare(b.nick.toLowerCase());
   });
 });
