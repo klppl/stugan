@@ -30,6 +30,10 @@ const dragging = ref(false);
 
 const buffer = computed(() => connection.activeBuffer());
 
+// The "new messages" divider renders just above this message (identity
+// compared against the row's message). null = no divider for this buffer.
+const markerMsg = computed(() => buffer.value?.unreadMarker ?? null);
+
 // Group messages by calendar day so the list shows "— Today —" / "— Yesterday —"
 // / "— Wed, May 21 —" separators wherever the date changes.
 function dayLabel(iso: string): string {
@@ -471,6 +475,7 @@ async function onDrop(e: DragEvent) {
           <button v-if="buffer?.more" class="load-older" @click="loadOlder">Load older messages</button>
           <template v-for="(r, i) in rows" :key="r.msg?.id || (r.events && foldKey(r.events)) || i">
             <div v-if="r.day" class="day-sep"><span>{{ r.day }}</span></div>
+            <div v-if="r.msg && markerMsg && r.msg === markerMsg" class="unread-sep"><span>new messages</span></div>
             <MessageItem v-if="r.msg" :msg="r.msg" />
             <template v-else-if="r.events">
               <div class="fold" :class="{ open: isFoldOpen(r.events) }" @click="toggleFold(r.events)">
