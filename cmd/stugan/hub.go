@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,9 +13,40 @@ import (
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/irc"
 	"github.com/klippelism/stugan/internal/plugin"
+	"github.com/klippelism/stugan/internal/scripts"
 	"github.com/klippelism/stugan/internal/server"
 	"github.com/klippelism/stugan/internal/store"
 )
+
+// installBuiltinScripts copies any bundled scripts (currently just fish.lua
+// for FiSH Blowfish encryption) into the user's scripts directory on a
+// fresh install. Idempotent: an existing file is left alone, so a user who
+// edits or deletes a bundled script keeps their version across restarts.
+func installBuiltinScripts(scriptsDir string, log *slog.Logger) {
+	for name, body := range scripts.Builtins {
+		p := filepath.Join(scriptsDir, name)
+		if _, err := os.Stat(p); err == nil {
+			continue // user already has it
+		} else if !errors.Is(err, os.ErrNotExist) {
+			log.Warn("stat builtin script", "name", name, "err", err)
+			continue
+		}
+		if err := os.WriteFile(p, body, 0o644); err != nil {
+			log.Warn("install builtin script", "name", name, "err", err)
+			continue
+		}
+		log.Info("installed builtin script", "path", p)
+	}
+}
+
+// pluginKV adapts *store.Store to plugin.KV. The interface is intentionally
+// narrow (just script-scoped get/set/delete) so the plugin package never
+// needs to import store.
+type pluginKV struct{ s *store.Store }
+
+func (p pluginKV) GetAll(script string) map[string]string { return p.s.PluginKVGetAll(script) }
+func (p pluginKV) Set(script, key, value string) error    { return p.s.PluginKVSet(script, key, value) }
+func (p pluginKV) Delete(script, key string) error        { return p.s.PluginKVDelete(script, key) }
 
 // hub is the composition root's implementation of server.Hub: it owns one
 // engine + store (+ plugin host) per user and the auth/session machinery.
@@ -103,6 +135,7 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 				return nil, nil, fmt.Errorf("user %q dir %s: %w", u.Name, d, err)
 			}
 		}
+		installBuiltinScripts(scriptsDir, log.With("user", u.Name))
 		db, err := store.Open(filepath.Join(dataDir, "stugan.db"), log)
 		if err != nil {
 			return nil, nil, fmt.Errorf("user %q store: %w", u.Name, err)
@@ -127,6 +160,7 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 				Dir:      scriptsDir,
 				Settings: cfg.Plugins.Settings,
 				Sandbox:  sandbox,
+				KV:       pluginKV{db},
 			})
 			if err != nil {
 				return nil, nil, err
@@ -146,7 +180,7 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 				if !n.Connect {
 					continue
 				}
-				p := paramsFromConfig(n)
+				p := paramsFromConfig(n, log.With("user", u.Name))
 				if err := db.SaveNetwork(p); err != nil {
 					return nil, nil, err
 				}
@@ -190,16 +224,30 @@ func (c ircConnector) Dial(p core.NetworkParams, h core.ConnHandler) (core.IRCCo
 		Network: p.ID, Addr: p.Addr, TLS: p.TLS,
 		Nick: p.Nick, User: p.User, Realname: p.Realname,
 		SASLUser: p.SASLUser, SASLPass: p.SASLPass,
+		ServerPass: p.ServerPass, SASLExternal: p.SASLExternal, CertPEM: p.CertPEM,
 		Channels: p.Channels, Logger: c.log,
 	}, h)
 }
 
-// paramsFromConfig converts a config network into runtime params.
-func paramsFromConfig(n config.NetworkConfig) core.NetworkParams {
+// paramsFromConfig converts a config network into runtime params. A
+// configured cert_file is read into CertPEM (and persisted thereafter); a
+// missing/unreadable file is logged and left empty so startup still proceeds.
+func paramsFromConfig(n config.NetworkConfig, log *slog.Logger) core.NetworkParams {
+	certPEM := ""
+	if n.CertFile != "" {
+		b, err := os.ReadFile(n.CertFile)
+		if err != nil {
+			log.Warn("read network cert_file", "network", n.Name, "path", n.CertFile, "err", err)
+		} else {
+			certPEM = string(b)
+		}
+	}
 	return core.NetworkParams{
 		ID: n.Name, Name: n.Name, Addr: n.Addr, TLS: n.TLS,
 		Nick: n.Nick, User: n.User, Realname: n.Realname,
 		SASLUser: n.SASLUser, SASLPass: n.SASLPass, Channels: n.Channels,
+		ServerPass: n.ServerPass, Perform: n.Perform,
+		SASLExternal: n.SASLExternal, CertPEM: certPEM,
 	}
 }
 

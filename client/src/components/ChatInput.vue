@@ -1,12 +1,23 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, nextTick, reactive, ref } from "vue";
 import type { Buffer } from "../connection";
 import { connection } from "../connection";
 import { emojiMatches, replaceEmoji } from "../emoji";
 
 const props = defineProps<{ network: string; buffer: Buffer | null }>();
 
-const BUILTINS = ["me", "msg", "notice", "join", "part", "nick", "quit", "raw", "query", "greet"];
+// Built-in slash commands exposed via Tab-completion. Mirrors the cases in
+// internal/core/command.go — keep them in rough sync, though the default
+// branch passes any unknown /FOO through as raw FOO so the completion list
+// is a convenience, not a gate.
+const BUILTINS = [
+  "me", "msg", "notice", "join", "part", "nick", "quit", "raw", "query",
+  "whois", "whowas", "who", "names",
+  "mode", "kick", "ban", "unban", "invite",
+  "op", "deop", "voice", "devoice", "halfop", "dehalfop",
+  "away", "back",
+  "topic", "chathistory",
+];
 
 const text = ref("");
 const inputEl = ref<HTMLInputElement | null>(null);
@@ -146,7 +157,34 @@ function appendText(s: string) {
   inputEl.value?.focus();
 }
 
-defineExpose({ inputEl, appendText });
+function focus() {
+  inputEl.value?.focus();
+}
+
+// typeChar: focus the input and append `ch` to the current text. Used by
+// ChatView's global keydown when the user starts typing somewhere else in
+// the chat (focus on a sidebar button, body, etc). Focusing alone isn't
+// enough — synchronously redirecting focus inside keydown drops the
+// triggering character in practice across browsers, so we insert it here.
+function typeChar(ch: string) {
+  text.value = text.value + ch;
+  const el = inputEl.value;
+  if (el) {
+    el.focus();
+    // v-model hasn't flushed to the DOM yet; wait a tick so setSelectionRange
+    // and the autocomplete refresh see the actual input length/value.
+    nextTick(() => {
+      const end = text.value.length;
+      el.setSelectionRange(end, end);
+      refresh();
+    });
+  }
+  if (props.buffer && text.value.trim()) {
+    connection.sendTyping(props.network, props.buffer.name, "active");
+  }
+}
+
+defineExpose({ inputEl, appendText, focus, typeChar });
 </script>
 
 <template>
@@ -166,7 +204,6 @@ defineExpose({ inputEl, appendText });
         ref="inputEl"
         v-model="text"
         :disabled="!buffer"
-        placeholder="Type a message… (Tab to complete, :emoji:, paste to upload)"
         autocomplete="off"
         @input="onInput"
         @keydown="onKeydown"

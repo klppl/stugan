@@ -80,6 +80,12 @@ func (n *Network) clone() *Network {
 			mc := *m
 			cc.Members[k] = &mc
 		}
+		if len(ch.State) > 0 {
+			cc.State = make(map[string]string, len(ch.State))
+			for k, v := range ch.State {
+				cc.State[k] = v
+			}
+		}
 		nc.Channels[j] = cc
 	}
 	return nc
@@ -129,6 +135,12 @@ func (n *Network) remove(name string) {
 }
 
 // Channel is a chat buffer: a real channel, a private query, or status.
+//
+// State is an opaque per-buffer key/value bag set by plugins via
+// API.SetBufferState. Keys are plugin-defined; the engine doesn't interpret
+// them. It rides on the snapshot/wire path so clients can react to plugin
+// state (e.g. the fish.lua plugin sets {"encrypted": "cbc"} so the sidebar
+// can render a lock icon). Nil and empty maps both mean "no state".
 type Channel struct {
 	Name      string
 	Kind      ChannelKind
@@ -136,6 +148,7 @@ type Channel struct {
 	Members   map[string]*Member
 	Unread    int
 	Highlight int
+	State     map[string]string
 }
 
 // Member is a participant in a channel.

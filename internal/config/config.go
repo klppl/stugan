@@ -129,9 +129,23 @@ type NetworkConfig struct {
 	Nick     string `toml:"nick"`
 	User     string `toml:"user"`
 	Realname string `toml:"realname"`
-	// SASL credentials (PLAIN). EXTERNAL/client-cert lands later.
+	// SASL PLAIN credentials.
 	SASLUser string `toml:"sasl_user"`
 	SASLPass string `toml:"sasl_pass"`
+	// SASLExternal authenticates with SASL EXTERNAL (CertFP) instead of
+	// PLAIN; requires CertFile and TLS.
+	SASLExternal bool `toml:"sasl_external"`
+	// CertFile is a path to a PEM file holding the client certificate and
+	// private key (concatenated). Presented during the TLS handshake for
+	// CertFP / SASL EXTERNAL. Read into the network's CertPEM on first run.
+	CertFile string `toml:"cert_file"`
+	// ServerPass is the connection password (IRC PASS), for bouncers
+	// (ZNC/soju) and password-gated servers.
+	ServerPass string `toml:"server_pass"`
+	// Perform is a list of command lines run after registration on every
+	// (re)connect, e.g. "/msg NickServ IDENTIFY hunter2" or
+	// "/join #private secretkey".
+	Perform []string `toml:"perform"`
 	// Channels to auto-join after connect/registration.
 	Channels []string `toml:"channels"`
 	// Connect, when false, leaves the network configured but idle.

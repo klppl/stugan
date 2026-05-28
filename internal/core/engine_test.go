@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -39,16 +40,35 @@ func (f *fakeConnector) Dial(NetworkParams, ConnHandler) (IRCConn, error) {
 }
 
 type fakeRuntimeConn struct {
+	mu   sync.Mutex
 	raws []string
 	caps []string
 }
 
 func (c *fakeRuntimeConn) Connect(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
-func (c *fakeRuntimeConn) SendRaw(s string) error            { c.raws = append(c.raws, s); return nil }
-func (c *fakeRuntimeConn) Message(string, string) error      { return nil }
-func (c *fakeRuntimeConn) Caps() []string                    { return c.caps }
-func (c *fakeRuntimeConn) CurrentNick() string               { return "" }
-func (c *fakeRuntimeConn) Close() error                      { return nil }
+func (c *fakeRuntimeConn) SendRaw(s string) error {
+	c.mu.Lock()
+	c.raws = append(c.raws, s)
+	c.mu.Unlock()
+	return nil
+}
+func (c *fakeRuntimeConn) Message(target, text string) error {
+	c.mu.Lock()
+	c.raws = append(c.raws, "PRIVMSG "+target+" :"+text)
+	c.mu.Unlock()
+	return nil
+}
+func (c *fakeRuntimeConn) Caps() []string      { return c.caps }
+func (c *fakeRuntimeConn) CurrentNick() string { return "" }
+func (c *fakeRuntimeConn) Close() error        { return nil }
+
+// rawsSnap returns a copy of the sent raw lines, safe to read while the
+// engine loop may still be writing (used by tests that run the loop).
+func (c *fakeRuntimeConn) rawsSnap() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.raws...)
+}
 
 // recordingNetStore records SaveNetwork/DeleteNetwork calls.
 type recordingNetStore struct {
@@ -150,6 +170,85 @@ func TestApplyNames(t *testing.T) {
 	for _, m := range sink.msgs {
 		if m.Kind == MsgSystem {
 			t.Errorf("NAMES emitted a system line: %q", m.Text)
+		}
+	}
+}
+
+// TestEventKindsDistinct asserts membership churn is emitted under its own
+// MsgKind (not MsgSystem), so the client can recognize and fold it.
+func TestEventKindsDistinct(t *testing.T) {
+	e, sink := newTestEngine(t)
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Channel: "#go"})
+	e.apply(Event{Type: EvPart, Network: "net", Nick: "alice", Channel: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Channel: "#go"})
+	e.apply(Event{Type: EvQuit, Network: "net", Nick: "bob", Text: "bye"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "carol", Channel: "#go"})
+	e.apply(Event{Type: EvNick, Network: "net", Nick: "carol", NewNick: "carol2"})
+
+	want := []MsgKind{MsgJoin, MsgPart, MsgJoin, MsgQuit, MsgJoin, MsgNick}
+	if len(sink.msgs) != len(want) {
+		t.Fatalf("emitted %d lines, want %d: %+v", len(sink.msgs), len(want), sink.msgs)
+	}
+	for i, k := range want {
+		if sink.msgs[i].Kind != k {
+			t.Errorf("line %d kind = %q, want %q (%q)", i, sink.msgs[i].Kind, k, sink.msgs[i].Text)
+		}
+	}
+}
+
+func TestNeedsReconnect(t *testing.T) {
+	base := NetworkParams{ID: "n", Addr: "a:1", Nick: "me", Channels: []string{"#a"}}
+	// Live-applyable changes must not force a reconnect.
+	for _, p := range []NetworkParams{
+		base, // identical
+		{ID: "n", Addr: "a:1", Nick: "you", Channels: []string{"#a"}}, // nick
+		{ID: "n", Addr: "a:1", Nick: "me", Channels: []string{"#b"}},  // channels
+	} {
+		if needsReconnect(base, p) {
+			t.Errorf("needsReconnect(base, %+v) = true, want false", p)
+		}
+	}
+	// Connection-level changes must force a reconnect.
+	for name, p := range map[string]NetworkParams{
+		"addr":          {ID: "n", Addr: "b:1", Nick: "me"},
+		"server_pass":   {ID: "n", Addr: "a:1", Nick: "me", ServerPass: "x"},
+		"sasl_external": {ID: "n", Addr: "a:1", Nick: "me", SASLExternal: true},
+		"cert_pem":      {ID: "n", Addr: "a:1", Nick: "me", CertPEM: "PEM"},
+	} {
+		if !needsReconnect(base, p) {
+			t.Errorf("needsReconnect for %s change = false, want true", name)
+		}
+	}
+}
+
+// TestRunPerformOnConnect verifies a network's perform lines replay through
+// the input path on registration, reaching IRC as the expected raw commands.
+func TestRunPerformOnConnect(t *testing.T) {
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	if err := e.AddNetworkLive(NetworkParams{
+		ID: "n", Name: "n", Addr: "a:1", Nick: "me",
+		Perform: []string{"/join #ops opskey", "/msg NickServ IDENTIFY hunter2"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = e.Run(ctx) }()
+
+	e.HandleEvent(Event{Type: EvConnect, Network: "n", Nick: "me"})
+
+	deadline := time.After(2 * time.Second)
+	for {
+		raws := conn.conns[0].rawsSnap()
+		if slices.Contains(raws, "JOIN #ops opskey") &&
+			slices.Contains(raws, "PRIVMSG NickServ :IDENTIFY hunter2") {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("perform commands not sent; raws=%v", conn.conns[0].rawsSnap())
+		case <-time.After(10 * time.Millisecond):
 		}
 	}
 }
@@ -405,6 +504,159 @@ func TestChatHistoryCommand(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected an unsupported notice; msgs=%+v", sink.msgs)
+	}
+}
+
+func TestWhoisCommandAndReplyRouting(t *testing.T) {
+	// Issuing /whois from buffer #c routes the WHOIS reply lines (and the
+	// 318 end marker) back to #c, not the status buffer.
+	conn := &fakeConnector{}
+	sink := &captureSink{}
+	e := New(Options{Sink: sink, Connector: conn})
+	if err := e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"}); err != nil {
+		t.Fatal(err)
+	}
+
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Channel: "#c",
+		Command: "whois", Args: []string{"alice"}, Text: "alice",
+	})
+	if !slices.Contains(conn.conns[0].raws, "WHOIS alice") {
+		t.Fatalf("/whois did not send WHOIS line; raws=%v", conn.conns[0].raws)
+	}
+	if got := e.pendingWhois["n\talice"]; got != "#c" {
+		t.Fatalf("pendingWhois not set: %v", e.pendingWhois)
+	}
+
+	// Feed a couple of numeric replies through apply(); each should land
+	// in #c as a system message.
+	for _, ev := range []Event{
+		{Type: EvNumeric, Network: "n", Time: time.Now(), Nick: "alice", Text: "alice (a@h): A", Count: 311},
+		{Type: EvNumeric, Network: "n", Time: time.Now(), Nick: "alice", Text: "End of WHOIS for alice", Count: 318},
+	} {
+		e.apply(ev)
+	}
+
+	var inBuf []Message
+	for _, m := range sink.msgs {
+		if m.Buffer == "#c" && m.Kind == MsgSystem {
+			inBuf = append(inBuf, m)
+		}
+	}
+	if len(inBuf) != 2 {
+		t.Errorf("expected 2 system lines in #c, got %d: %+v", len(inBuf), sink.msgs)
+	}
+	if _, ok := e.pendingWhois["n\talice"]; ok {
+		t.Errorf("318 should have cleared pendingWhois: %v", e.pendingWhois)
+	}
+}
+
+func TestWhoisReplyFallsBackToStatus(t *testing.T) {
+	// A numeric arriving without a pending entry lands in the status buffer.
+	conn := &fakeConnector{}
+	sink := &captureSink{}
+	e := New(Options{Sink: sink, Connector: conn})
+	_ = e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"})
+	e.apply(Event{
+		Type: EvNumeric, Network: "n", Time: time.Now(), Nick: "ghost",
+		Text: "no such nick: ghost", Count: 401,
+	})
+	found := false
+	for _, m := range sink.msgs {
+		if m.Buffer == StatusBuffer && m.Text == "no such nick: ghost" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("401 didn't land in status buffer; msgs=%+v", sink.msgs)
+	}
+}
+
+func TestModeShorthandCommands(t *testing.T) {
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	_ = e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"})
+
+	// /op alice — one op on the current channel.
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Channel: "#c",
+		Command: "op", Args: []string{"alice"}, Text: "alice",
+	})
+	// /deop alice bob carol — three deops, all in one MODE line.
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Channel: "#c",
+		Command: "deop", Args: []string{"alice", "bob", "carol"}, Text: "alice bob carol",
+	})
+	// /voice alice
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Channel: "#c",
+		Command: "voice", Args: []string{"alice"}, Text: "alice",
+	})
+
+	want := []string{
+		"MODE #c +o alice",
+		"MODE #c -ooo alice bob carol",
+		"MODE #c +v alice",
+	}
+	for _, w := range want {
+		if !slices.Contains(conn.conns[0].raws, w) {
+			t.Errorf("missing %q from raws=%v", w, conn.conns[0].raws)
+		}
+	}
+}
+
+func TestKickAndBanCommands(t *testing.T) {
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	_ = e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"})
+
+	// /kick alice (current channel).
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Channel: "#c",
+		Command: "kick", Args: []string{"alice"}, Text: "alice",
+	})
+	// /kick alice spam (with reason).
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Channel: "#c",
+		Command: "kick", Args: []string{"alice", "spam"}, Text: "alice spam",
+	})
+	// /kick #other alice (explicit channel).
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Channel: "#c",
+		Command: "kick", Args: []string{"#other", "alice"}, Text: "#other alice",
+	})
+	// /ban alice!*@*
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Channel: "#c",
+		Command: "ban", Args: []string{"alice!*@*"}, Text: "alice!*@*",
+	})
+
+	for _, want := range []string{
+		"KICK #c alice",
+		"KICK #c alice :spam",
+		"KICK #other alice",
+		"MODE #c +b alice!*@*",
+	} {
+		if !slices.Contains(conn.conns[0].raws, want) {
+			t.Errorf("missing %q from raws=%v", want, conn.conns[0].raws)
+		}
+	}
+}
+
+func TestUnknownCommandPassesThroughAsRaw(t *testing.T) {
+	// The default branch in runBuiltinCommand now upper-cases the command
+	// and sends it raw — the documented weechat/irssi behavior. That makes
+	// server-specific commands (/sajoin, /stats, /knock, …) work without
+	// us enumerating them.
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	_ = e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"})
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Channel: "#c",
+		Command: "knock", Args: []string{"#secret"}, Text: "#secret",
+	})
+	if !slices.Contains(conn.conns[0].raws, "KNOCK #secret") {
+		t.Errorf("unknown command not passed through raw; raws=%v", conn.conns[0].raws)
 	}
 }
 

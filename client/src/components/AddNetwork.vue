@@ -12,6 +12,11 @@ const nick = ref("");
 const channels = ref("");
 const saslUser = ref("");
 const saslPass = ref("");
+const serverPass = ref("");
+const perform = ref("");
+const saslExternal = ref(false);
+const certPem = ref("");
+const showAdvanced = ref(false);
 const error = ref("");
 
 function submit() {
@@ -26,6 +31,13 @@ function submit() {
     nick: nick.value.trim(),
     sasl_user: saslUser.value.trim() || undefined,
     sasl_pass: saslPass.value || undefined,
+    server_pass: serverPass.value || undefined,
+    sasl_external: saslExternal.value,
+    cert_pem: certPem.value.trim() || undefined,
+    perform: perform.value
+      .split("\n")
+      .map((c) => c.trim())
+      .filter(Boolean),
     channels: channels.value
       .split(",")
       .map((c) => c.trim())
@@ -47,6 +59,30 @@ function submit() {
       <label class="row"><span>Channels</span><input v-model="channels" placeholder="#one, #two" /></label>
       <label class="row"><span>SASL user</span><input v-model="saslUser" placeholder="(optional)" /></label>
       <label class="row"><span>SASL pass</span><input v-model="saslPass" type="password" placeholder="(optional)" /></label>
+
+      <div class="row">
+        <span></span>
+        <button type="button" class="link" @click="showAdvanced = !showAdvanced">
+          {{ showAdvanced ? "Hide advanced" : "Advanced…" }}
+        </button>
+      </div>
+      <template v-if="showAdvanced">
+        <label class="row"><span>Server pass</span><input v-model="serverPass" type="password" placeholder="bouncer / server password" /></label>
+        <label class="row">
+          <span>Perform</span>
+          <textarea v-model="perform" rows="3" spellcheck="false" placeholder="/msg NickServ IDENTIFY hunter2&#10;/join #private secretkey" />
+        </label>
+        <label class="row"><span>SASL EXTERNAL</span><input v-model="saslExternal" type="checkbox" /></label>
+        <label class="row">
+          <span>Client cert</span>
+          <textarea v-model="certPem" rows="4" spellcheck="false" placeholder="PEM cert + key for CertFP (-----BEGIN CERTIFICATE----- … -----END PRIVATE KEY-----)" />
+        </label>
+        <p class="hint">
+          Perform runs one command per line after connecting (every reconnect).
+          A client cert enables CertFP; tick SASL EXTERNAL to authenticate with it.
+        </p>
+      </template>
+
       <p v-if="error" class="login-error">{{ error }}</p>
       <div class="row">
         <button type="button" @click="emit('close')">Cancel</button>

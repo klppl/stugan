@@ -74,5 +74,6 @@ func toChannelDTO(c *core.Channel) proto.ChannelDTO {
 		Members:   mems,
 		Unread:    c.Unread,
 		Highlight: c.Highlight,
+		State:     c.State,
 	}
 }

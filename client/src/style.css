@@ -42,22 +42,39 @@ body,
   height: 100%;
   margin: 0;
 }
+/* dvh = "dynamic viewport height" — shrinks correctly when the mobile keyboard
+   opens, unlike vh which is locked to the initial viewport. */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #app {
+    height: 100dvh;
+  }
+}
 body {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 14px;
   color: var(--fg);
   background: var(--bg);
+  /* Prevent iOS double-tap zoom and rubber-band side scroll. */
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
 }
 
 .app {
   display: flex;
   height: 100%;
+  position: relative;
 }
 .main {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* Column flex containers default to min-height: auto, which lets tall
+     content (a big message list) push the column past its allocated
+     height. Pinning to 0 keeps the scrolling work inside .messages. */
+  min-height: 0;
 }
 
 /* Sidebar */
@@ -67,6 +84,8 @@ body {
   background: var(--bg-sidebar);
   overflow-y: auto;
   padding: 12px 0;
+  padding-top: max(12px, env(safe-area-inset-top));
+  padding-left: env(safe-area-inset-left);
 }
 .brand {
   font-weight: 700;
@@ -88,6 +107,7 @@ body {
 .net-gear {
   opacity: 0;
   font-size: 13px;
+  padding: 4px 8px;
 }
 .network-name:hover .net-gear {
   opacity: 0.8;
@@ -123,9 +143,15 @@ body {
   opacity: 0.45;
 }
 .buf-name {
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.lock-icon {
+  flex-shrink: 0;
+  font-size: 11px;
+  opacity: 0.85;
 }
 .badge {
   flex-shrink: 0;
@@ -148,6 +174,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
+  padding-top: max(8px, env(safe-area-inset-top));
   background: var(--bg-alt);
   border-bottom: 1px solid var(--border);
 }
@@ -158,6 +185,8 @@ body {
   border-radius: 4px;
   background: var(--bg);
   color: var(--fg);
+  font-size: 14px;
+  min-width: 0;
 }
 .topbar .spacer {
   flex: 1;
@@ -170,10 +199,61 @@ body {
   padding: 5px 9px;
   cursor: pointer;
   position: relative;
+  font-size: 14px;
+  /* iOS removes the default tap-highlight rectangle; we use :active instead. */
+  -webkit-tap-highlight-color: transparent;
+}
+.ghost:active {
+  background: var(--bg);
 }
 .ghost.active {
   background: var(--accent);
   color: #fff;
+}
+/* The members toggle is a show/hide control — when it's "on" the panel is
+   already visible, which is the indicator. Skip the loud accent fill it
+   would otherwise inherit from .ghost.active. */
+.ghost.members-btn.active {
+  background: transparent;
+  color: var(--fg);
+}
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 8px;
+}
+/* The hamburger and the search-toggle icon are mobile-only. */
+.menu-btn,
+.search-toggle {
+  display: none;
+}
+/* Hamburger glyph that morphs into an "X" when the drawer is open. */
+.menu-icon {
+  display: inline-block;
+  position: relative;
+  width: 18px;
+  height: 14px;
+}
+.menu-icon span {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: currentColor;
+  border-radius: 1px;
+  transition: transform 0.2s ease, opacity 0.2s ease, top 0.2s ease;
+}
+.menu-icon span:nth-child(1) { top: 0; }
+.menu-icon span:nth-child(2) { top: 6px; }
+.menu-icon span:nth-child(3) { top: 12px; }
+.menu-icon.open span:nth-child(1) { top: 6px; transform: rotate(45deg); }
+.menu-icon.open span:nth-child(2) { opacity: 0; }
+.menu-icon.open span:nth-child(3) { top: 6px; transform: rotate(-45deg); }
+.btn-icon {
+  display: none;
 }
 .conn-pill {
   font-size: 11px;
@@ -186,6 +266,13 @@ body {
 .conn-pill.closed {
   color: var(--hl);
 }
+.conn-dot {
+  display: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
 
 /* Chat */
 .chat {
@@ -193,6 +280,12 @@ body {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* Without min-height: 0 the column flex falls back to min-height: auto,
+     which is the sum of all children's natural sizes. A huge message log
+     then pushes .chat past its parent's height and the input form
+     (last child) lands below the viewport. .chat-body already shrinks
+     correctly; this is the missing link one level up. */
+  min-height: 0;
 }
 .chat-header {
   padding: 10px 16px;
@@ -204,6 +297,7 @@ body {
 }
 .buffer-name {
   font-weight: 700;
+  flex-shrink: 0;
 }
 .topic {
   color: var(--fg-dim);
@@ -243,6 +337,8 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 8px 16px;
+  /* Buttery-smooth scrolling on iOS. */
+  -webkit-overflow-scrolling: touch;
 }
 .empty {
   color: var(--fg-dim);
@@ -256,6 +352,7 @@ body {
   padding: 1px 0;
   line-height: 1.5;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .message.highlight {
   background: color-mix(in srgb, var(--hl) 18%, transparent);
@@ -281,6 +378,27 @@ body {
 .message .sys {
   color: var(--fg-dim);
   font-style: italic;
+}
+
+/* Folded run of join/part/quit/nick lines — one dim, clickable summary. */
+.fold {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 1px 0 1px 4px;
+  color: var(--fg-dim);
+  font-style: italic;
+  font-size: 0.92em;
+  cursor: pointer;
+  user-select: none;
+}
+.fold:hover {
+  color: var(--fg);
+}
+.fold .fold-caret {
+  flex-shrink: 0;
+  font-style: normal;
+  opacity: 0.7;
 }
 .message .body {
   flex: 1 1 auto;
@@ -327,6 +445,7 @@ body {
   flex-direction: column;
   gap: 2px;
   overflow: hidden;
+  min-width: 0;
 }
 .preview-title {
   font-weight: 600;
@@ -361,6 +480,16 @@ body {
   background: var(--bg-sidebar);
   overflow-y: auto;
   padding: 8px 0;
+  padding-right: env(safe-area-inset-right);
+}
+/* Desktop: the 👥 toggle in the topbar collapses the member panel by
+   removing it from the layout entirely. On mobile the panel is a
+   slide-in drawer (see the max-width: 720px block below), so this rule
+   does not apply there. */
+@media (min-width: 721px) {
+  .members:not(.open) {
+    display: none;
+  }
 }
 .members-head {
   padding: 0 14px 6px;
@@ -403,12 +532,16 @@ body {
 .chat-input {
   display: flex;
   padding: 10px;
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+  padding-left: max(10px, env(safe-area-inset-left));
+  padding-right: max(10px, env(safe-area-inset-right));
   gap: 8px;
   background: var(--bg-alt);
 }
 .ac-wrap {
   position: relative;
   flex: 1;
+  min-width: 0;
 }
 .chat-input input {
   width: 100%;
@@ -426,6 +559,7 @@ body {
   background: var(--accent);
   color: #fff;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 .chat-input button:disabled {
   opacity: 0.5;
@@ -443,14 +577,57 @@ body {
   background: var(--bg-sidebar);
   border: 1px solid var(--border);
   border-radius: 4px;
+  z-index: 5;
 }
 .autocomplete li {
-  padding: 4px 10px;
+  padding: 6px 10px;
   cursor: pointer;
 }
 .autocomplete li.sel {
   background: var(--accent);
   color: #fff;
+}
+
+/* Clickable rows in the Mentions / Search panes: a subtle hover hint that
+   they take you somewhere, plus a pointer cursor. The row wraps the whole
+   MessageItem so the entire line is the hit target. */
+.jump-row {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0 4px;
+  margin: 0 -4px;
+}
+.jump-row:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Brief highlight applied to a message after a successful jump, so the
+   user's eye lands on the right line. Fades out on its own. */
+.jump-flash {
+  animation: jump-flash 1.8s ease-out;
+  border-radius: 3px;
+}
+@keyframes jump-flash {
+  0%   { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+  100% { background: transparent; }
+}
+
+.day-sep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 4px;
+  color: var(--fg-dim);
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.day-sep::before,
+.day-sep::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--fg-dim) 35%, transparent);
 }
 
 .load-older {
@@ -464,6 +641,24 @@ body {
   color: var(--accent);
   cursor: pointer;
 }
+/* "Back to latest" is the bottom-anchored sibling shown while a jumped-to
+   window is being read. Same look, with breathing room above instead of
+   below so it sits visually under the last message of the window. */
+.back-to-latest {
+  margin: 8px 0 4px;
+}
+
+/* Drawer backdrop — hidden on desktop, dims chat behind open drawers on mobile. */
+.drawer-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 14;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
 
 /* Settings */
 .settings-overlay {
@@ -473,7 +668,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10;
+  z-index: 20;
 }
 .settings {
   background: var(--bg);
@@ -481,6 +676,9 @@ body {
   border-radius: 8px;
   padding: 20px 24px;
   min-width: 300px;
+  max-width: 92vw;
+  max-height: 92vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -493,6 +691,7 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 .settings select,
 .settings button {
@@ -500,8 +699,9 @@ body {
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 5px 9px;
+  padding: 6px 10px;
   cursor: pointer;
+  font-size: 14px;
 }
 .settings .hint {
   color: var(--fg-dim);
@@ -556,16 +756,74 @@ body {
   flex: 1;
 }
 
+/* Buffer context menu (right-click in the sidebar). Floats above everything
+   at fixed coordinates; openMenu() in Sidebar.vue clamps the coords so the
+   box stays inside the viewport. */
+.ctx-menu {
+  position: fixed;
+  z-index: 30;
+  min-width: 200px;
+  max-width: 220px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ctx-menu .ctx-header {
+  font-size: 12px;
+  color: var(--fg-dim);
+  padding: 6px 10px 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-menu .ctx-item {
+  background: none;
+  border: none;
+  color: var(--fg);
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+}
+.ctx-menu .ctx-item:hover:not(:disabled) {
+  background: var(--bg-alt);
+}
+.ctx-menu .ctx-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ctx-menu .ctx-item.danger {
+  color: var(--hl);
+}
+.ctx-menu .ctx-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+.members li.ignored {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
 .add-network {
   display: block;
   width: calc(100% - 24px);
   margin: 12px;
-  padding: 7px;
+  padding: 10px;
   border: 1px dashed var(--border);
   border-radius: 4px;
   background: transparent;
   color: var(--fg-dim);
   cursor: pointer;
+  font-size: 14px;
 }
 .add-network:hover {
   color: var(--fg);
@@ -579,8 +837,9 @@ body {
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 5px 8px;
+  padding: 6px 8px;
   width: 60%;
+  font-size: 14px;
 }
 
 /* Channel browser */
@@ -598,7 +857,7 @@ body {
   display: flex;
   gap: 10px;
   align-items: baseline;
-  padding: 5px 10px;
+  padding: 8px 10px;
   cursor: pointer;
   border-bottom: 1px solid var(--border);
 }
@@ -636,37 +895,70 @@ body {
   align-items: center;
   justify-content: center;
   height: 100%;
+  padding: 16px;
+  background:
+    radial-gradient(1200px 800px at 20% -10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 60%),
+    radial-gradient(900px 700px at 110% 110%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 60%);
 }
 .login {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  width: 280px;
-  padding: 28px;
+  width: 320px;
+  max-width: 100%;
+  padding: 32px 28px;
   background: var(--bg-alt);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
 }
 .login .brand {
   text-align: center;
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 700;
-  margin-bottom: 4px;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+.login-sub {
+  margin: 0 0 6px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--fg-dim);
 }
 .login input {
-  padding: 9px 11px;
+  padding: 11px 13px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 8px;
   background: var(--bg);
   color: var(--fg);
+  font-size: 16px; /* ≥16px keeps iOS Safari from zooming on focus */
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.login input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .login button {
-  padding: 9px;
+  padding: 11px;
   border: none;
-  border-radius: 4px;
+  border-radius: 8px;
   background: var(--accent);
   color: #fff;
   cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  transition: filter 0.15s, transform 0.05s;
+}
+.login button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.login button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.login button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .login-error {
   color: var(--hl);
@@ -675,15 +967,238 @@ body {
   text-align: center;
 }
 
-/* Mobile */
+/* Honeypot inputs — visually hidden but still focusable for screen
+   readers? No: tabindex=-1 + aria-hidden on the wrapper keeps them
+   out of the tab order and the a11y tree. They're left in the DOM
+   so form-filling bots see them and bite. */
+.hp-field {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Mobile (≤720px)
+
+   The layout pivots from "three columns side-by-side" to
+   "one chat column + two off-canvas drawers". The hamburger in
+   the topbar slides the sidebar in from the left; the people
+   button slides the members list in from the right. A shared
+   backdrop catches taps to close them.
+   ──────────────────────────────────────────────────────────── */
 @media (max-width: 720px) {
-  .sidebar {
-    width: 150px;
+  body {
+    font-size: 14px;
   }
+
+  /* The sidebar becomes an off-canvas drawer. */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(82vw, 320px);
+    z-index: 15;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.35);
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+  .sidebar.open {
+    transform: translateX(0);
+  }
+  /* Always reveal the gear on touch — there's no hover to wait for. */
+  .net-gear {
+    opacity: 0.55;
+  }
+  .buffers li {
+    padding: 11px 16px 11px 24px;
+    font-size: 15px;
+  }
+
+  /* The members list becomes a right-edge drawer triggered from the topbar. */
   .members {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: min(72vw, 260px);
+    z-index: 15;
+    transform: translateX(100%);
+    transition: transform 0.22s ease;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.35);
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+  .members.open {
+    transform: translateX(0);
+  }
+  .members li {
+    padding: 8px 14px;
+    font-size: 15px;
+  }
+
+  .drawer-backdrop {
+    display: block;
+  }
+  .drawer-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Topbar gets a hamburger and tightens to icon-only chrome.
+     `flex-wrap` lets the search input drop to its own row when toggled
+     open (it has order:99 + flex-basis:100% to land on a second line). */
+  .topbar {
+    flex-wrap: wrap;
+    padding: 6px 8px;
+    padding-top: max(6px, env(safe-area-inset-top));
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+    gap: 6px;
+  }
+  .menu-btn,
+  .search-toggle {
+    display: inline-flex;
+  }
+  /* Hide the always-visible search input; slide it down only when the
+     magnifier is tapped (controlled by JS toggling .mobile-open). */
+  .topbar .search {
     display: none;
+    flex-basis: 100%;
+    order: 99; /* wraps below the button row */
+    font-size: 16px; /* prevent iOS zoom-in-on-focus */
+  }
+  .topbar .search.mobile-open {
+    display: block;
+  }
+  .topbar .ghost {
+    min-height: 36px;
+    padding: 6px 9px;
+  }
+  /* Swap text labels for short icons on tight viewports. */
+  .btn-label {
+    display: none;
+  }
+  .btn-icon {
+    display: inline;
+    font-size: 16px;
+    line-height: 1;
+  }
+  /* The connection text shrinks to a small status dot. */
+  .conn-label {
+    display: none;
+  }
+  .conn-dot {
+    display: inline-block;
+  }
+  /* Channels-browser button drops on the narrowest screens; /join still works. */
+  @media (max-width: 380px) {
+    .channels-btn {
+      display: none;
+    }
+  }
+
+  .chat-header {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+  /* The topic clamps to one line and dims; it's still tappable to edit. */
+  .topic {
+    font-size: 12px;
+  }
+
+  .messages {
+    padding: 8px 12px;
+    /* When the keyboard is up the input rises with it (dvh on root); a touch
+       of bottom space keeps the last line off the input. */
+    scroll-padding-bottom: 16px;
+  }
+  .message {
+    gap: 6px;
   }
   .embed-media {
     max-width: 100%;
+    max-height: 60vh;
   }
+
+  .chat-input {
+    padding: 8px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+  .chat-input input {
+    font-size: 16px; /* prevent iOS zoom */
+    padding: 10px 12px;
+  }
+  .chat-input button {
+    padding: 10px 14px;
+  }
+
+  /* Modals become near-full-screen sheets. */
+  .settings-overlay {
+    align-items: flex-end;
+  }
+  .settings {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92vh;
+    border-radius: 14px 14px 0 0;
+    padding: 18px 16px;
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    animation: sheet-up 0.22s ease;
+  }
+  .settings .row {
+    /* Two-column rows wrap; labels stack above inputs for readability. */
+  }
+  .addnet .row {
+    align-items: stretch;
+  }
+  .addnet .row input[type="text"],
+  .addnet .row input:not([type]),
+  .addnet .row input[type="password"],
+  .addnet .row input[type="number"] {
+    width: 100%;
+    font-size: 16px; /* prevent iOS zoom */
+    padding: 9px 10px;
+  }
+  .addnet .row > span:first-child {
+    min-width: 80px;
+  }
+
+  .browser {
+    width: 100%;
+  }
+  .browser-list {
+    max-height: 60vh;
+  }
+  .browser-item {
+    flex-wrap: wrap;
+    padding: 10px;
+  }
+  .bc-name {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .bc-topic {
+    flex-basis: 100%;
+    font-size: 12px;
+  }
+}
+
+@keyframes sheet-up {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Hover effects only on devices that actually hover (skip phones/tablets). */
+@media (hover: none) {
+  .network-name:hover .net-gear { opacity: 0.55; }
+  .buffers li:hover { background: transparent; }
+  .members li:hover { background: transparent; }
+  .browser-item:hover { background: transparent; }
 }

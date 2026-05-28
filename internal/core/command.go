@@ -31,8 +31,10 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 			e.API().Notice(ev.Network, target, text)
 		}
 	case "join":
-		if len(ev.Args) > 0 {
-			conn.SendRaw("JOIN " + ev.Args[0])
+		// Pass the full argument string so channel keys come along:
+		// /join #chan key  →  JOIN #chan key (also /join #a,#b k1,k2).
+		if ev.Text != "" {
+			conn.SendRaw("JOIN " + ev.Text)
 		}
 	case "part":
 		ch := ev.Channel
@@ -73,11 +75,173 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 		conn.SendRaw(fmt.Sprintf("CHATHISTORY LATEST %s * %d", ev.Channel, n))
 	case "raw", "quote":
 		conn.SendRaw(ev.Text)
-	default:
+
+	// --- Lookups (replies surface via EvNumeric routed back to ev.Channel)
+	case "whois":
+		e.startNumeric(ev, "WHOIS")
+	case "whowas":
+		e.startNumeric(ev, "WHOWAS")
+	case "who":
+		e.startNumeric(ev, "WHO")
+	case "names":
+		// /names defaults to the current channel; with an arg, that channel.
+		target := ev.Channel
+		if len(ev.Args) > 0 {
+			target = ev.Args[0]
+		}
+		if target != "" {
+			e.pendingWhois[ev.Network+"\t"+strings.ToLower(target)] = ev.Channel
+			conn.SendRaw("NAMES " + target)
+		}
+
+	// --- Modes & moderation
+	case "mode":
+		// /mode <target> [modes] [args…]; on a channel buffer with no args,
+		// /mode alone queries the current modes.
+		target := ev.Channel
+		rest := ev.Text
+		if len(ev.Args) > 0 {
+			target = ev.Args[0]
+			_, rest, _ = strings.Cut(ev.Text, " ")
+		}
+		if rest == "" {
+			conn.SendRaw("MODE " + target)
+		} else {
+			conn.SendRaw("MODE " + target + " " + rest)
+		}
+	case "op", "deop", "voice", "devoice", "halfop", "dehalfop":
+		// Channel-mode shorthand: /op nick [nick…] → MODE #chan +ooo nick nick nick.
+		// Built from ev.Channel so it only makes sense in a channel buffer.
+		applyModeShorthand(conn, ev, name)
+	case "ban":
+		if ev.Channel != "" && len(ev.Args) > 0 {
+			conn.SendRaw("MODE " + ev.Channel + " +b " + strings.Join(ev.Args, " "))
+		}
+	case "unban":
+		if ev.Channel != "" && len(ev.Args) > 0 {
+			conn.SendRaw("MODE " + ev.Channel + " -b " + strings.Join(ev.Args, " "))
+		}
+	case "kick":
+		kickCmd(conn, ev)
+	case "invite":
+		// /invite <nick> [#channel] — default channel is the current buffer.
+		if len(ev.Args) == 0 {
+			return
+		}
+		nick := ev.Args[0]
+		ch := ev.Channel
+		if len(ev.Args) > 1 {
+			ch = ev.Args[1]
+		}
+		if ch != "" {
+			conn.SendRaw("INVITE " + nick + " " + ch)
+		}
+
+	// --- Presence
+	case "away":
+		// /away with an arg sets away; bare /away clears.
+		if ev.Text == "" {
+			conn.SendRaw("AWAY")
+		} else {
+			conn.SendRaw("AWAY :" + ev.Text)
+		}
+	case "back":
+		conn.SendRaw("AWAY")
+
+	// --- Buffers
+	case "query":
+		// /query <nick> [text] opens a query buffer and optionally sends
+		// the first line. Opening = injecting a system marker so the
+		// buffer exists in the snapshot; the actual send goes via the
+		// normal message path so plugins (e.g. fish.lua) can encrypt.
+		if len(ev.Args) == 0 {
+			return
+		}
+		target := ev.Args[0]
 		e.inject(Message{
-			Network: ev.Network, Buffer: ev.Channel, Time: time.Now(),
-			Kind: MsgSystem, Text: "unknown command: " + ev.Command,
+			Network: ev.Network, Buffer: target, Time: time.Now(),
+			Kind: MsgSystem, Text: "opened query with " + target,
 		})
+		if len(ev.Args) > 1 {
+			_, rest, _ := strings.Cut(ev.Text, " ")
+			if rest != "" {
+				e.sendInput(ev.Network, target, rest, 0)
+			}
+		}
+
+	default:
+		// Anything we don't recognize is passed through as a raw IRC line
+		// (uppercased command, args joined). Matches the weechat/irssi habit
+		// of /FOO behaving like raw FOO — covers server-specific commands
+		// (/SAJOIN, /STATS, /OPER, /KNOCK, …) without us enumerating them.
+		conn.SendRaw(strings.ToUpper(ev.Command) + " " + ev.Text)
+	}
+}
+
+// startNumeric records the issuing buffer for a lookup command so the
+// engine can route the server's numeric replies back to it (see
+// applyNumeric). raw is the IRC verb (WHOIS / WHOWAS / WHO).
+func (e *Engine) startNumeric(ev Event, raw string) {
+	conn := e.connFor(ev.Network)
+	if conn == nil || len(ev.Args) == 0 {
+		return
+	}
+	target := ev.Args[0]
+	e.pendingWhois[ev.Network+"\t"+strings.ToLower(target)] = ev.Channel
+	conn.SendRaw(raw + " " + target)
+}
+
+// applyModeShorthand expands /op /deop /voice /devoice /halfop /dehalfop
+// nick [nick…] into a single MODE line. Server limits typically cap at 4-6
+// mode args per line; we don't chunk here (callers giving 10 ops at once
+// is rare, and the server will reject neatly).
+func applyModeShorthand(conn IRCConn, ev Event, name string) {
+	if ev.Channel == "" || len(ev.Args) == 0 {
+		return
+	}
+	var flag byte
+	sign := "+"
+	switch name {
+	case "op":
+		flag = 'o'
+	case "deop":
+		flag, sign = 'o', "-"
+	case "voice":
+		flag = 'v'
+	case "devoice":
+		flag, sign = 'v', "-"
+	case "halfop":
+		flag = 'h'
+	case "dehalfop":
+		flag, sign = 'h', "-"
+	}
+	modes := sign + strings.Repeat(string(flag), len(ev.Args))
+	conn.SendRaw("MODE " + ev.Channel + " " + modes + " " + strings.Join(ev.Args, " "))
+}
+
+// kickCmd handles /kick <nick> [reason] in the current channel, and
+// /kick #chan <nick> [reason] anywhere.
+func kickCmd(conn IRCConn, ev Event) {
+	if len(ev.Args) == 0 {
+		return
+	}
+	chan_ := ev.Channel
+	nickIdx := 0
+	// If the first arg looks like a channel, treat it as the target.
+	first := ev.Args[0]
+	if first != "" && (first[0] == '#' || first[0] == '&' || first[0] == '+' || first[0] == '!') {
+		chan_ = first
+		nickIdx = 1
+	}
+	if chan_ == "" || nickIdx >= len(ev.Args) {
+		return
+	}
+	nick := ev.Args[nickIdx]
+	reason := strings.Join(ev.Args[nickIdx+1:], " ")
+	if reason != "" {
+		conn.SendRaw("KICK " + chan_ + " " + nick + " :" + reason)
+	} else {
+		conn.SendRaw("KICK " + chan_ + " " + nick)
 	}
 }
 
@@ -205,6 +369,37 @@ func (a engineAPI) Part(network, channel string) error {
 
 func (a engineAPI) Print(network, buffer, text string) {
 	a.e.HandleEvent(Event{Type: evPrint, Network: network, Channel: buffer, Text: text, Time: time.Now()})
+}
+
+// SetBufferState mutates the named buffer's State map under the engine
+// lock and re-broadcasts the network snapshot so every sink (terminal log,
+// store, every connected client) sees the change. Calling with a nil or
+// empty map clears state entirely. If the network or buffer is unknown the
+// call is a no-op — plugins targeting a buffer that doesn't exist yet
+// should re-publish when one appears.
+func (a engineAPI) SetBufferState(network, buffer string, state map[string]string) {
+	a.e.mu.Lock()
+	n := a.e.user.Network(network)
+	if n == nil {
+		a.e.mu.Unlock()
+		return
+	}
+	c := n.Channel(buffer)
+	if c == nil {
+		a.e.mu.Unlock()
+		return
+	}
+	if len(state) == 0 {
+		c.State = nil
+	} else {
+		next := make(map[string]string, len(state))
+		for k, v := range state {
+			next[k] = v
+		}
+		c.State = next
+	}
+	a.e.mu.Unlock()
+	a.e.notifyNetwork(network)
 }
 
 func (a engineAPI) Networks() []NetworkInfo {

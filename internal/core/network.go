@@ -14,6 +14,22 @@ type NetworkParams struct {
 	SASLUser string   `json:"sasl_user"`
 	SASLPass string   `json:"sasl_pass"`
 	Channels []string `json:"channels"`
+	// ServerPass is the connection password (IRC PASS), used by bouncers
+	// (ZNC/soju) and password-gated servers. Empty disables it.
+	ServerPass string `json:"server_pass,omitempty"`
+	// Perform is a list of command lines run after registration, on every
+	// (re)connect. Each is processed like user input (alias + /command +
+	// plugin hooks), e.g. "/msg NickServ IDENTIFY hunter2" or
+	// "/join #private secretkey". Use it to identify, ghost, set modes, or
+	// join keyed channels on networks without SASL.
+	Perform []string `json:"perform,omitempty"`
+	// SASLExternal authenticates with SASL EXTERNAL (CertFP) instead of
+	// PLAIN. Requires a client certificate (CertPEM) and TLS.
+	SASLExternal bool `json:"sasl_external,omitempty"`
+	// CertPEM is a client certificate (cert and private key concatenated in
+	// PEM form) presented during the TLS handshake. Enables CertFP and is
+	// required for SASLExternal. Empty disables the client certificate.
+	CertPEM string `json:"cert_pem,omitempty"`
 }
 
 // Connector builds an IRCConn from params, delivering inbound events to the

@@ -133,8 +133,9 @@ type BufferRef struct {
 type BacklogFetch struct {
     Network string `json:"network"`
     Buffer  string `json:"buffer"`
-    Before  string `json:"before"`           // RFC3339 cursor; "" = latest
-    Limit   int    `json:"limit"`
+    Before  string `json:"before,omitempty"` // RFC3339 cursor; "" = latest
+    Around  string `json:"around,omitempty"` // RFC3339; window centered on T
+    Limit   int    `json:"limit,omitempty"`
 }
 
 type SearchReq struct {
@@ -170,8 +171,9 @@ share one path.
 type BacklogResp struct {
     Network  string       `json:"network"`
     Buffer   string       `json:"buffer"`
-    Messages []MessageDTO `json:"messages"`   // oldest→newest
-    More     bool         `json:"more"`        // older history exists
+    Messages []MessageDTO `json:"messages"`        // oldest→newest
+    More     bool         `json:"more"`            // older history exists
+    Around   string       `json:"around,omitempty"`// echoes the request when windowed
 }
 
 type MemberEvent struct {
@@ -211,7 +213,10 @@ export interface MessageDTO {
   from: string; kind: MsgKind; text: string; self: boolean;
   tags?: Record<string, string>;
 }
-export type MsgKind = "privmsg" | "notice" | "action" | "join" | "part" | "system";
+export type MsgKind =
+  | "privmsg" | "notice" | "action"
+  | "join" | "part" | "quit" | "nick"   // membership churn (client folds these)
+  | "system";
 // ...one interface per payload above, plus a discriminated union of all events.
 ```
 

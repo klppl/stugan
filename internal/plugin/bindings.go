@@ -166,6 +166,30 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 		h.api.Print(L.CheckString(1), L.CheckString(2), L.CheckString(3))
 		return 0
 	}))
+	t.RawSetString("set_buffer_state", s.L.NewFunction(func(L *lua.LState) int {
+		// set_buffer_state(network, buffer, state_table_or_nil)
+		network := L.CheckString(1)
+		buffer := L.CheckString(2)
+		v := L.Get(3)
+		if v == lua.LNil {
+			h.api.SetBufferState(network, buffer, nil)
+			return 0
+		}
+		tbl, ok := v.(*lua.LTable)
+		if !ok {
+			L.RaiseError("set_buffer_state: third arg must be a table or nil")
+		}
+		state := map[string]string{}
+		tbl.ForEach(func(k, val lua.LValue) {
+			ks, ok := k.(lua.LString)
+			if !ok {
+				return // skip non-string keys silently — keeps the API forgiving
+			}
+			state[string(ks)] = L.ToStringMeta(val).String()
+		})
+		h.api.SetBufferState(network, buffer, state)
+		return 0
+	}))
 
 	// State reads ---------------------------------------------------------
 	t.RawSetString("networks", s.L.NewFunction(func(L *lua.LState) int {
@@ -212,6 +236,7 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 	}))
 
 	// Persistence, config, logging ---------------------------------------
+	t.RawSetString("crypto", h.buildCrypto(s))
 	t.RawSetString("kv", h.buildKV(s))
 	t.RawSetString("config", s.L.NewFunction(func(L *lua.LState) int {
 		key := L.CheckString(1)
@@ -284,14 +309,31 @@ func (h *Host) stopTimer(t *timerHook) {
 
 func (h *Host) buildKV(s *script) *lua.LTable {
 	kv := s.L.NewTable()
+	// store returns the cache for this script, lazy-filling from the
+	// persistent backing store (if any) on first access. The lazy fill
+	// matters: scripts are loaded one at a time, and a single eager
+	// preload at host startup would race the LStates that haven't run yet
+	// — this way each script sees its own persisted values the first time
+	// it touches kv, regardless of load order.
 	store := func() map[string]string {
 		if h.kv[s.name] == nil {
-			h.kv[s.name] = map[string]string{}
+			if h.kvStore != nil {
+				h.kv[s.name] = h.kvStore.GetAll(s.name)
+			} else {
+				h.kv[s.name] = map[string]string{}
+			}
 		}
 		return h.kv[s.name]
 	}
 	kv.RawSetString("set", s.L.NewFunction(func(L *lua.LState) int {
-		store()[L.CheckString(1)] = L.ToStringMeta(L.Get(2)).String()
+		key := L.CheckString(1)
+		val := L.ToStringMeta(L.Get(2)).String()
+		store()[key] = val
+		if h.kvStore != nil {
+			if err := h.kvStore.Set(s.name, key, val); err != nil {
+				h.log.Warn("plugin kv set persist", "script", s.name, "err", err)
+			}
+		}
 		return 0
 	}))
 	kv.RawSetString("get", s.L.NewFunction(func(L *lua.LState) int {
@@ -303,7 +345,13 @@ func (h *Host) buildKV(s *script) *lua.LTable {
 		return 1
 	}))
 	kv.RawSetString("delete", s.L.NewFunction(func(L *lua.LState) int {
-		delete(store(), L.CheckString(1))
+		key := L.CheckString(1)
+		delete(store(), key)
+		if h.kvStore != nil {
+			if err := h.kvStore.Delete(s.name, key); err != nil {
+				h.log.Warn("plugin kv delete persist", "script", s.name, "err", err)
+			}
+		}
 		return 0
 	}))
 	return kv

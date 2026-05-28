@@ -55,5 +55,19 @@ user     = "stuganuser"
 realname = "stugan"
 channels = ["#stugan"]
 connect  = true
-# sasl_user = "account"
-# sasl_pass = "secret"
+# sasl_user = "account"           # SASL PLAIN account…
+# sasl_pass = "secret"            # …and its password
+#
+# server_pass = "hunter2"         # IRC PASS — for bouncers (ZNC/soju) or
+#                                 # password-gated servers
+#
+# perform = [                     # commands run after registration, on every
+#   "/msg NickServ IDENTIFY hunter2",   # (re)connect — identify, set modes,
+#   "/join #private secretkey",         # join keyed channels, etc.
+# ]
+#
+# CertFP / SASL EXTERNAL: present a client certificate and authenticate with
+# it instead of a password. cert_file is a PEM with the certificate and the
+# private key concatenated.
+# sasl_external = true
+# cert_file     = "/home/me/.config/stugan/libera.pem"

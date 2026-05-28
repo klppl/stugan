@@ -176,6 +176,83 @@ func TestToEventAway(t *testing.T) {
 	}
 }
 
+// TestToEventNumerics covers the WHOIS/WHO/error replies the engine
+// surfaces as system lines. Each entry asserts both the formatted text
+// (what the user will see) and the routing subject (which buffer the
+// engine pairs the line to via pendingWhois).
+func TestToEventNumerics(t *testing.T) {
+	tests := []struct {
+		name        string
+		raw         string
+		wantText    string
+		wantSubject string
+		wantCount   int
+	}{
+		{
+			name:        "RPL_WHOISUSER",
+			raw:         ":serv 311 me alice ~auser host.example * :Alice Liddell",
+			wantText:    "alice (~auser@host.example): Alice Liddell",
+			wantSubject: "alice",
+			wantCount:   311,
+		},
+		{
+			name:        "RPL_WHOISCHANNELS",
+			raw:         ":serv 319 me alice :@#go +#cats",
+			wantText:    "alice on: @#go +#cats",
+			wantSubject: "alice",
+			wantCount:   319,
+		},
+		{
+			name:        "RPL_WHOISIDLE",
+			raw:         ":serv 317 me alice 42 1700000000 :seconds idle, signon time",
+			wantText:    "alice: idle 42s, signon 1700000000",
+			wantSubject: "alice",
+			wantCount:   317,
+		},
+		{
+			name:        "RPL_ENDOFWHOIS",
+			raw:         ":serv 318 me alice :End of /WHOIS list",
+			wantText:    "End of WHOIS for alice",
+			wantSubject: "alice",
+			wantCount:   318,
+		},
+		{
+			name:        "ERR_NOSUCHNICK",
+			raw:         ":serv 401 me ghost :No such nick/channel",
+			wantText:    "no such nick: ghost",
+			wantSubject: "ghost",
+			wantCount:   401,
+		},
+		{
+			name:        "ERR_CHANOPRIVSNEEDED",
+			raw:         ":serv 482 me #ops :You're not a channel operator",
+			wantText:    "#ops: you're not a channel operator",
+			wantSubject: "#ops",
+			wantCount:   482,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ev, ok := toEvent("n", girc.ParseEvent(tt.raw), "me")
+			if !ok {
+				t.Fatal("toEvent returned ok=false")
+			}
+			if ev.Type != core.EvNumeric {
+				t.Fatalf("Type = %v, want EvNumeric", ev.Type)
+			}
+			if ev.Text != tt.wantText {
+				t.Errorf("Text = %q, want %q", ev.Text, tt.wantText)
+			}
+			if ev.Nick != tt.wantSubject {
+				t.Errorf("Nick = %q, want %q", ev.Nick, tt.wantSubject)
+			}
+			if ev.Count != tt.wantCount {
+				t.Errorf("Count = %d, want %d", ev.Count, tt.wantCount)
+			}
+		})
+	}
+}
+
 func TestToEventTyping(t *testing.T) {
 	// Inbound +typing TAGMSG from someone else → EvTyping.
 	e := girc.ParseEvent("@+typing=active :alice!u@h TAGMSG #go")

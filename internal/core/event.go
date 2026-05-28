@@ -33,6 +33,14 @@ const (
 	// EvTyping is an inbound +typing TAGMSG: Nick is typing in Channel
 	// (buffer), with Text the state (active/paused/done).
 	EvTyping EventType = "typing"
+	// EvNumeric carries a server numeric reply (WHOIS, WHO, WHOWAS, error
+	// codes, etc.). Text is the human-readable formatted line; Nick is
+	// the subject of the reply (the WHOIS target, the offending channel,
+	// …) used to route the system message back to the buffer that issued
+	// the request — fallback is the status buffer. Count holds the
+	// numeric code so the engine can clear request-tracking state on the
+	// "END OF" markers.
+	EvNumeric EventType = "numeric"
 
 	// evSetState is internal: it carries a transient connection-state
 	// change (e.g. Connecting) onto the engine loop so all state mutation

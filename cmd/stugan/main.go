@@ -90,6 +90,18 @@ func run() error {
 	}
 	defer cleanup()
 
+	// Optional outer site-wide password ("magic word"). Hashed once at
+	// startup so the plaintext is not retained in process memory.
+	var magicHash string
+	if pw := os.Getenv("STUGAN_WEB_PASSWORD"); pw != "" {
+		h, err := auth.HashPassword(pw)
+		if err != nil {
+			return fmt.Errorf("hash $STUGAN_WEB_PASSWORD: %w", err)
+		}
+		magicHash = h
+		log.Info("magic-word gate enabled via $STUGAN_WEB_PASSWORD")
+	}
+
 	srv := server.New(hub, server.Options{
 		Logger:         log,
 		ServerName:     "stugan/" + version(),
@@ -97,6 +109,7 @@ func run() error {
 		OriginPatterns: cfg.Server.OriginPatterns,
 		UploadDir:      filepath.Join(cfg.DataDir(), "uploads"),
 		PushDir:        filepath.Join(cfg.DataDir(), "push"),
+		MagicWordHash:  magicHash,
 	})
 	hub.registerSinks(srv)
 

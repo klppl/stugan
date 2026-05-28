@@ -81,9 +81,14 @@ type Engine struct {
 	conns       map[string]IRCConn
 	connCancels map[string]context.CancelFunc
 	listAccum   map[string][]ChannelListItem // in-progress LIST results
-	running     bool
-	runCtx      context.Context
-	runWG       sync.WaitGroup
+	// pendingWhois records which buffer issued a WHOIS/WHOWAS/WHO so we
+	// can route the server's numeric replies back to it. Key is
+	// "<network>\t<lowercase-nick>"; cleared on the matching end-of
+	// marker (318/369/315). Mutated only on the engine loop goroutine.
+	pendingWhois map[string]string
+	running      bool
+	runCtx       context.Context
+	runWG        sync.WaitGroup
 
 	events chan Event
 	done   chan struct{}
@@ -115,19 +120,20 @@ func New(opts Options) *Engine {
 		hl, _ = NewHighlighter(nil, nil) // nick mentions only
 	}
 	return &Engine{
-		log:         log,
-		host:        host,
-		sinks:       sinks,
-		user:        user,
-		highlight:   hl,
-		aliases:     opts.Aliases,
-		connector:   opts.Connector,
-		netStore:    opts.Networks,
-		conns:       map[string]IRCConn{},
-		connCancels: map[string]context.CancelFunc{},
-		listAccum:   map[string][]ChannelListItem{},
-		events:      make(chan Event, 256),
-		done:        make(chan struct{}),
+		log:          log,
+		host:         host,
+		sinks:        sinks,
+		user:         user,
+		highlight:    hl,
+		aliases:      opts.Aliases,
+		connector:    opts.Connector,
+		netStore:     opts.Networks,
+		conns:        map[string]IRCConn{},
+		connCancels:  map[string]context.CancelFunc{},
+		listAccum:    map[string][]ChannelListItem{},
+		pendingWhois: map[string]string{},
+		events:       make(chan Event, 256),
+		done:         make(chan struct{}),
 	}
 }
 
@@ -310,7 +316,9 @@ func (e *Engine) UpdateNetwork(p NetworkParams) error {
 func needsReconnect(old, p NetworkParams) bool {
 	return old.Addr != p.Addr || old.TLS != p.TLS ||
 		old.User != p.User || old.Realname != p.Realname ||
-		old.SASLUser != p.SASLUser || old.SASLPass != p.SASLPass
+		old.SASLUser != p.SASLUser || old.SASLPass != p.SASLPass ||
+		old.ServerPass != p.ServerPass || old.SASLExternal != p.SASLExternal ||
+		old.CertPEM != p.CertPEM
 }
 
 // diffChannels returns the channels added to and removed from the auto-join
@@ -602,7 +610,38 @@ func (e *Engine) handle(ctx context.Context, ev Event) {
 	default: // join, part, quit, nick, topic, connect, disconnect
 		e.host.Dispatch(ctx, ev) // notify-only
 		e.apply(ev)
+		if ev.Type == EvConnect {
+			e.runPerform(ev.Network)
+		}
 	}
+}
+
+// runPerform replays a network's configured perform commands after it
+// registers, on every (re)connect. Lines are submitted through the normal
+// input path (alias expansion, /command dispatch, plugin hooks), so they
+// behave exactly as if the user had typed them in the status buffer. It runs
+// in its own goroutine: sendInput enqueues onto the event bus, and we are
+// already on the loop goroutine reading that bus, so submitting inline could
+// stall if the buffer filled.
+func (e *Engine) runPerform(network string) {
+	e.mu.RLock()
+	n := e.user.Network(network)
+	var lines []string
+	if n != nil && len(n.Params.Perform) > 0 {
+		lines = append(lines, n.Params.Perform...)
+	}
+	e.mu.RUnlock()
+	if len(lines) == 0 {
+		return
+	}
+	go func() {
+		for _, line := range lines {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			e.SendInput(network, StatusBuffer, line)
+		}
+	}()
 }
 
 // apply commits an event: it mutates state under the write lock, then
@@ -636,6 +675,9 @@ func (e *Engine) apply(ev Event) {
 			s.Typing(ev.Network, ev.Channel, ev.Nick, ev.Text)
 		}
 		return
+	case EvNumeric:
+		e.applyNumeric(ev)
+		return
 	}
 
 	e.mu.Lock()
@@ -648,6 +690,27 @@ func (e *Engine) apply(ev Event) {
 	if netChanged {
 		e.notifyNetwork(ev.Network)
 	}
+}
+
+// applyNumeric routes a server numeric (WHOIS/WHO/WHOWAS reply, an error
+// code, …) into the buffer that issued the request when we can pair them,
+// else into the per-network status buffer. pendingWhois is keyed by
+// "<network>\t<lowercase-nick>" and cleared on the matching end-of marker
+// so a long-lived plugin doesn't leak entries.
+func (e *Engine) applyNumeric(ev Event) {
+	key := ev.Network + "\t" + strings.ToLower(ev.Nick)
+	buf := StatusBuffer
+	if b, ok := e.pendingWhois[key]; ok && b != "" {
+		buf = b
+	}
+	switch ev.Count {
+	case 318, 369, 315: // RPL_ENDOFWHOIS / WHOWAS / WHO
+		delete(e.pendingWhois, key)
+	}
+	e.inject(Message{
+		Network: ev.Network, Buffer: buf, Time: ev.Time,
+		Kind: MsgSystem, Text: ev.Text,
+	})
 }
 
 // applyMessageOut sends an outbound message to IRC and locally echoes it —
@@ -757,6 +820,15 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged bool) {
 			Kind: MsgSystem, Text: text,
 		})
 	}
+	// line emits with a specific kind (join/part/quit/nick) so the client can
+	// recognize membership churn and fold it; sys() stays for true system
+	// notices (connect/disconnect/topic/numerics).
+	line := func(kind MsgKind, buffer, from, text string) {
+		emit = append(emit, Message{
+			Network: n.ID, Buffer: buffer, Time: time.Now(),
+			From: from, Kind: kind, Text: text,
+		})
+	}
 
 	switch ev.Type {
 	case evSetState:
@@ -823,7 +895,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged bool) {
 	case EvJoin:
 		c, _ := n.getOrCreate(ev.Channel, KindChannel)
 		c.Members[lower(ev.Nick)] = &Member{Nick: ev.Nick, Account: ev.Account}
-		sys(ev.Channel, fmt.Sprintf("%s has joined %s", ev.Nick, ev.Channel))
+		line(MsgJoin, ev.Channel, ev.Nick, fmt.Sprintf("%s has joined %s", ev.Nick, ev.Channel))
 		netChanged = true
 
 	case EvPart:
@@ -834,22 +906,22 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged bool) {
 		} else if c := n.Channel(ev.Channel); c != nil {
 			delete(c.Members, lower(ev.Nick))
 		}
-		line := fmt.Sprintf("%s has left %s", ev.Nick, ev.Channel)
+		text := fmt.Sprintf("%s has left %s", ev.Nick, ev.Channel)
 		if ev.Text != "" {
-			line += " (" + ev.Text + ")"
+			text += " (" + ev.Text + ")"
 		}
-		sys(ev.Channel, line)
+		line(MsgPart, ev.Channel, ev.Nick, text)
 		netChanged = true
 
 	case EvQuit:
-		line := ev.Nick + " has quit"
+		text := ev.Nick + " has quit"
 		if ev.Text != "" {
-			line += " (" + ev.Text + ")"
+			text += " (" + ev.Text + ")"
 		}
 		for _, c := range n.Channels {
 			if _, ok := c.Members[lower(ev.Nick)]; ok {
 				delete(c.Members, lower(ev.Nick))
-				sys(c.Name, line)
+				line(MsgQuit, c.Name, ev.Nick, text)
 				netChanged = true
 			}
 		}
@@ -864,7 +936,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged bool) {
 				delete(c.Members, lower(ev.Nick))
 				mem.Nick = ev.NewNick
 				c.Members[lower(ev.NewNick)] = mem
-				sys(c.Name, fmt.Sprintf("%s is now known as %s", ev.Nick, ev.NewNick))
+				line(MsgNick, c.Name, ev.Nick, fmt.Sprintf("%s is now known as %s", ev.Nick, ev.NewNick))
 				netChanged = true
 			}
 		}

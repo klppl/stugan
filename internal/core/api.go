@@ -17,6 +17,13 @@ type API interface {
 	Part(network, channel string) error
 	// Print injects a local line into a buffer without sending to IRC.
 	Print(network, buffer, text string)
+	// SetBufferState publishes an opaque key/value bag on a buffer. The
+	// engine carries it through snapshots and the wire protocol so clients
+	// can react to plugin metadata (e.g. an "encrypted" tag from a FiSH
+	// plugin). Passing nil or an empty map clears state. No-op if the
+	// (network, buffer) pair doesn't exist; the plugin is responsible for
+	// re-publishing on buffers that materialise later.
+	SetBufferState(network, buffer string, state map[string]string)
 	// Networks/Channels/Members/Nick read a snapshot of current state.
 	Networks() []NetworkInfo
 	Channels(network string) []ChannelInfo

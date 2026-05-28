@@ -12,12 +12,15 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"golang.org/x/crypto/bcrypt"
 
+	"github.com/klippelism/stugan/internal/auth"
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/proto"
 )
@@ -25,9 +28,18 @@ import (
 // sessionCookie is the name of the session cookie set on login.
 const sessionCookie = "stugan_session"
 
+// magicCookie is the name of the cookie that grants entry past the
+// magic-word gate (the outer, site-wide password configured via
+// $STUGAN_WEB_PASSWORD). Independent of the per-user session cookie.
+const magicCookie = "stugan_magic"
+
+// magicWordTTL is how long a granted magic-word cookie lasts.
+const magicWordTTL = 30 * 24 * time.Hour
+
 // History provides paged message backlog for replay and full-text search.
 type History interface {
 	Backlog(ctx context.Context, network, buffer string, before time.Time, limit int) ([]core.Message, bool, error)
+	BacklogAround(ctx context.Context, network, buffer string, around time.Time, limit int) ([]core.Message, bool, error)
 	Search(ctx context.Context, query, network, buffer string, limit int) ([]core.Message, error)
 }
 
@@ -65,6 +77,12 @@ type Options struct {
 	UploadDir      string
 	MaxUpload      int64
 	PushDir        string
+	// MagicWordHash, when non-empty, enables an outer site-wide password
+	// gate (the "magic word"). It must be a bcrypt hash; the daemon
+	// hashes the plaintext from $STUGAN_WEB_PASSWORD at startup and
+	// never keeps the plaintext in memory. When empty, the gate is
+	// disabled and all requests fall through to the normal auth flow.
+	MagicWordHash string
 }
 
 // Server bridges per-user engines to WebSocket clients.
@@ -77,6 +95,15 @@ type Server struct {
 	uploadDir  string
 	maxUpload  int64
 	push       *pushManager
+
+	// magicHash and magicSessions implement the outer site-wide
+	// password gate. magicHash is empty when the gate is disabled.
+	magicHash     string
+	magicSessions *auth.Sessions
+
+	// authLimit throttles repeated failures against /api/login and
+	// /api/magicword to slow credential-stuffing bots.
+	authLimit *authRateLimit
 
 	mu      sync.Mutex
 	clients map[string]map[*client]struct{} // userID → connected clients
@@ -104,7 +131,7 @@ func New(hub Hub, opts Options) *Server {
 	if err != nil {
 		log.Warn("web push disabled", "err", err)
 	}
-	return &Server{
+	s := &Server{
 		hub:        hub,
 		log:        log,
 		serverName: name,
@@ -113,8 +140,14 @@ func New(hub Hub, opts Options) *Server {
 		uploadDir:  opts.UploadDir,
 		maxUpload:  maxUpload,
 		push:       push,
+		magicHash:  opts.MagicWordHash,
+		authLimit:  newAuthRateLimit(60*time.Second, 8),
 		clients:    map[string]map[*client]struct{}{},
 	}
+	if s.magicHash != "" {
+		s.magicSessions = auth.NewSessions(magicWordTTL)
+	}
+	return s
 }
 
 // Sink returns a core.Sink that routes a user's committed lines to that
@@ -127,6 +160,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/ws", s.handleWS)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/api/me", s.handleMe)
+	mux.HandleFunc("/api/magicword", s.handleMagicWord)
+	mux.HandleFunc("/api/magicword/logout", s.handleMagicWordLogout)
 	mux.HandleFunc("/api/login", s.handleLogin)
 	mux.HandleFunc("/api/logout", s.handleLogout)
 	mux.HandleFunc("/api/preview", s.requireUser(s.handlePreview))
@@ -142,7 +177,55 @@ func (s *Server) Handler() http.Handler {
 	if s.staticDir != "" {
 		mux.Handle("/", http.FileServer(http.Dir(s.staticDir)))
 	}
-	return mux
+	if s.magicHash == "" {
+		return mux
+	}
+	return s.magicGate(mux)
+}
+
+// magicGate wraps the mux so every request that touches user data — the
+// WebSocket, the /api/* endpoints, and per-user /uploads — requires a
+// granted magic-word cookie when $STUGAN_WEB_PASSWORD is set. Static
+// assets stay open so the SPA itself can load and render the prompt.
+//
+// Endpoints kept open: /api/me, /api/magicword{,/logout}, /healthz.
+func (s *Server) magicGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.magicWordOpen(r.URL.Path) || s.magicGranted(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	})
+}
+
+// magicWordOpen reports whether the path is reachable without a
+// granted magic-word cookie. Static SPA assets (anything that isn't
+// /api/*, /ws, or /uploads/*) stay open so the browser can fetch the
+// HTML/CSS/JS that renders the prompt.
+func (s *Server) magicWordOpen(path string) bool {
+	switch path {
+	case "/api/me", "/api/magicword", "/api/magicword/logout", "/healthz":
+		return true
+	}
+	if path == "/ws" || strings.HasPrefix(path, "/uploads/") {
+		return false
+	}
+	return !strings.HasPrefix(path, "/api/")
+}
+
+// magicGranted reports whether the request carries a valid magic-word
+// cookie. Returns true unconditionally when the gate is disabled.
+func (s *Server) magicGranted(r *http.Request) bool {
+	if s.magicHash == "" {
+		return true
+	}
+	c, err := r.Cookie(magicCookie)
+	if err != nil {
+		return false
+	}
+	_, ok := s.magicSessions.Lookup(c.Value)
+	return ok
 }
 
 // ListenAndServe serves until ctx is cancelled, then shuts down gracefully.
@@ -193,9 +276,76 @@ func (s *Server) requireUser(h http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.userOf(r)
-	resp := map[string]any{"authEnabled": s.hub.AuthEnabled(), "user": user, "authenticated": ok}
+	resp := map[string]any{
+		"authEnabled":   s.hub.AuthEnabled(),
+		"user":          user,
+		"authenticated": ok,
+		"magicWord": map[string]bool{
+			"required": s.magicHash != "",
+			"granted":  s.magicGranted(r),
+		},
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleMagicWord verifies the site-wide password and grants an
+// HttpOnly cookie. Failed attempts are throttled per source IP and
+// answered after a short delay to slow credential-stuffing.
+//
+// The decoded body also includes honeypot fields (email, website)
+// that don't exist on the real form — they're rendered hidden in the
+// HTML purely to trap form-filling bots. Any non-empty value there is
+// treated as a failed attempt and counted toward the rate limit.
+func (s *Server) handleMagicWord(w http.ResponseWriter, r *http.Request) {
+	if s.magicHash == "" {
+		http.Error(w, "magic word not configured", http.StatusNotFound)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	noStore(w)
+	ip := clientIP(r)
+	if !s.authLimit.allow(ip) {
+		http.Error(w, "too many attempts; try again later", http.StatusTooManyRequests)
+		return
+	}
+	var body struct{ Word, Email, Website string }
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if body.Email != "" || body.Website != "" {
+		s.authLimit.fail(ip)
+		slowFail(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if bcrypt.CompareHashAndPassword([]byte(s.magicHash), []byte(body.Word)) != nil {
+		s.authLimit.fail(ip)
+		slowFail(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	tok := s.magicSessions.Create("magic")
+	http.SetCookie(w, &http.Cookie{
+		Name: magicCookie, Value: tok, Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   int(s.magicSessions.TTL().Seconds()),
+		Secure:   r.TLS != nil,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleMagicWordLogout clears the magic-word cookie. Separate from
+// the per-user /api/logout so a multi-user instance can revoke the
+// outer gate without invalidating an individual session.
+func (s *Server) handleMagicWordLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(magicCookie); err == nil && s.magicSessions != nil {
+		s.magicSessions.Delete(c.Value)
+	}
+	http.SetCookie(w, &http.Cookie{Name: magicCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -203,14 +353,28 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var body struct{ Username, Password string }
+	noStore(w)
+	ip := clientIP(r)
+	if !s.authLimit.allow(ip) {
+		http.Error(w, "too many attempts; try again later", http.StatusTooManyRequests)
+		return
+	}
+	// The honeypot fields (Email, Website) don't exist on the real form;
+	// they're hidden inputs the SPA renders only to trap auto-fillers.
+	var body struct{ Username, Password, Email, Website string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	if body.Email != "" || body.Website != "" {
+		s.authLimit.fail(ip)
+		slowFail(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
 	user, ok := s.hub.Login(body.Username, body.Password)
 	if !ok {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		s.authLimit.fail(ip)
+		slowFail(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 	tok, maxAge := s.hub.StartSession(user)
@@ -220,6 +384,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"user": user})
+}
+
+// noStore tells caches and clients not to keep auth endpoint responses.
+func noStore(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+}
+
+// slowFail responds with a small delay so an attacker can't pump the
+// endpoint at line rate. Real users never notice ~250ms on a typo.
+func slowFail(w http.ResponseWriter, msg string, code int) {
+	time.Sleep(250 * time.Millisecond)
+	http.Error(w, msg, code)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -310,6 +486,8 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			ID: d.Name, Name: d.Name, Addr: d.Addr, TLS: d.TLS,
 			Nick: d.Nick, User: d.User, Realname: d.Realname,
 			SASLUser: d.SASLUser, SASLPass: d.SASLPass, Channels: d.Channels,
+			ServerPass: d.ServerPass, Perform: d.Perform,
+			SASLExternal: d.SASLExternal, CertPEM: d.CertPEM,
 		}); err != nil {
 			c.sendError(env.ID, "bad_request", err.Error())
 		}
@@ -366,6 +544,8 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			Network: p.ID, Name: p.Name, Addr: p.Addr, TLS: p.TLS,
 			Nick: p.Nick, User: p.User, Realname: p.Realname,
 			SASLUser: p.SASLUser, SASLPass: p.SASLPass, Channels: p.Channels,
+			ServerPass: p.ServerPass, Perform: p.Perform,
+			SASLExternal: p.SASLExternal, CertPEM: p.CertPEM,
 		})
 
 	case proto.TNetEdit:
@@ -378,6 +558,8 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			ID: d.Network, Name: d.Network, Addr: d.Addr, TLS: d.TLS,
 			Nick: d.Nick, User: d.User, Realname: d.Realname,
 			SASLUser: d.SASLUser, SASLPass: d.SASLPass, Channels: d.Channels,
+			ServerPass: d.ServerPass, Perform: d.Perform,
+			SASLExternal: d.SASLExternal, CertPEM: d.CertPEM,
 		}); err != nil {
 			c.sendError(env.ID, "bad_request", err.Error())
 		}
@@ -397,13 +579,35 @@ func (s *Server) handleBacklog(ctx context.Context, c *client, env proto.Envelop
 		c.sendError(env.ID, "unavailable", "history is not enabled")
 		return
 	}
+	limit := clampLimit(d.Limit, 100)
+
+	// Around takes precedence over Before: when the client asks for a
+	// window of context around a specific time, return one centered there
+	// regardless of any (likely stale) before cursor that came with it.
+	if d.Around != "" {
+		var around time.Time
+		if t, err := time.Parse(time.RFC3339, d.Around); err == nil {
+			around = t
+		}
+		msgs, more, err := c.tenant.History.BacklogAround(ctx, d.Network, d.Buffer, around, limit)
+		if err != nil {
+			s.log.Error("backlog around query", "err", err)
+			c.sendError(env.ID, "internal", "backlog query failed")
+			return
+		}
+		s.reply(c, env.ID, proto.TBacklog, proto.BacklogResp{
+			Network: d.Network, Buffer: d.Buffer,
+			Messages: toMessageDTOs(msgs), More: more, Around: d.Around,
+		})
+		return
+	}
+
 	var before time.Time
 	if d.Before != "" {
 		if t, err := time.Parse(time.RFC3339, d.Before); err == nil {
 			before = t
 		}
 	}
-	limit := clampLimit(d.Limit, 100)
 	msgs, more, err := c.tenant.History.Backlog(ctx, d.Network, d.Buffer, before, limit)
 	if err != nil {
 		s.log.Error("backlog query", "err", err)

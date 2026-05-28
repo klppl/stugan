@@ -7,6 +7,7 @@ package irc
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -27,6 +28,14 @@ type Options struct {
 	Realname string
 	SASLUser string
 	SASLPass string
+	// ServerPass is the connection password (IRC PASS); empty disables it.
+	ServerPass string
+	// SASLExternal authenticates via SASL EXTERNAL (CertFP) instead of PLAIN.
+	// Requires CertPEM and TLS.
+	SASLExternal bool
+	// CertPEM is a client certificate (cert + private key concatenated, PEM)
+	// presented during the TLS handshake for CertFP / SASL EXTERNAL.
+	CertPEM  string
 	Channels []string // auto-joined after registration
 	Logger   *slog.Logger
 }
@@ -61,6 +70,7 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		User:        firstNonEmpty(opts.User, opts.Nick, "stugan"),
 		Name:        firstNonEmpty(opts.Realname, "stugan"),
 		SSL:         opts.TLS,
+		ServerPass:  opts.ServerPass,
 		Version:     "stugan",
 		RecoverFunc: girc.DefaultRecoverHandler, // a handler panic never kills us
 		// Request caps girc doesn't enable by default: echo-message (own
@@ -71,7 +81,24 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 			"draft/chathistory": nil,
 		},
 	}
-	if opts.SASLUser != "" {
+	// A client certificate enables CertFP and is required for SASL EXTERNAL.
+	// girc uses our TLSConfig verbatim when set, so we must supply ServerName
+	// ourselves (girc only fills it in for its own default config).
+	if opts.CertPEM != "" {
+		cert, err := tls.X509KeyPair([]byte(opts.CertPEM), []byte(opts.CertPEM))
+		if err != nil {
+			return nil, fmt.Errorf("parse client certificate: %w", err)
+		}
+		gcfg.TLSConfig = &tls.Config{
+			ServerName:   host,
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		}
+	}
+	switch {
+	case opts.SASLExternal:
+		gcfg.SASL = &girc.SASLExternal{}
+	case opts.SASLUser != "":
 		gcfg.SASL = &girc.SASLPlain{User: opts.SASLUser, Pass: opts.SASLPass}
 	}
 
@@ -99,11 +126,13 @@ func (c *Conn) registerHandlers() {
 		c.emit(core.Event{Type: core.EvDisconnect, Network: c.opts.Network, Text: e.Last()})
 	})
 
-	for _, cmd := range []string{
+	cmds := []string{
 		girc.PRIVMSG, girc.NOTICE, girc.JOIN, girc.PART,
 		girc.QUIT, girc.NICK, girc.TOPIC, girc.RPL_NAMREPLY, girc.AWAY,
 		girc.RPL_LIST, girc.RPL_LISTEND, girc.CAP_TAGMSG,
-	} {
+	}
+	cmds = append(cmds, numericReplies...)
+	for _, cmd := range cmds {
 		h.Add(cmd, func(gc *girc.Client, e girc.Event) {
 			if ev, ok := toEvent(c.opts.Network, &e, gc.GetNick()); ok {
 				c.emit(ev)

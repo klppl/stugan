@@ -36,7 +36,10 @@ export interface CustomTheme {
 interface Settings {
   theme: string;
   muted: string[];
+  ignored: string[]; // per-(network, nick) ignore list — see ignoreKey()
   customThemes: CustomTheme[];
+  foldEvents: boolean; // collapse runs of join/part/quit/nick lines
+  coloredNicks: boolean; // colorize nicks by a hash of the name
 }
 
 const KEY = "stugan.settings";
@@ -47,10 +50,20 @@ function load(): Settings {
     return {
       theme: typeof s.theme === "string" ? s.theme : "dark",
       muted: Array.isArray(s.muted) ? s.muted : [],
+      ignored: Array.isArray(s.ignored) ? s.ignored : [],
       customThemes: Array.isArray(s.customThemes) ? s.customThemes : [],
+      foldEvents: typeof s.foldEvents === "boolean" ? s.foldEvents : true,
+      coloredNicks: typeof s.coloredNicks === "boolean" ? s.coloredNicks : true,
     };
   } catch {
-    return { theme: "dark", muted: [], customThemes: [] };
+    return {
+      theme: "dark",
+      muted: [],
+      ignored: [],
+      customThemes: [],
+      foldEvents: true,
+      coloredNicks: true,
+    };
   }
 }
 
@@ -129,4 +142,23 @@ export function toggleMute(key: string) {
   const i = settings.muted.indexOf(key);
   if (i >= 0) settings.muted.splice(i, 1);
   else settings.muted.push(key);
+}
+
+// Ignore is the per-nick equivalent of mute: messages from these nicks are
+// dropped client-side before they reach the buffer (IRC has no native
+// IGNORE command). Scoped per network so the same nickname on two networks
+// is treated as two different people.
+export function ignoreKey(network: string, nick: string): string {
+  return network + "\t" + nick.toLowerCase();
+}
+
+export function isIgnored(network: string, nick: string): boolean {
+  return settings.ignored.includes(ignoreKey(network, nick));
+}
+
+export function toggleIgnore(network: string, nick: string) {
+  const k = ignoreKey(network, nick);
+  const i = settings.ignored.indexOf(k);
+  if (i >= 0) settings.ignored.splice(i, 1);
+  else settings.ignored.push(k);
 }

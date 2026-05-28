@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#1e2228" />
+    <meta name="robots" content="noindex,nofollow,noarchive,nosnippet" />
+    <meta name="referrer" content="no-referrer" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
@@ -11,6 +13,14 @@
   </head>
   <body>
     <div id="app"></div>
+    <!-- Scraped-by-something-without-JS view: no form, no field names, no
+         hints about what's behind the door. The real UI is rendered by
+         the SPA and only ever appears in a JS-capable client. -->
+    <noscript>
+      <div style="padding:32px;font-family:system-ui;color:#8b929e;background:#1e2228;min-height:100vh">
+        <p>This application requires JavaScript.</p>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -80,6 +80,16 @@ async function enableNotifications() {
         <button @click="doInstall">Install</button>
       </div>
 
+      <label class="row">
+        <span>Fold join/part</span>
+        <input v-model="settings.foldEvents" type="checkbox" />
+      </label>
+
+      <label class="row">
+        <span>Colored nicks</span>
+        <input v-model="settings.coloredNicks" type="checkbox" />
+      </label>
+
       <div v-if="notifSupported" class="row">
         <span>Notifications</span>
         <button @click="enableNotifications">Enable</button>

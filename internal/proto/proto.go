@@ -82,14 +82,18 @@ type NetworkDTO struct {
 	Channels []ChannelDTO `json:"channels"`
 }
 
-// ChannelDTO is the wire projection of core.Channel.
+// ChannelDTO is the wire projection of core.Channel. State is an opaque
+// per-buffer key/value bag published by plugins (see core.API.SetBufferState);
+// the client treats it as plugin-defined metadata it can react to (e.g. a
+// "encrypted" key from the FiSH plugin → render a lock icon).
 type ChannelDTO struct {
-	Name      string      `json:"name"`
-	Kind      string      `json:"kind"`
-	Topic     string      `json:"topic"`
-	Members   []MemberDTO `json:"members,omitempty"`
-	Unread    int         `json:"unread"`
-	Highlight int         `json:"highlight"`
+	Name      string            `json:"name"`
+	Kind      string            `json:"kind"`
+	Topic     string            `json:"topic"`
+	Members   []MemberDTO       `json:"members,omitempty"`
+	Unread    int               `json:"unread"`
+	Highlight int               `json:"highlight"`
+	State     map[string]string `json:"state,omitempty"`
 }
 
 // MemberDTO is the wire projection of core.Member.
@@ -121,24 +125,36 @@ type MsgSend struct {
 	Text    string `json:"text"`
 }
 
-// BacklogFetch is a client→server request for a page of history. Before is
-// an RFC3339 timestamp cursor (empty = most recent page); the server
-// returns messages older than it. Carry an Envelope.ID to correlate the
-// reply.
+// BacklogFetch is a client→server request for a page of history.
+//
+// Before is an RFC3339 timestamp cursor (empty = most recent page); the
+// server returns messages older than it.
+//
+// Around, when set, asks for a window of context centered on that time —
+// roughly Limit/2 messages with ts ≤ Around plus Limit/2 strictly newer,
+// returned oldest-first. Used for "jump to this message" navigation from
+// mentions and search results. When Around is non-empty it takes
+// precedence over Before.
+//
+// Carry an Envelope.ID to correlate the reply.
 type BacklogFetch struct {
 	Network string `json:"network"`
 	Buffer  string `json:"buffer"`
 	Before  string `json:"before,omitempty"`
+	Around  string `json:"around,omitempty"`
 	Limit   int    `json:"limit,omitempty"`
 }
 
 // BacklogResp answers a BacklogFetch with a page of history, oldest-first.
-// More reports whether older history remains before this page.
+// More reports whether older history remains before this page. Around is
+// echoed when this page was produced by an Around-style request, so the
+// client can distinguish a centered window from a paged-backward reply.
 type BacklogResp struct {
 	Network  string       `json:"network"`
 	Buffer   string       `json:"buffer"`
 	Messages []MessageDTO `json:"messages"`
 	More     bool         `json:"more"`
+	Around   string       `json:"around,omitempty"`
 }
 
 // SearchReq is a client→server full-text search. Network/Buffer scope it
@@ -158,15 +174,19 @@ type SearchResp struct {
 
 // NetAdd is a client→server request to add and connect a network at runtime.
 type NetAdd struct {
-	Name     string   `json:"name"`
-	Addr     string   `json:"addr"`
-	TLS      bool     `json:"tls"`
-	Nick     string   `json:"nick"`
-	User     string   `json:"user,omitempty"`
-	Realname string   `json:"realname,omitempty"`
-	SASLUser string   `json:"sasl_user,omitempty"`
-	SASLPass string   `json:"sasl_pass,omitempty"`
-	Channels []string `json:"channels,omitempty"`
+	Name         string   `json:"name"`
+	Addr         string   `json:"addr"`
+	TLS          bool     `json:"tls"`
+	Nick         string   `json:"nick"`
+	User         string   `json:"user,omitempty"`
+	Realname     string   `json:"realname,omitempty"`
+	SASLUser     string   `json:"sasl_user,omitempty"`
+	SASLPass     string   `json:"sasl_pass,omitempty"`
+	ServerPass   string   `json:"server_pass,omitempty"`
+	Perform      []string `json:"perform,omitempty"`
+	SASLExternal bool     `json:"sasl_external,omitempty"`
+	CertPEM      string   `json:"cert_pem,omitempty"`
+	Channels     []string `json:"channels,omitempty"`
 }
 
 // NetRemove is a client→server request to remove a network, and the
@@ -223,16 +243,20 @@ type NetInfoReq struct {
 // net:info reply and the net:edit request. Network identifies the existing
 // network being edited.
 type NetConfig struct {
-	Network  string   `json:"network"`
-	Name     string   `json:"name"`
-	Addr     string   `json:"addr"`
-	TLS      bool     `json:"tls"`
-	Nick     string   `json:"nick"`
-	User     string   `json:"user"`
-	Realname string   `json:"realname"`
-	SASLUser string   `json:"sasl_user"`
-	SASLPass string   `json:"sasl_pass"`
-	Channels []string `json:"channels"`
+	Network      string   `json:"network"`
+	Name         string   `json:"name"`
+	Addr         string   `json:"addr"`
+	TLS          bool     `json:"tls"`
+	Nick         string   `json:"nick"`
+	User         string   `json:"user"`
+	Realname     string   `json:"realname"`
+	SASLUser     string   `json:"sasl_user"`
+	SASLPass     string   `json:"sasl_pass"`
+	ServerPass   string   `json:"server_pass"`
+	Perform      []string `json:"perform"`
+	SASLExternal bool     `json:"sasl_external"`
+	CertPEM      string   `json:"cert_pem"`
+	Channels     []string `json:"channels"`
 }
 
 // WireError is a server→client error, correlated to a request id when set

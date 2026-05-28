@@ -36,6 +36,17 @@ const maxScriptErrors = 10
 
 var _ core.PluginHost = (*Host)(nil)
 
+// KV is the persistence seam for stugan.kv. The plugin host caches values
+// in memory for fast access; if a KV is provided it loads on first touch
+// and writes through on every set/delete so values survive daemon restart.
+// Implemented by *store.Store; nil means "in-memory only" (the historical
+// behaviour, still used by tests).
+type KV interface {
+	GetAll(script string) map[string]string
+	Set(script, key, value string) error
+	Delete(script, key string) error
+}
+
 // Options configures the Lua host.
 type Options struct {
 	API      core.API
@@ -44,6 +55,7 @@ type Options struct {
 	Settings map[string]map[string]any // per-script config, by name
 	Sandbox  bool                      // restrict the Lua stdlib
 	Timeout  time.Duration             // per-hook timeout (0 = default)
+	KV       KV                        // optional persistence for stugan.kv
 }
 
 // Host is a Lua implementation of core.PluginHost.
@@ -54,6 +66,7 @@ type Host struct {
 	settings map[string]map[string]any
 	sandbox  bool
 	timeout  time.Duration
+	kvStore  KV
 
 	jobs     chan func()
 	quit     chan struct{}
@@ -115,6 +128,7 @@ func New(opts Options) (*Host, error) {
 		settings:    opts.Settings,
 		sandbox:     opts.Sandbox,
 		timeout:     timeout,
+		kvStore:     opts.KV,
 		jobs:        make(chan func()),
 		quit:        make(chan struct{}),
 		scripts:     map[string]*script{},

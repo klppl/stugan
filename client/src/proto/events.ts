@@ -62,6 +62,11 @@ export interface ChannelDTO {
   members?: MemberDTO[];
   unread: number;
   highlight: number;
+  // Opaque per-buffer key/value bag set by server-side plugins (see
+  // core.API.SetBufferState). The fish.lua plugin sets {"encrypted":"cbc"}
+  // / "ecb" — Sidebar.vue uses that to render a lock icon. Plugin-defined;
+  // unknown keys are ignored by the client.
+  state?: Record<string, string>;
 }
 
 export interface MemberDTO {
@@ -93,6 +98,10 @@ export interface BacklogFetch {
   network: string;
   buffer: string;
   before?: string;
+  // around, when set, asks for a window of context centered on that time
+  // — roughly limit/2 messages with ts ≤ around plus limit/2 strictly
+  // newer. Takes precedence over `before`. Used for jump-to-message.
+  around?: string;
   limit?: number;
 }
 
@@ -101,6 +110,10 @@ export interface BacklogResp {
   buffer: string;
   messages: MessageDTO[];
   more: boolean;
+  // Echoed from the request when this page was an Around-style window,
+  // so the client can tell a centered fetch apart from a paged-backward
+  // reply (they're handled differently — see Connection.applyBacklog).
+  around?: string;
 }
 
 export interface SearchReq {
@@ -124,6 +137,10 @@ export interface NetAdd {
   realname?: string;
   sasl_user?: string;
   sasl_pass?: string;
+  server_pass?: string;
+  perform?: string[];
+  sasl_external?: boolean;
+  cert_pem?: string;
   channels?: string[];
 }
 
@@ -173,6 +190,10 @@ export interface NetConfig {
   realname: string;
   sasl_user: string;
   sasl_pass: string;
+  server_pass: string;
+  perform: string[];
+  sasl_external: boolean;
+  cert_pem: string;
   channels: string[];
 }
 

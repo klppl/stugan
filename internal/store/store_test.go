@@ -25,6 +25,53 @@ func msg(network, buffer, from, text string, kind core.MsgKind, when time.Time) 
 	}
 }
 
+func TestPluginKVRoundTrip(t *testing.T) {
+	s := openTest(t)
+
+	// Empty script returns an empty (not nil) map so callers can range freely.
+	if got := s.PluginKVGetAll("fish"); len(got) != 0 {
+		t.Fatalf("PluginKVGetAll on empty script = %v, want empty", got)
+	}
+
+	if err := s.PluginKVSet("fish", "libera\t#go", "cbc\thunter2"); err != nil {
+		t.Fatalf("PluginKVSet: %v", err)
+	}
+	if err := s.PluginKVSet("fish", "libera\t#old", "ecb\tweak"); err != nil {
+		t.Fatalf("PluginKVSet: %v", err)
+	}
+	// A second script's entries must not leak.
+	if err := s.PluginKVSet("greet", "last", "now"); err != nil {
+		t.Fatalf("PluginKVSet: %v", err)
+	}
+
+	got := s.PluginKVGetAll("fish")
+	if got["libera\t#go"] != "cbc\thunter2" || got["libera\t#old"] != "ecb\tweak" || len(got) != 2 {
+		t.Fatalf("PluginKVGetAll(fish) = %v", got)
+	}
+	if got := s.PluginKVGetAll("greet"); got["last"] != "now" || len(got) != 1 {
+		t.Fatalf("PluginKVGetAll(greet) = %v", got)
+	}
+
+	// Upsert overwrites.
+	if err := s.PluginKVSet("fish", "libera\t#go", "cbc\tnew"); err != nil {
+		t.Fatalf("PluginKVSet upsert: %v", err)
+	}
+	if got := s.PluginKVGetAll("fish")["libera\t#go"]; got != "cbc\tnew" {
+		t.Errorf("upsert: got %q, want cbc\\tnew", got)
+	}
+
+	// Delete is idempotent.
+	if err := s.PluginKVDelete("fish", "libera\t#old"); err != nil {
+		t.Fatalf("PluginKVDelete: %v", err)
+	}
+	if err := s.PluginKVDelete("fish", "libera\t#old"); err != nil {
+		t.Errorf("PluginKVDelete (repeat): %v", err)
+	}
+	if got := s.PluginKVGetAll("fish"); len(got) != 1 {
+		t.Errorf("after delete: got %v, want 1 entry", got)
+	}
+}
+
 func TestPersistAndBacklog(t *testing.T) {
 	s := openTest(t)
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -90,6 +137,69 @@ func TestBacklogPaging(t *testing.T) {
 	}
 	if page3[0].Text != text(0) {
 		t.Fatalf("page3 = %q", page3[0].Text)
+	}
+}
+
+func TestBacklogAround(t *testing.T) {
+	s := openTest(t)
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	// 10 messages a,b,c…j a minute apart.
+	for i := range 10 {
+		s.Print(msg("n", "#c", "u", text(i), core.MsgPrivmsg, base.Add(time.Duration(i)*time.Minute)))
+	}
+	ctx := context.Background()
+
+	// Window of 6 centered on message index 5 (text "f"): expects
+	// roughly 3 ≤ around (indices 3,4,5) and 3 strictly newer (6,7,8).
+	got, more, err := s.BacklogAround(ctx, "n", "#c", base.Add(5*time.Minute), 6)
+	if err != nil {
+		t.Fatalf("around: %v", err)
+	}
+	if len(got) != 6 {
+		t.Fatalf("got %d, want 6", len(got))
+	}
+	if got[0].Text != text(3) || got[5].Text != text(8) {
+		t.Fatalf("window = %q..%q, want %q..%q", got[0].Text, got[5].Text, text(3), text(8))
+	}
+	if !more {
+		t.Errorf("more = false, want true (indices 0..2 still older than window)")
+	}
+
+	// Anchor at the very first message: nothing older, after-half fills out.
+	got, more, err = s.BacklogAround(ctx, "n", "#c", base, 6)
+	if err != nil {
+		t.Fatalf("around-first: %v", err)
+	}
+	if len(got) != 4 {
+		// before-half=3 wants ts ≤ base → only the anchor, after-half=3 → 1,2,3.
+		t.Fatalf("got %d, want 4 (1 anchor + 3 newer)", len(got))
+	}
+	if got[0].Text != text(0) || got[3].Text != text(3) {
+		t.Fatalf("first-window = %q..%q", got[0].Text, got[3].Text)
+	}
+	if more {
+		t.Errorf("more = true at oldest anchor, want false")
+	}
+
+	// Anchor at the very last message: nothing newer, before-half fills out.
+	got, more, err = s.BacklogAround(ctx, "n", "#c", base.Add(9*time.Minute), 6)
+	if err != nil {
+		t.Fatalf("around-last: %v", err)
+	}
+	if len(got) != 3 || got[2].Text != text(9) {
+		t.Fatalf("last-window = %+v", got)
+	}
+	if !more {
+		t.Errorf("more = false at newest anchor, want true (older history exists)")
+	}
+
+	// Zero around → falls back to most-recent page semantics.
+	got, _, err = s.BacklogAround(ctx, "n", "#c", time.Time{}, 4)
+	if err != nil {
+		t.Fatalf("around-zero: %v", err)
+	}
+	if len(got) != 4 || got[3].Text != text(9) {
+		t.Fatalf("zero-around = %+v", got)
 	}
 }
 

@@ -115,6 +115,13 @@ stugan.print(network, buffer, text)
 -- Shorthand using the hook's ctx/msg buffer:
 stugan.print(buffer_table, text)
 
+-- Publish an opaque per-buffer key/value bag. Carried through snapshots
+-- and the wire protocol so the client (and any other Sink) can react to
+-- plugin metadata. Pass nil or {} to clear. Plugin-defined keys; the
+-- only consumer today is the sidebar lock indicator, which reads
+-- state.encrypted = "cbc" | "ecb" (set by the bundled fish.lua).
+stugan.set_buffer_state(network, buffer, state)  -- state: {[k]=v} or nil
+
 -- Read state (returns plain Lua tables, snapshots — not live handles):
 stugan.networks()                 -- -> array of {id,name,nick,state}
 stugan.channels(network)          -- -> array of {name,kind,topic}
@@ -129,7 +136,9 @@ argument types.
 ## 3.6 Persistence, config, logging
 
 ```lua
--- Per-plugin key/value store (persisted in SQLite, scoped to this script).
+-- Per-plugin key/value store. Persisted in SQLite (plugin_kv table) and
+-- scoped to this script — entries survive both hot-reload and daemon
+-- restart. Lazy-loaded on first access from this script.
 stugan.kv.set("last_seen", os.time())
 local t = stugan.kv.get("last_seen")        -- nil if unset
 stugan.kv.delete("last_seen")
@@ -147,6 +156,43 @@ stugan.log.warn("…"); stugan.log.error("…"); stugan.log.debug("…")
 -- Identity:
 stugan.script_name   -- this script's basename, e.g. "greet"
 ```
+
+## 3.6.1 Crypto primitives
+
+`stugan.crypto` exposes a few algorithms the Lua VM can't reasonably provide
+on its own — secure RNG, modexp of big-integers, and the legacy Blowfish
+cipher that IRC encryption schemes (FiSH ECB/CBC) still rely on. These are
+primitives: padding, framing, key derivation, and ciphertext layout are
+the script's job.
+
+```lua
+-- All bytes/strings below are 8-bit clean Lua strings.
+
+-- Blowfish. The key must be 1..56 bytes; data must be a multiple of 8.
+-- Padding is the caller's responsibility — fish-style "null-terminate
+-- then random-pad" and PKCS-7 both compose cleanly on top.
+stugan.crypto.blowfish_ecb_encrypt(key, data)     -> bytes
+stugan.crypto.blowfish_ecb_decrypt(key, data)     -> bytes
+stugan.crypto.blowfish_cbc_encrypt(key, iv, data) -> bytes   -- iv is 8 bytes
+stugan.crypto.blowfish_cbc_decrypt(key, iv, data) -> bytes
+
+-- SHA-256. Returns 32 raw bytes.
+stugan.crypto.sha256(bytes)                       -> bytes
+
+-- Cryptographically secure random bytes (crypto/rand). Capped at 4096.
+stugan.crypto.random(n)                           -> bytes
+
+-- Modular exponentiation of arbitrary-width big-endian integers. The
+-- result is zero-padded to len(mod) so DH-style payloads have a stable
+-- wire width without the caller stripping/re-adding leading zeros.
+stugan.crypto.modexp(base, exp, mod)              -> bytes (len = #mod)
+```
+
+Argument validation raises a Lua error (which the host recovers and logs);
+guard with `pcall` if you want to keep going on bad input.
+
+See `internal/scripts/fish.lua` for a worked plugin that uses these to implement
+FiSH-style Blowfish-CBC encryption for IRC.
 
 ## 3.7 Hot reload, isolation, sandboxing
 
@@ -232,14 +278,31 @@ stugan.hook_timer(60 * 1000, function()
 end)
 ```
 
+### fish.lua — FiSH-style Blowfish encryption
+
+A worked use of `stugan.crypto`. Implements the wire formats interoperable
+clients ship (CBC `+OK *<b64(IV||ct)>`, legacy ECB `+OK <fish-b64(ct)>`),
+a per-target keystore in `stugan.kv`, manual key management (`/setkey`,
+`/setkey-ecb`, `/delkey`, `/key`), encrypted `/me` / `/notice` / `/topic`,
+and DH1080 key exchange (`/keyx <nick>`). See `internal/scripts/fish.lua`
+for the full plugin.
+
+**Bundled and auto-installed.** The daemon embeds fish.lua via `go:embed`
+(`internal/scripts/scripts.go`) and copies it to your scripts directory on
+first run when the file isn't there — so the right-click "Set encryption
+key…" affordance in the web UI just works without you copying anything by
+hand. Edits and deletions are preserved across restarts: a missing file is
+only re-installed if the script with that exact name doesn't exist.
+
 ## 3.9 Decisions (locked in Phase 5)
 
 1. Global table name is `stugan`, no alias.
 2. Command hooks use `fn(args, ctx)` with pre-split `args` and a structured
    `ctx` (network, buffer, kind, nick).
 3. `hook_completion` and `hook_modifier` are deferred past v1.
-4. The KV store is per-script and survives reload. It currently lives in
-   host memory; SQLite-backed persistence is a TODO.
+4. The KV store is per-script, SQLite-backed (`plugin_kv` table), and
+   survives both hot-reload and daemon restart. The host caches values in
+   memory for fast access and writes through on every set/delete.
 5. The sandbox (`[plugins].sandbox = true`) removes `io`, `package`,
    `require`, `dofile`, `loadfile`, `load`, and the process-affecting `os.*`
    functions (`execute`, `exit`, `remove`, `rename`, `getenv`, …). It

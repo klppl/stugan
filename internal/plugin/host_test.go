@@ -17,6 +17,7 @@ type fakeAPI struct {
 	msgs    [][3]string
 	prints  [][3]string
 	sends   [][2]string
+	states  map[string]map[string]string // "<network>\t<buffer>" → state
 	nickVal string
 }
 
@@ -40,6 +41,28 @@ func (a *fakeAPI) Print(network, buffer, text string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.prints = append(a.prints, [3]string{network, buffer, text})
+}
+func (a *fakeAPI) SetBufferState(network, buffer string, state map[string]string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.states == nil {
+		a.states = map[string]map[string]string{}
+	}
+	k := network + "\t" + buffer
+	if len(state) == 0 {
+		delete(a.states, k)
+		return
+	}
+	clone := make(map[string]string, len(state))
+	for kk, vv := range state {
+		clone[kk] = vv
+	}
+	a.states[k] = clone
+}
+func (a *fakeAPI) bufferState(network, buffer string) map[string]string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.states[network+"\t"+buffer]
 }
 func (a *fakeAPI) Networks() []core.NetworkInfo {
 	return []core.NetworkInfo{{ID: "n", Nick: a.nickVal}}
@@ -271,6 +294,93 @@ func TestHotReload(t *testing.T) {
 			t.Fatalf("script did not hot-reload; still %q", out.Message.Text)
 		case <-time.After(50 * time.Millisecond):
 		}
+	}
+}
+
+// fakeKV is an in-memory plugin.KV used to assert write-through and
+// lazy-load behavior without bringing the SQLite store into the plugin
+// package (which would import a cycle).
+type fakeKV struct {
+	mu   sync.Mutex
+	data map[string]map[string]string
+}
+
+func newFakeKV() *fakeKV { return &fakeKV{data: map[string]map[string]string{}} }
+
+func (k *fakeKV) GetAll(script string) map[string]string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	out := map[string]string{}
+	for kk, vv := range k.data[script] {
+		out[kk] = vv
+	}
+	return out
+}
+func (k *fakeKV) Set(script, key, value string) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.data[script] == nil {
+		k.data[script] = map[string]string{}
+	}
+	k.data[script][key] = value
+	return nil
+}
+func (k *fakeKV) Delete(script, key string) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	delete(k.data[script], key)
+	return nil
+}
+
+func TestPluginKVPersistsAcrossHosts(t *testing.T) {
+	api := &fakeAPI{}
+	kv := newFakeKV()
+
+	// Host A writes a value through the persistent KV.
+	dir := t.TempDir()
+	writeScript := func(body string) {
+		path := filepath.Join(dir, "p.lua")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeScript(`
+		stugan.hook_command("save", function(args)
+		  stugan.kv.set("k", args[1])
+		end)
+		stugan.hook_command("load", function(_, ctx)
+		  stugan.print(ctx, stugan.kv.get("k") or "<unset>")
+		end)
+	`)
+	hA, err := New(Options{API: api, Dir: dir, KV: kv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hA.Dispatch(context.Background(), core.Event{
+		Type: core.EvCommand, Network: "n", Channel: "#c",
+		Command: "save", Args: []string{"hello"},
+	})
+	hA.Close()
+
+	// The KV backing must show the write — that proves write-through happened.
+	if got := kv.GetAll("p")["k"]; got != "hello" {
+		t.Fatalf("write-through: kv=%v", got)
+	}
+
+	// Host B starts fresh against the same KV and reads the value via Lua
+	// — that proves lazy-load on first kv.get pulls from the backing store.
+	api2 := &fakeAPI{}
+	hB, err := New(Options{API: api2, Dir: dir, KV: kv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { hB.Close() })
+	hB.Dispatch(context.Background(), core.Event{
+		Type: core.EvCommand, Network: "n", Channel: "#c", Command: "load",
+	})
+	prints := api2.prints
+	if len(prints) != 1 || prints[0][2] != "hello" {
+		t.Fatalf("reload-from-kv: prints=%v", prints)
 	}
 }
 

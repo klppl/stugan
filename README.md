@@ -13,14 +13,19 @@ a **weechat/irssi-style Lua plugin system** as the headline feature.
 - Persistent IRC connections that survive browser disconnects; SQLite history
   with backlog replay on reconnect.
 - Manage networks entirely from the web UI — add, edit, connect/disconnect, and
-  remove servers (no config edits required).
+  remove servers (no config edits required), including a server password (for
+  bouncers like ZNC/soju) and per-network "perform" commands run on every
+  reconnect.
 - Full-text message search (SQLite FTS5), a mentions view, per-channel mute, and
   unread/highlight counters with configurable highlight rules.
 - Link previews + inline image/video (via a local image proxy), drag-drop/paste
   uploads, autocomplete (nicks, commands, channels, emoji), command aliases.
-- IRCv3: SASL, server-time, echo-message, away-notify, multi-prefix,
-  extended-join, message-tags, typing indicators, a channel browser (LIST), and
-  best-effort chathistory.
+- IRCv3: SASL (PLAIN and EXTERNAL/CertFP via a client certificate), server-time,
+  echo-message, away-notify, multi-prefix, extended-join, message-tags, typing
+  indicators, a channel browser (LIST), and best-effort chathistory.
+- Readable busy channels: consecutive join/part/quit/nick lines fold into one
+  expandable summary, and nicks are colorized by a hash of the name (both
+  toggleable in Settings).
 - PWA: installable, mobile-responsive, with Web Push + desktop notifications.
 - Installable custom themes, plus built-in dark/midnight/light.
 - A weechat/irssi-style **Lua plugin system** (the headline feature).
@@ -118,6 +123,42 @@ password_hash = "$2a$10$…"   # paste the hash from -hashpw
 
 Sessions are bcrypt-verified with HttpOnly, SameSite=Strict cookies; the
 plugin sandbox defaults on in multi-user mode.
+
+## Site-wide password
+
+For a quick, single-shared-password gate in front of the whole site —
+useful when you're self-hosting on a public address and don't want to
+set up `[[users]]` yet — set `STUGAN_WEB_PASSWORD`:
+
+```sh
+STUGAN_WEB_PASSWORD='hunter2' ./stugan
+```
+
+When set, every request to `/ws`, `/api/*`, and `/uploads/*` is blocked
+behind a one-input prompt. Failed attempts are rate-limited per source
+IP (8 fails per minute) and answered after a short delay; the login
+forms also carry honeypot inputs that trip form-filling bots.
+
+The password is bcrypt-hashed in memory at startup; the plaintext is
+never retained. Grants live in an HttpOnly, SameSite=Strict cookie
+(`stugan_magic`) for 30 days. The gate stacks with `[[users]]` — magic
+word first, then per-user login — so it works in both single- and
+multi-user setups.
+
+Docker / docker-compose:
+
+```yaml
+services:
+  stugan:
+    image: ghcr.io/klppl/stugan:latest
+    environment:
+      STUGAN_WEB_PASSWORD: ${STUGAN_WEB_PASSWORD}
+    # ...
+```
+
+There is no built-in `.env` parser; if you want one,
+`set -a; source .env; set +a; ./stugan` loads it from a POSIX shell, or
+docker-compose's `env_file:` does it for containers.
 
 ## Plugins
 

@@ -1,14 +1,29 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, inject, onMounted } from "vue";
 import type { MessageDTO } from "../proto/events";
 import { segments, extractURLs, isImage, isVideo, proxied } from "../links";
 import { getPreview, fetchPreview, type Preview } from "../previews";
+import { settings } from "../settings";
+import { nickColor } from "../nickColor";
 
 const props = defineProps<{ msg: MessageDTO; showBuffer?: boolean }>();
 
 function time(iso: string): string {
   if (!iso) return "";
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+// Membership churn (join/part/quit/nick) and true system notices both render
+// as a dim "— text" line; only privmsg/notice/action carry a sender + body.
+const EVENT_KINDS = ["join", "part", "quit", "nick"];
+const isSystemLine = computed(
+  () => props.msg.kind === "system" || EVENT_KINDS.includes(props.msg.kind),
+);
+
+// Our own nick keeps the dedicated "self" color; everyone else is hashed.
+function fromColor(nick: string): string {
+  if (props.msg.self || !settings.coloredNicks) return "";
+  return nickColor(nick);
 }
 
 const segs = computed(() => segments(props.msg.text));
@@ -26,21 +41,64 @@ function preview(u: string): Preview | null {
   const e = getPreview(u);
   return e && e !== "loading" && e !== "error" ? (e as Preview) : null;
 }
+
+// nickCtx is provided by ChatView; it forwards right-click and long-press
+// on a sender nick into the same buffer-list context menu (WHOIS, ignore,
+// DM, mode shortcuts, kick, …). Falls back to a no-op object so this
+// component still renders if used in a context without the provider
+// (e.g. unit tests).
+interface NickCtx {
+  onContext: (nick: string, ev: MouseEvent) => void;
+  onTouchStart: (nick: string, ev: TouchEvent) => void;
+  onTouchMove: (ev: TouchEvent) => void;
+  cancelLp: () => void;
+}
+const nickCtx = inject<NickCtx>("nickCtx", {
+  onContext: () => {},
+  onTouchStart: () => {},
+  onTouchMove: () => {},
+  cancelLp: () => {},
+});
 </script>
 
 <template>
-  <div class="message" :class="[msg.kind, { highlight: msg.highlight, self: msg.self }]">
+  <div
+    class="message"
+    :class="[msg.kind, { highlight: msg.highlight, self: msg.self }]"
+    :data-msgid="msg.id || undefined"
+  >
     <span class="ts">{{ time(msg.time) }}</span>
     <span v-if="showBuffer" class="loc">{{ msg.buffer }}</span>
 
-    <template v-if="msg.kind === 'system'">
-      <span class="sys">— {{ msg.text }}</span>
+    <template v-if="isSystemLine">
+      <span class="sys" :class="msg.kind">— {{ msg.text }}</span>
     </template>
     <template v-else-if="msg.kind === 'action'">
-      <span class="body">* {{ msg.from }} <span class="seg">{{ msg.text }}</span></span>
+      <span class="body">*
+        <span
+          class="from"
+          :class="{ self: msg.self }"
+          :style="{ color: fromColor(msg.from) }"
+          title="right-click (or long-press) for nick options"
+          @contextmenu="nickCtx.onContext(msg.from, $event)"
+          @touchstart.passive="nickCtx.onTouchStart(msg.from, $event)"
+          @touchmove.passive="nickCtx.onTouchMove($event)"
+          @touchend="nickCtx.cancelLp"
+          @touchcancel="nickCtx.cancelLp"
+        >{{ msg.from }}</span> <span class="seg">{{ msg.text }}</span></span>
     </template>
     <template v-else>
-      <span class="from" :class="{ self: msg.self }">{{ msg.from }}</span>
+      <span
+        class="from"
+        :class="{ self: msg.self }"
+        :style="{ color: fromColor(msg.from) }"
+        title="right-click (or long-press) for nick options"
+        @contextmenu="nickCtx.onContext(msg.from, $event)"
+        @touchstart.passive="nickCtx.onTouchStart(msg.from, $event)"
+        @touchmove.passive="nickCtx.onTouchMove($event)"
+        @touchend="nickCtx.cancelLp"
+        @touchcancel="nickCtx.cancelLp"
+      >{{ msg.from }}</span>
       <span class="body">
         <template v-for="(s, i) in segs" :key="i">
           <a v-if="s.type === 'link'" :href="s.value" target="_blank" rel="noopener noreferrer">{{ s.value }}</a>

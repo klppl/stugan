@@ -16,6 +16,7 @@ function toggleConnected() {
 }
 
 const loaded = ref(false);
+const showAdvanced = ref(false);
 const form = reactive({
   host: "",
   port: 6697,
@@ -25,6 +26,10 @@ const form = reactive({
   realname: "",
   saslUser: "",
   saslPass: "",
+  serverPass: "",
+  perform: "",
+  saslExternal: false,
+  certPem: "",
   channels: "",
 });
 
@@ -38,6 +43,10 @@ function fill(cfg: NetConfig) {
   form.realname = cfg.realname;
   form.saslUser = cfg.sasl_user;
   form.saslPass = cfg.sasl_pass;
+  form.serverPass = cfg.server_pass;
+  form.perform = (cfg.perform ?? []).join("\n");
+  form.saslExternal = cfg.sasl_external;
+  form.certPem = cfg.cert_pem;
   form.channels = (cfg.channels ?? []).join(", ");
   loaded.value = true;
 }
@@ -72,6 +81,13 @@ function save() {
     realname: form.realname.trim(),
     sasl_user: form.saslUser.trim(),
     sasl_pass: form.saslPass,
+    server_pass: form.serverPass,
+    sasl_external: form.saslExternal,
+    cert_pem: form.certPem.trim(),
+    perform: form.perform
+      .split("\n")
+      .map((c) => c.trim())
+      .filter(Boolean),
     channels: form.channels
       .split(",")
       .map((c) => c.trim())
@@ -103,9 +119,29 @@ function remove() {
         <label class="row"><span>Channels</span><input v-model="form.channels" placeholder="#one, #two" /></label>
         <label class="row"><span>SASL user</span><input v-model="form.saslUser" placeholder="(optional)" /></label>
         <label class="row"><span>SASL pass</span><input v-model="form.saslPass" type="password" placeholder="(unchanged)" /></label>
+
+        <div class="row">
+          <span></span>
+          <button type="button" class="link" @click="showAdvanced = !showAdvanced">
+            {{ showAdvanced ? "Hide advanced" : "Advanced…" }}
+          </button>
+        </div>
+        <template v-if="showAdvanced">
+          <label class="row"><span>Server pass</span><input v-model="form.serverPass" type="password" placeholder="bouncer / server password" /></label>
+          <label class="row">
+            <span>Perform</span>
+            <textarea v-model="form.perform" rows="3" spellcheck="false" placeholder="/msg NickServ IDENTIFY hunter2&#10;/join #private secretkey" />
+          </label>
+          <label class="row"><span>SASL EXTERNAL</span><input v-model="form.saslExternal" type="checkbox" /></label>
+          <label class="row">
+            <span>Client cert</span>
+            <textarea v-model="form.certPem" rows="4" spellcheck="false" placeholder="PEM cert + key for CertFP" />
+          </label>
+        </template>
         <p class="hint">
-          Nick and channel changes apply live. Server, TLS, user/realname, or
-          SASL changes reconnect the network.
+          Nick and channel changes apply live. Server, TLS, user/realname,
+          SASL, server-password, or client-certificate changes reconnect the
+          network. Perform runs on every reconnect.
         </p>
         <div class="row">
           <button type="button" class="danger" @click="remove">Remove network</button>

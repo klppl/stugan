@@ -61,6 +61,13 @@ CREATE TABLE IF NOT EXISTS networks (
   id   TEXT PRIMARY KEY,
   data TEXT NOT NULL      -- JSON of core.NetworkParams
 );
+
+CREATE TABLE IF NOT EXISTS plugin_kv (
+  script TEXT NOT NULL,
+  key    TEXT NOT NULL,
+  value  TEXT NOT NULL,
+  PRIMARY KEY (script, key)
+);
 `
 
 // Open opens (creating if needed) the database at path and applies the
@@ -151,6 +158,45 @@ func (s *Store) DeleteNetwork(id string) error {
 	return err
 }
 
+// PluginKVGetAll loads every persisted key for a script. Plugins call this
+// indirectly via the host's lazy cache, which fills on first script access
+// and writes-through on every set/delete. Returns an empty map if the
+// script has no persisted state.
+func (s *Store) PluginKVGetAll(script string) map[string]string {
+	rows, err := s.db.Query(`SELECT key, value FROM plugin_kv WHERE script = ?`, script)
+	if err != nil {
+		s.log.Error("plugin_kv read", "script", script, "err", err)
+		return map[string]string{}
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			s.log.Error("plugin_kv scan", "script", script, "err", err)
+			return out
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// PluginKVSet upserts a plugin KV entry. Errors are returned so the host
+// can warn-log; the in-memory cache should stay consistent regardless.
+func (s *Store) PluginKVSet(script, key, value string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO plugin_kv(script, key, value) VALUES(?, ?, ?)
+		 ON CONFLICT(script, key) DO UPDATE SET value = excluded.value`,
+		script, key, value)
+	return err
+}
+
+// PluginKVDelete removes one entry. Missing entries are not an error.
+func (s *Store) PluginKVDelete(script, key string) error {
+	_, err := s.db.Exec(`DELETE FROM plugin_kv WHERE script = ? AND key = ?`, script, key)
+	return err
+}
+
 // Networks returns all persisted networks.
 func (s *Store) Networks() ([]core.NetworkParams, error) {
 	rows, err := s.db.Query(`SELECT data FROM networks ORDER BY id`)
@@ -221,6 +267,87 @@ func (s *Store) Backlog(ctx context.Context, network, buffer string, before time
 		msgs[len(desc)-1-i] = m
 	}
 	return msgs, more, nil
+}
+
+// BacklogAround returns a window of messages centered on the around time,
+// oldest-first. Roughly limit/2 messages with ts ≤ around (including the
+// anchor) plus limit/2 strictly newer are returned. more reports whether
+// older history exists before the window, so the client can still page
+// upward from the head of the result.
+//
+// Used to land the user on the conversation surrounding a specific
+// message — e.g. clicking a mention — in a single round trip.
+func (s *Store) BacklogAround(ctx context.Context, network, buffer string, around time.Time, limit int) ([]core.Message, bool, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if around.IsZero() {
+		// Equivalent to "give me the most recent page" — defer to Backlog
+		// so callers don't have to branch.
+		return s.Backlog(ctx, network, buffer, time.Time{}, limit)
+	}
+	aroundMS := around.UnixMilli()
+	beforeHalf := max(limit/2, 1)
+	afterHalf := limit - beforeHalf
+
+	// Older half (and the anchor row), newest-first. Fetch beforeHalf+1 so
+	// the (limit/2 + 1)-th row tells us whether older history still exists.
+	rowsA, err := s.db.QueryContext(ctx,
+		`SELECT id, msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags
+		 FROM messages
+		 WHERE network = ? AND buffer = ? AND ts <= ?
+		 ORDER BY id DESC LIMIT ?`,
+		network, buffer, aroundMS, beforeHalf+1,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("backlog around (older): %w", err)
+	}
+	defer rowsA.Close()
+	var older []core.Message
+	for rowsA.Next() {
+		m, _, err := scanMessage(rowsA)
+		if err != nil {
+			return nil, false, err
+		}
+		older = append(older, m)
+	}
+	if err := rowsA.Err(); err != nil {
+		return nil, false, err
+	}
+	more := false
+	if len(older) > beforeHalf {
+		more = true
+		older = older[:beforeHalf]
+	}
+	// Reverse to oldest-first so it concatenates naturally with the newer
+	// half (which we already query in ascending order).
+	for i, j := 0, len(older)-1; i < j; i, j = i+1, j-1 {
+		older[i], older[j] = older[j], older[i]
+	}
+
+	// Newer half, oldest-first.
+	rowsB, err := s.db.QueryContext(ctx,
+		`SELECT id, msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags
+		 FROM messages
+		 WHERE network = ? AND buffer = ? AND ts > ?
+		 ORDER BY id ASC LIMIT ?`,
+		network, buffer, aroundMS, afterHalf,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("backlog around (newer): %w", err)
+	}
+	defer rowsB.Close()
+	for rowsB.Next() {
+		m, _, err := scanMessage(rowsB)
+		if err != nil {
+			return nil, false, err
+		}
+		older = append(older, m)
+	}
+	if err := rowsB.Err(); err != nil {
+		return nil, false, err
+	}
+	return older, more, nil
 }
 
 // Search runs a full-text query over message text, newest matches first.
