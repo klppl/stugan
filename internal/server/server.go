@@ -509,6 +509,21 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		}
 		c.tenant.Engine.SendTyping(d.Network, d.Buffer, d.State)
 
+	case proto.TReact:
+		var d proto.React
+		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" {
+			return // reactions are best-effort
+		}
+		c.tenant.Engine.SendReaction(d.Network, d.Buffer, d.Target, d.Reaction)
+
+	case proto.TRedact:
+		var d proto.Redact
+		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" || d.Target == "" {
+			c.sendError(env.ID, "bad_request", "redact requires network, buffer, target")
+			return
+		}
+		c.tenant.Engine.SendRedact(d.Network, d.Buffer, d.Target, d.Reason)
+
 	case proto.TList:
 		var d proto.ListReq
 		if err := decode(env, &d); err != nil || d.Network == "" {
@@ -727,6 +742,22 @@ func (u *userSink) NetworkRemoved(networkID string) {
 func (u *userSink) Typing(network, buffer, nick, state string) {
 	if env, err := proto.Frame(proto.TTyping, proto.Typing{
 		Network: network, Buffer: buffer, Nick: nick, State: state,
+	}); err == nil {
+		u.s.routeToUser(u.user, env)
+	}
+}
+
+func (u *userSink) React(network, buffer, target, nick, reaction string) {
+	if env, err := proto.Frame(proto.TReact, proto.React{
+		Network: network, Buffer: buffer, Target: target, Nick: nick, Reaction: reaction,
+	}); err == nil {
+		u.s.routeToUser(u.user, env)
+	}
+}
+
+func (u *userSink) Redact(network, buffer, target, nick, reason string) {
+	if env, err := proto.Frame(proto.TRedact, proto.Redact{
+		Network: network, Buffer: buffer, Target: target, By: nick, Reason: reason,
 	}); err == nil {
 		u.s.routeToUser(u.user, env)
 	}

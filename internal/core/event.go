@@ -33,6 +33,13 @@ const (
 	// EvTyping is an inbound +typing TAGMSG: Nick is typing in Channel
 	// (buffer), with Text the state (active/paused/done).
 	EvTyping EventType = "typing"
+	// EvReact is an inbound +draft/react TAGMSG: Nick reacted to the message
+	// Target (a msgid) in Channel (buffer) with Text (the reaction, usually
+	// an emoji). Ephemeral — fanned to sinks, not stored.
+	EvReact EventType = "react"
+	// EvRedact is an inbound REDACT (draft/message-redaction): Nick removed
+	// the message Target (a msgid) in Channel (buffer); Text is the reason.
+	EvRedact EventType = "redact"
 	// EvNumeric carries a server numeric reply (WHOIS, WHO, WHOWAS, error
 	// codes, etc.). Text is the human-readable formatted line; Nick is
 	// the subject of the reply (the WHOIS target, the offending channel,
@@ -76,6 +83,8 @@ type Event struct {
 	Account string
 	Text    string
 	State   ConnState
+	// Target is a message id the event refers to (EvReact / EvRedact).
+	Target string
 
 	Command string   // EvCommand: the command name (without leading slash)
 	Args    []string // EvCommand: whitespace-split arguments

@@ -58,6 +58,7 @@ func toNetworkDTO(n *core.Network) proto.NetworkDTO {
 		Name:     n.Name,
 		Nick:     n.Nick,
 		State:    string(n.State),
+		Caps:     n.Caps,
 		Channels: chans,
 	}
 }

@@ -1,12 +1,53 @@
 <script setup lang="ts">
-import { computed, inject, onMounted } from "vue";
+import { computed, inject, onMounted, ref } from "vue";
 import type { MessageDTO } from "../proto/events";
 import { segments, extractURLs, isImage, isVideo, proxied } from "../links";
 import { getPreview, fetchPreview, type Preview } from "../previews";
 import { settings } from "../settings";
 import { nickColor } from "../nickColor";
+import { connection } from "../connection";
 
 const props = defineProps<{ msg: MessageDTO; showBuffer?: boolean }>();
+
+// A small fixed palette for one-click reactions; the chip row also lets you
+// toggle any reaction already present.
+const QUICK_REACTS = ["👍", "❤️", "😂", "🎉", "😮", "😢"];
+const showReactPicker = ref(false);
+
+// Reactions for this message (keyed globally by msgid). Returns one entry per
+// distinct emoji with its count and whether we reacted, sorted for stability.
+const reactions = computed(() => {
+  const byEmoji = props.msg.id ? connection.store.reactions[props.msg.id] : undefined;
+  if (!byEmoji) return [];
+  const me = connection.nickOn(props.msg.network).toLowerCase();
+  return Object.entries(byEmoji)
+    .map(([emoji, nicks]) => ({
+      emoji,
+      count: nicks.length,
+      mine: nicks.some((n) => n.toLowerCase() === me),
+      who: nicks.join(", "),
+    }))
+    .sort((a, b) => a.emoji.localeCompare(b.emoji));
+});
+
+// Affordances are only meaningful on real chat lines that carry a msgid, in
+// the live buffer (not search/mention previews), on networks that negotiated
+// the relevant cap.
+const interactive = computed(
+  () => !props.showBuffer && !!props.msg.id && (props.msg.kind === "privmsg" || props.msg.kind === "notice" || props.msg.kind === "action"),
+);
+const canReact = computed(() => interactive.value && connection.hasNetCap(props.msg.network, "message-tags"));
+const canRedact = computed(
+  () => interactive.value && props.msg.self && connection.hasNetCap(props.msg.network, "draft/message-redaction"),
+);
+
+function toggleReact(emoji: string) {
+  showReactPicker.value = false;
+  connection.react(props.msg.network, props.msg.buffer, props.msg.id, emoji);
+}
+function doRedact() {
+  connection.redact(props.msg.network, props.msg.buffer, props.msg.id);
+}
 
 function time(iso: string): string {
   if (!iso) return "";
@@ -127,5 +168,28 @@ const nickCtx = inject<NickCtx>("nickCtx", {
         </span>
       </a>
     </template>
+
+    <!-- reactions -->
+    <div v-if="reactions.length" class="reactions">
+      <button
+        v-for="r in reactions"
+        :key="r.emoji"
+        type="button"
+        class="reaction"
+        :class="{ mine: r.mine }"
+        :title="r.who"
+        :disabled="!canReact"
+        @click="toggleReact(r.emoji)"
+      >{{ r.emoji }} {{ r.count }}</button>
+    </div>
+
+    <!-- hover toolbar: react / delete -->
+    <span v-if="canReact || canRedact" class="msg-actions">
+      <button v-if="canReact" type="button" class="msg-act" title="Add reaction" @click="showReactPicker = !showReactPicker">☺+</button>
+      <button v-if="canRedact" type="button" class="msg-act danger" title="Delete message" @click="doRedact">✕</button>
+      <span v-if="showReactPicker" class="react-picker">
+        <button v-for="e in QUICK_REACTS" :key="e" type="button" @click="toggleReact(e)">{{ e }}</button>
+      </span>
+    </span>
   </div>
 </template>

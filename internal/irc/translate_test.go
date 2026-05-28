@@ -270,6 +270,58 @@ func TestToEventTyping(t *testing.T) {
 	}
 }
 
+func TestToEventReact(t *testing.T) {
+	// A +draft/react TAGMSG referencing a msgid → EvReact (own echo included).
+	e := girc.ParseEvent("@+draft/react=👍;+draft/reply=abc123 :alice!u@h TAGMSG #go")
+	ev, ok := toEvent("n", e, "me")
+	if !ok || ev.Type != core.EvReact {
+		t.Fatalf("react event = %+v ok=%v", ev, ok)
+	}
+	if ev.Nick != "alice" || ev.Channel != "#go" || ev.Target != "abc123" || ev.Text != "👍" {
+		t.Errorf("react fields = %+v", ev)
+	}
+	// A react without a +draft/reply target is dropped.
+	if _, ok := toEvent("n", girc.ParseEvent("@+draft/react=x :a!u@h TAGMSG #go"), "me"); ok {
+		t.Error("react without reply target should be ignored")
+	}
+	// A direct react routes to the sender's query buffer.
+	dm := girc.ParseEvent("@+draft/react=❤;+draft/reply=m1 :bob!u@h TAGMSG me")
+	if ev, ok := toEvent("n", dm, "me"); !ok || ev.Channel != "bob" {
+		t.Errorf("direct react buffer = %q ok=%v", ev.Channel, ok)
+	}
+}
+
+func TestToEventRedact(t *testing.T) {
+	e := girc.ParseEvent(":alice!u@h REDACT #go badmsgid :spam")
+	ev, ok := toEvent("n", e, "me")
+	if !ok || ev.Type != core.EvRedact {
+		t.Fatalf("redact event = %+v ok=%v", ev, ok)
+	}
+	if ev.Channel != "#go" || ev.Target != "badmsgid" || ev.Nick != "alice" || ev.Text != "spam" {
+		t.Errorf("redact fields = %+v", ev)
+	}
+	// Reason is optional.
+	if ev, ok := toEvent("n", girc.ParseEvent(":alice!u@h REDACT #go m2"), "me"); !ok || ev.Target != "m2" || ev.Text != "" {
+		t.Errorf("redact w/o reason = %+v ok=%v", ev, ok)
+	}
+}
+
+func TestToEventStandardReplies(t *testing.T) {
+	for _, tt := range []struct{ raw, want string }{
+		{":serv FAIL JOIN CHANNELS_FULL #x :Channel is full", "[FAIL] JOIN CHANNELS_FULL #x: Channel is full"},
+		{":serv WARN * ACCOUNT_REQUIRED :log in first", "[WARN] * ACCOUNT_REQUIRED: log in first"},
+		{":serv NOTE NICK :registered", "[NOTE] NICK: registered"},
+	} {
+		ev, ok := toEvent("n", girc.ParseEvent(tt.raw), "me")
+		if !ok || ev.Type != core.EvNumeric {
+			t.Fatalf("standard reply %q → ok=%v type=%v", tt.raw, ok, ev.Type)
+		}
+		if ev.Text != tt.want {
+			t.Errorf("text = %q, want %q", ev.Text, tt.want)
+		}
+	}
+}
+
 func TestToEventNames(t *testing.T) {
 	// 353 with multi-prefix and userhost-in-names entries.
 	e := girc.ParseEvent(":serv 353 me = #go :alice @bob +carol @+dave!u@h ~owner")

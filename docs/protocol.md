@@ -165,7 +165,15 @@ share one path.
 | `backlog`        | `BacklogResp`   | a page of history (answers `backlog:fetch`) |
 | `search:result`  | `SearchResp`    | search results |
 | `typing`         | `TypingEvent`   | someone is typing |
+| `react`          | `React`         | someone reacted to a message (by msgid) — also c2s to send one |
+| `redact`         | `Redact`        | a message was redacted/removed (by msgid) — also c2s to redact |
 | `notify`         | `Notify`        | highlight/mention worthy of a push/notification |
+
+`react`/`redact` are bidirectional (like `typing`): c2s omits the actor
+(`nick`/`by`), s2c includes it. `NetworkDTO` carries a `caps` array of the
+network's negotiated IRCv3 capabilities so the client can gate cap-dependent
+UI (reactions need `message-tags`, delete needs `draft/message-redaction`).
+See [ircv3.md](ircv3.md).
 
 ```go
 type BacklogResp struct {

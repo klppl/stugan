@@ -29,11 +29,13 @@ func (f *fakeConn) Close() error        { return nil }
 
 type noopSink struct{}
 
-func (noopSink) Print(core.Message)                         {}
-func (noopSink) NetworkChanged(*core.Network)               {}
-func (noopSink) NetworkRemoved(string)                      {}
-func (noopSink) ChannelList(string, []core.ChannelListItem) {}
-func (noopSink) Typing(string, string, string, string)      {}
+func (noopSink) Print(core.Message)                            {}
+func (noopSink) NetworkChanged(*core.Network)                  {}
+func (noopSink) NetworkRemoved(string)                         {}
+func (noopSink) ChannelList(string, []core.ChannelListItem)    {}
+func (noopSink) Typing(string, string, string, string)         {}
+func (noopSink) React(string, string, string, string, string)  {}
+func (noopSink) Redact(string, string, string, string, string) {}
 
 // fakeHistory returns a canned backlog page.
 type fakeHistory struct {

@@ -32,6 +32,12 @@ type Sink interface {
 	// Typing delivers an inbound typing notification (state is
 	// active/paused/done).
 	Typing(network, buffer, nick, state string)
+	// React delivers an inbound emoji reaction: nick reacted to the message
+	// target (a msgid) in buffer with reaction. Ephemeral, like Typing.
+	React(network, buffer, target, nick, reaction string)
+	// Redact delivers an inbound message redaction: the message target (a
+	// msgid) in buffer was removed by nick (with an optional reason).
+	Redact(network, buffer, target, nick, reason string)
 }
 
 // ChannelListItem is one entry in a LIST (channel-browser) result.
@@ -485,7 +491,13 @@ func (e *Engine) sendInput(network, buffer, text string, depth int) {
 func (e *Engine) Snapshot() *User {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.user.clone()
+	u := e.user.clone()
+	for _, n := range u.Networks {
+		if conn := e.conns[n.ID]; conn != nil {
+			n.Caps = conn.Caps()
+		}
+	}
+	return u
 }
 
 // HandleEvent implements ConnHandler: it enqueues an inbound event onto the
@@ -675,6 +687,16 @@ func (e *Engine) apply(ev Event) {
 			s.Typing(ev.Network, ev.Channel, ev.Nick, ev.Text)
 		}
 		return
+	case EvReact:
+		for _, s := range e.sinks {
+			s.React(ev.Network, ev.Channel, ev.Target, ev.Nick, ev.Text)
+		}
+		return
+	case EvRedact:
+		for _, s := range e.sinks {
+			s.Redact(ev.Network, ev.Channel, ev.Target, ev.Nick, ev.Text)
+		}
+		return
 	case EvNumeric:
 		e.applyNumeric(ev)
 		return
@@ -760,6 +782,38 @@ func (e *Engine) SendTyping(network, buffer, state string) {
 		return
 	}
 	_ = conn.SendRaw("@+typing=" + state + " TAGMSG " + buffer)
+}
+
+// SendReaction sends an emoji reaction to a message (target msgid) in a
+// buffer as a +draft/react TAGMSG carrying +draft/reply, when the network
+// negotiated message-tags. The server echoes it back (if it broadcasts to
+// the reactor), which is how the sender's own reaction appears.
+func (e *Engine) SendReaction(network, buffer, target, reaction string) {
+	conn := e.connFor(network)
+	if conn == nil || target == "" || reaction == "" {
+		return
+	}
+	if !slices.Contains(conn.Caps(), "message-tags") {
+		return
+	}
+	_ = conn.SendRaw("@+draft/react=" + reaction + ";+draft/reply=" + target + " TAGMSG " + buffer)
+}
+
+// SendRedact redacts a message (target msgid) in a buffer via the
+// draft/message-redaction REDACT command, when the network negotiated it.
+func (e *Engine) SendRedact(network, buffer, target, reason string) {
+	conn := e.connFor(network)
+	if conn == nil || target == "" {
+		return
+	}
+	if !slices.Contains(conn.Caps(), "draft/message-redaction") {
+		return
+	}
+	line := "REDACT " + buffer + " " + target
+	if reason != "" {
+		line += " :" + reason
+	}
+	_ = conn.SendRaw(line)
 }
 
 // echoMessage reports whether the network's connection negotiated the
@@ -967,7 +1021,11 @@ func (e *Engine) SnapshotNetwork(id string) *Network {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	if n := e.user.Network(id); n != nil {
-		return n.clone()
+		nc := n.clone()
+		if conn := e.conns[id]; conn != nil {
+			nc.Caps = conn.Caps()
+		}
+		return nc
 	}
 	return nil
 }

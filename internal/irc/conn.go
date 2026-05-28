@@ -79,6 +79,15 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		SupportedCaps: map[string][]string{
 			"echo-message":      nil,
 			"draft/chathistory": nil,
+			// account-tag stamps the sender's account on every message (not
+			// just JOINs); labeled-response correlates replies; standard-replies
+			// gives structured FAIL/WARN/NOTE; message-redaction enables
+			// deleting messages. Reactions ride the already-negotiated
+			// message-tags via the +draft/react client tag (no separate cap).
+			"account-tag":             nil,
+			"labeled-response":        nil,
+			"standard-replies":        nil,
+			"draft/message-redaction": nil,
 		},
 	}
 	// A client certificate enables CertFP and is required for SASL EXTERNAL.
@@ -130,6 +139,8 @@ func (c *Conn) registerHandlers() {
 		girc.PRIVMSG, girc.NOTICE, girc.JOIN, girc.PART,
 		girc.QUIT, girc.NICK, girc.TOPIC, girc.RPL_NAMREPLY, girc.AWAY,
 		girc.RPL_LIST, girc.RPL_LISTEND, girc.CAP_TAGMSG,
+		// IRCv3 message-redaction (REDACT) and standard-replies (FAIL/WARN/NOTE).
+		"REDACT", "FAIL", "WARN", "NOTE",
 	}
 	cmds = append(cmds, numericReplies...)
 	for _, cmd := range cmds {
@@ -195,6 +206,8 @@ var knownCaps = []string{
 	"echo-message", "server-time", "away-notify", "account-notify",
 	"message-tags", "multi-prefix", "extended-join", "userhost-in-names",
 	"chghost", "setname", "invite-notify", "draft/chathistory", "chathistory",
+	"account-tag", "labeled-response", "standard-replies",
+	"draft/message-redaction",
 }
 
 // Caps returns the negotiated IRCv3 capabilities (from the set stugan uses).

@@ -141,6 +141,10 @@ func (s *Store) ChannelList(string, []core.ChannelListItem) {}
 // Typing is a no-op for the store (ephemeral).
 func (s *Store) Typing(string, string, string, string) {}
 
+// React and Redact are ephemeral overlays the store does not persist.
+func (s *Store) React(string, string, string, string, string)  {}
+func (s *Store) Redact(string, string, string, string, string) {}
+
 // SaveNetwork upserts a persisted network (core.NetworkStore).
 func (s *Store) SaveNetwork(p core.NetworkParams) error {
 	data, err := json.Marshal(p)

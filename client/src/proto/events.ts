@@ -15,6 +15,8 @@ export const T = {
   SearchResult: "search:result",
   ListResult: "list:result",
   Typing: "typing",
+  React: "react",
+  Redact: "redact",
   Error: "error",
   MsgSend: "msg:send",
   BacklogFetch: "backlog:fetch",
@@ -52,6 +54,7 @@ export interface NetworkDTO {
   name: string;
   nick: string;
   state: string;
+  caps?: string[];
   channels: ChannelDTO[];
 }
 
@@ -158,6 +161,22 @@ export interface Typing {
 export interface NetConnect {
   network: string;
   connect: boolean;
+}
+
+export interface React {
+  network: string;
+  buffer: string;
+  target: string; // msgid reacted to
+  nick?: string; // who reacted (s2c)
+  reaction: string;
+}
+
+export interface Redact {
+  network: string;
+  buffer: string;
+  target: string; // msgid redacted
+  by?: string; // who redacted (s2c)
+  reason?: string;
 }
 
 export interface ListReq {

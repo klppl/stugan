@@ -21,8 +21,11 @@ a **weechat/irssi-style Lua plugin system** as the headline feature.
 - Link previews + inline image/video (via a local image proxy), drag-drop/paste
   uploads, autocomplete (nicks, commands, channels, emoji), command aliases.
 - IRCv3: SASL (PLAIN and EXTERNAL/CertFP via a client certificate), server-time,
-  echo-message, away-notify, multi-prefix, extended-join, message-tags, typing
-  indicators, a channel browser (LIST), and best-effort chathistory.
+  echo-message, away-notify, account-tag, multi-prefix, extended-join,
+  message-tags, typing indicators, standard-replies, emoji reactions
+  (`+draft/react`), message deletion (`draft/message-redaction`), a channel
+  browser (LIST), and best-effort chathistory. See [docs/ircv3.md](docs/ircv3.md)
+  for the full matrix and roadmap.
 - Readable busy channels: consecutive join/part/quit/nick lines fold into one
   expandable summary, and nicks are colorized by a hash of the name (both
   toggleable in Settings).

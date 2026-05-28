@@ -98,6 +98,11 @@ type Network struct {
 	Nick     string
 	State    ConnState
 	Channels []*Channel
+	// Caps are the IRCv3 capabilities the live connection negotiated. Set
+	// only on snapshots (from the connection), so the client can light up
+	// cap-gated affordances (reactions, redaction). Not stored on the live
+	// Network; see SnapshotNetwork.
+	Caps []string
 	// Params is the full connection config (addr, TLS, SASL, …). Retained
 	// so the GUI can read/edit it; never included in the wire snapshot.
 	Params NetworkParams

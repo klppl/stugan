@@ -26,6 +26,8 @@ const (
 	TSearchResult = "search:result" // s2c (answers search)
 	TListResult   = "list:result"   // s2c (answers list)
 	TTyping       = "typing"        // s2c (and c2s)
+	TReact        = "react"         // s2c (and c2s) — emoji reactions
+	TRedact       = "redact"        // s2c (and c2s) — message redaction
 	TError        = "error"         // s2c
 
 	TMsgSend      = "msg:send"      // c2s
@@ -79,6 +81,7 @@ type NetworkDTO struct {
 	Name     string       `json:"name"`
 	Nick     string       `json:"nick"`
 	State    string       `json:"state"`
+	Caps     []string     `json:"caps,omitempty"` // negotiated IRCv3 caps
 	Channels []ChannelDTO `json:"channels"`
 }
 
@@ -223,6 +226,29 @@ type Typing struct {
 	Buffer  string `json:"buffer"`
 	Nick    string `json:"nick,omitempty"`
 	State   string `json:"state"`
+}
+
+// React is an emoji reaction on a message. c2s carries
+// Network/Buffer/Target/Reaction (react to the message Target, a msgid);
+// s2c additionally carries Nick (who reacted). The client treats a repeated
+// (nick, reaction) pair as a toggle.
+type React struct {
+	Network  string `json:"network"`
+	Buffer   string `json:"buffer"`
+	Target   string `json:"target"` // msgid being reacted to
+	Nick     string `json:"nick,omitempty"`
+	Reaction string `json:"reaction"`
+}
+
+// Redact removes a message. c2s carries Network/Buffer/Target[/Reason]
+// (redact the message Target, a msgid); s2c additionally carries By (who
+// redacted it).
+type Redact struct {
+	Network string `json:"network"`
+	Buffer  string `json:"buffer"`
+	Target  string `json:"target"` // msgid being redacted
+	By      string `json:"by,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // NetConnect is a client→server request to connect or disconnect a network

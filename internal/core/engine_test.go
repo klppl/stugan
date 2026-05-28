@@ -15,6 +15,8 @@ type captureSink struct {
 	nets    []*Network
 	removed []string
 	lists   [][]ChannelListItem
+	reacts  [][5]string // network, buffer, target, nick, reaction
+	redacts [][5]string // network, buffer, target, nick, reason
 }
 
 func (c *captureSink) Print(m Message)           { c.msgs = append(c.msgs, m) }
@@ -24,6 +26,12 @@ func (c *captureSink) ChannelList(_ string, items []ChannelListItem) {
 	c.lists = append(c.lists, items)
 }
 func (c *captureSink) Typing(string, string, string, string) {}
+func (c *captureSink) React(network, buffer, target, nick, reaction string) {
+	c.reacts = append(c.reacts, [5]string{network, buffer, target, nick, reaction})
+}
+func (c *captureSink) Redact(network, buffer, target, nick, reason string) {
+	c.redacts = append(c.redacts, [5]string{network, buffer, target, nick, reason})
+}
 
 // fakeConnector / fakeRuntimeConn back runtime AddNetworkLive in tests.
 type fakeConnector struct {
@@ -193,6 +201,46 @@ func TestEventKindsDistinct(t *testing.T) {
 		if sink.msgs[i].Kind != k {
 			t.Errorf("line %d kind = %q, want %q (%q)", i, sink.msgs[i].Kind, k, sink.msgs[i].Text)
 		}
+	}
+}
+
+func TestApplyReactRedact(t *testing.T) {
+	e, sink := newTestEngine(t)
+	e.apply(Event{Type: EvReact, Network: "net", Channel: "#go", Target: "m1", Nick: "alice", Text: "👍"})
+	e.apply(Event{Type: EvRedact, Network: "net", Channel: "#go", Target: "m2", Nick: "bob", Text: "spam"})
+	if len(sink.reacts) != 1 || sink.reacts[0] != [5]string{"net", "#go", "m1", "alice", "👍"} {
+		t.Fatalf("reacts = %+v", sink.reacts)
+	}
+	if len(sink.redacts) != 1 || sink.redacts[0] != [5]string{"net", "#go", "m2", "bob", "spam"} {
+		t.Fatalf("redacts = %+v", sink.redacts)
+	}
+}
+
+func TestSendReactionRedactCapGated(t *testing.T) {
+	// With the caps negotiated, the right raw lines go out.
+	conn := &fakeConnector{caps: []string{"message-tags", "draft/message-redaction"}}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	if err := e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"}); err != nil {
+		t.Fatal(err)
+	}
+	e.SendReaction("n", "#go", "m1", "👍")
+	e.SendRedact("n", "#go", "m1", "oops")
+	raws := conn.conns[0].rawsSnap()
+	if !slices.Contains(raws, "@+draft/react=👍;+draft/reply=m1 TAGMSG #go") {
+		t.Errorf("react raw missing: %v", raws)
+	}
+	if !slices.Contains(raws, "REDACT #go m1 :oops") {
+		t.Errorf("redact raw missing: %v", raws)
+	}
+
+	// Without the caps, both are silently dropped.
+	bare := &fakeConnector{}
+	e2 := New(Options{Sink: &captureSink{}, Connector: bare})
+	_ = e2.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"})
+	e2.SendReaction("n", "#go", "m1", "👍")
+	e2.SendRedact("n", "#go", "m1", "oops")
+	if got := bare.conns[0].rawsSnap(); len(got) != 0 {
+		t.Errorf("expected no raws without caps, got %v", got)
 	}
 }
 

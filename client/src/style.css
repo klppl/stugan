@@ -353,6 +353,7 @@ body {
   line-height: 1.5;
   word-break: break-word;
   overflow-wrap: anywhere;
+  position: relative;
 }
 .message.highlight {
   background: color-mix(in srgb, var(--hl) 18%, transparent);
@@ -406,6 +407,88 @@ body {
 }
 .message a {
   color: var(--accent);
+}
+
+/* Reactions: chip row below a message; the one(s) we added are accented. */
+.reactions {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 2px 0 1px;
+}
+.reaction {
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--fg);
+  border-radius: 10px;
+  padding: 0 7px;
+  font-size: 0.85em;
+  line-height: 1.6;
+  cursor: pointer;
+}
+.reaction.mine {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.reaction:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* Per-message hover toolbar (react / delete), pinned top-right. */
+.msg-actions {
+  position: absolute;
+  top: -6px;
+  right: 4px;
+  display: none;
+  gap: 2px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px;
+}
+.message:hover .msg-actions {
+  display: inline-flex;
+}
+.msg-act {
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 0.85em;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.msg-act:hover {
+  color: var(--fg);
+  background: var(--bg);
+}
+.msg-act.danger:hover {
+  color: var(--hl);
+}
+.react-picker {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  display: flex;
+  gap: 2px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+  z-index: 5;
+}
+.react-picker button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1.05em;
+  padding: 1px 3px;
+  border-radius: 4px;
+}
+.react-picker button:hover {
+  background: var(--bg);
 }
 
 .embeds {

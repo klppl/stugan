@@ -153,20 +153,67 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		return core.Event{Type: core.EvListEnd, Network: network, Time: when}, true
 
 	case girc.CAP_TAGMSG:
-		// Typing indicators ride on TAGMSG via the +typing client tag. Ignore
-		// our own echo and tagless TAGMSGs.
-		state, ok := e.Tags.Get("+typing")
-		if !ok || from == "" || from == self || len(e.Params) == 0 {
+		// TAGMSG carries client-only tags. Two ride it: +typing (typing
+		// indicators) and +draft/react (emoji reactions referencing a msgid
+		// via +draft/reply). Reactions DO include our own echo so the sender
+		// sees their reaction; typing ignores self.
+		if from == "" || len(e.Params) == 0 {
 			return core.Event{}, false
 		}
 		target := e.Params[0]
 		buffer := target
 		if !isChannel(target) {
-			buffer = from // a direct typing notice → the sender's query
+			buffer = from // a direct TAGMSG → the sender's query
+		}
+		if react, ok := e.Tags.Get("+draft/react"); ok && react != "" {
+			msgid, _ := e.Tags.Get("+draft/reply")
+			if msgid == "" {
+				return core.Event{}, false // a reaction must reference a message
+			}
+			return core.Event{
+				Type: core.EvReact, Network: network, Time: when,
+				Nick: from, Channel: buffer, Target: msgid, Text: react,
+			}, true
+		}
+		state, ok := e.Tags.Get("+typing")
+		if !ok || from == self {
+			return core.Event{}, false
 		}
 		return core.Event{
 			Type: core.EvTyping, Network: network, Time: when,
 			Nick: from, Channel: buffer, Text: state,
+		}, true
+
+	case "REDACT":
+		// draft/message-redaction: REDACT <target> <msgid> [:<reason>]
+		if len(e.Params) < 2 {
+			return core.Event{}, false
+		}
+		target := e.Params[0]
+		buffer := target
+		if !isChannel(target) {
+			// A redaction in a query is keyed by the other party (the sender,
+			// or — for our own echoed redaction — the target).
+			if from != "" && (e.Echo || (self != "" && from == self)) {
+				buffer = target
+			} else if from != "" {
+				buffer = from
+			}
+		}
+		reason := ""
+		if len(e.Params) > 2 {
+			reason = e.Last()
+		}
+		return core.Event{
+			Type: core.EvRedact, Network: network, Time: when,
+			Nick: from, Channel: buffer, Target: e.Params[1], Text: reason,
+		}, true
+
+	case "FAIL", "WARN", "NOTE":
+		// standard-replies: <FAIL|WARN|NOTE> <command> <code> [context]... :<description>
+		return core.Event{
+			Type: core.EvNumeric, Network: network, Time: when,
+			Nick: "", Text: formatStandardReply(e),
 		}, true
 
 	case girc.RPL_NAMREPLY:
@@ -214,6 +261,28 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 	}
 
 	return core.Event{}, false
+}
+
+// formatStandardReply renders an IRCv3 standard-reply (FAIL/WARN/NOTE) into a
+// human-readable system line. Wire shape:
+//
+//	<FAIL|WARN|NOTE> <command> <code> [context...] :<description>
+//
+// e.g. "FAIL JOIN CHANNELS_FULL #x :Channel is full" →
+// "[FAIL] JOIN CHANNELS_FULL: Channel is full".
+func formatStandardReply(e *girc.Event) string {
+	head := "[" + e.Command + "]"
+	desc := e.Last()
+	// Params without the trailing description are command, code, and any
+	// context tokens; join them as the label.
+	label := e.Params
+	if len(label) > 0 && label[len(label)-1] == desc {
+		label = label[:len(label)-1]
+	}
+	if len(label) == 0 {
+		return strings.TrimSpace(head + " " + desc)
+	}
+	return strings.TrimSpace(head + " " + strings.Join(label, " ") + ": " + desc)
 }
 
 // formatNumeric renders a server numeric reply into a human-readable system
