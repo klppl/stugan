@@ -2,12 +2,12 @@
 
 The centerpiece. A user writes `$STUGAN_HOME/scripts/foo.lua`, saves, and it
 loads live. Scripts extend stugan with commands, message filters, event
-hooks, and timers — the weechat/irssi experience. **Implemented in Phase 5**
-(`internal/plugin`); the surface below matches the running host.
+hooks, and timers — the weechat/irssi experience. Implemented in
+`internal/plugin`; the surface below matches the running host.
 
 Runtime: `github.com/yuin/gopher-lua` behind the `core.PluginHost`
-interface (§1.3). Everything below is exposed on a single global table
-`stugan`.
+interface (see [core.md](core.md#interfaces-core-defines)). Everything below is
+exposed on a single global table `stugan`.
 
 ## 3.1 Execution model
 

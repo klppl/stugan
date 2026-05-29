@@ -1,239 +1,158 @@
-# Proposal 2 — WebSocket event schema
+# WebSocket wire protocol
 
-The browser and daemon speak a **typed JSON protocol** over a single
-WebSocket (via `coder/websocket`). No Socket.IO. Go structs in
-`internal/proto` are the **single source of truth**; the TypeScript mirror
-in `client/src/proto/events.ts` is kept in lockstep (hand-written now, a
-small Go→TS generator is a Phase 6 nice-to-have). **Awaiting sign-off.**
+The browser and daemon speak a **typed JSON protocol** over a single WebSocket
+(`coder/websocket`), at `/ws`. Go structs in `internal/proto` are the single
+source of truth; the TypeScript mirror in `client/src/proto/events.ts` is kept
+in lockstep **by hand**. The current protocol version is `proto.Protocol = 1`
+(bump on a breaking change; advertised in `hello`).
 
-## 2.1 Envelope
+## Envelope
 
-Every frame is one JSON object with a discriminator `t` (type) and a typed
-`d` (data) payload. An optional `id` carries a client-chosen correlation id
-so a request can be answered with a matching ack/error.
+Every frame is one JSON object with a discriminator `t` (type) and a typed `d`
+(data) payload. An optional `id` carries a client-chosen correlation id so a
+request can be answered with a matching reply or error.
 
 ```go
-// Envelope is the single framing for all messages in both directions.
 type Envelope struct {
     T  string          `json:"t"`            // event type, e.g. "msg:send"
-    ID string          `json:"id,omitempty"` // correlation id (req/ack)
+    ID string          `json:"id,omitempty"` // correlation id (req/reply)
     D  json.RawMessage `json:"d,omitempty"`  // typed payload, decoded by T
 }
 ```
 
-Routing: the server's event router switches on `T`, decodes `D` into the
-matching Go struct, and dispatches. The client does the same. Unknown `T`
-is logged and ignored (forward-compat).
+The server's router (`server.route`) switches on `T`, decodes `D` into the
+matching struct, and dispatches; the client (`connection.ts`) does the same.
+Unknown `T` is logged and ignored (forward-compat). Naming is `domain:verb`,
+lowercase. `c2s` = client→server, `s2c` = server→client.
 
-Naming convention: `domain:verb`, lowercase. `c2s` = client→server,
-`s2c` = server→client.
+## Event catalogue
 
-## 2.2 Connection lifecycle
+### Server → client
 
-| `t`            | dir | payload          | meaning |
-|----------------|-----|------------------|---------|
-| `hello`        | s2c | `Hello`          | sent on connect: protocol version, server caps |
-| `auth`         | c2s | `Auth`           | (multi-user, Phase 7) token/credentials |
-| `auth:ok`      | s2c | `AuthOK`         | session established |
-| `init`         | s2c | `InitState`      | full snapshot: networks, channels, members |
-| `ping`/`pong`  | both| `Ping`           | app-level keepalive (browser sleep detection) |
-| `error`        | s2c | `WireError`      | correlated to a `c2s` `id` when applicable |
+| `t`             | payload        | meaning |
+|-----------------|----------------|---------|
+| `hello`         | `Hello`        | sent on connect: protocol version, server name, caps |
+| `init`          | `InitState`    | full snapshot: user + all networks/channels/members |
+| `msg`           | `MessageDTO`   | a new committed line in a buffer |
+| `net:update`    | `NetworkDTO`   | a network's state/nick/buffers/members changed |
+| `net:remove`    | `NetRemove`    | a network was removed |
+| `net:info`      | `NetConfig`    | answers a c2s `net:info` request (settings dialog) |
+| `backlog`       | `BacklogResp`  | a page of history (answers `backlog:fetch`) |
+| `search:result` | `SearchResp`   | search results (answers `search`) |
+| `list:result`   | `ListResp`     | channel-browser results (answers `list`) |
+| `error`         | `WireError`    | `{code, message}`, correlated to a request `id` |
+
+### Client → server
+
+| `t`             | payload        | meaning |
+|-----------------|----------------|---------|
+| `msg:send`      | `MsgSend`      | send text/command to a buffer |
+| `backlog:fetch` | `BacklogFetch` | request older/windowed history |
+| `search`        | `SearchReq`    | FTS5 search |
+| `net:add`       | `NetAdd`       | add + connect a network |
+| `net:edit`      | `NetConfig`    | apply settings changes to a network |
+| `net:connect`   | `NetConnect`   | connect/disconnect a network |
+| `net:info`      | (ref)          | request a network's full config |
+
+### Bidirectional
+
+The actor field is omitted on c2s and filled by the server on s2c.
+
+| `t`         | payload   | c2s | s2c |
+|-------------|-----------|-----|-----|
+| `typing`    | `Typing`  | send a typing state | someone is typing (adds `nick`) |
+| `react`     | `React`   | toggle a reaction | someone reacted (adds `nick`) |
+| `redact`    | `Redact`  | delete a message | a message was redacted (adds `by`) |
+| `net:remove`| `NetRemove` | remove a network | confirm removal |
+
+## State DTOs
+
+Wire projections of the `core` domain types ([core.md](core.md)), decoupled so
+the wire format can evolve independently:
 
 ```go
-type Hello struct {
-    Protocol int      `json:"protocol"`     // bump on breaking change
-    Server   string   `json:"server"`       // "stugan/dev"
-    Caps     []string `json:"caps"`          // e.g. ["search","uploads","push"]
-}
-
-type InitState struct {
-    User     UserDTO       `json:"user"`
-    Networks []NetworkDTO  `json:"networks"`
-}
-
-type WireError struct {
-    Code    string `json:"code"`             // "bad_request","not_found",...
-    Message string `json:"message"`
-}
-```
-
-## 2.3 State snapshot DTOs
-
-These are wire projections of the `core` domain types (§1.2), decoupled so
-the wire format can evolve independently.
-
-```go
-type UserDTO struct {
-    ID   string `json:"id"`
-    Name string `json:"name"`
-}
+type UserDTO    struct { ID, Name string }
 
 type NetworkDTO struct {
-    ID       string       `json:"id"`
-    Name     string       `json:"name"`
-    Nick     string       `json:"nick"`
-    State    string       `json:"state"`     // "disconnected"|"connecting"|"registered"
-    Channels []ChannelDTO `json:"channels"`
+    ID, Name, Nick, State string
+    Caps     []string                 // negotiated IRCv3 caps — gates cap-dependent UI
+    Channels []ChannelDTO
 }
 
 type ChannelDTO struct {
-    Name      string      `json:"name"`
-    Kind      string      `json:"kind"`       // "channel"|"query"|"status"
-    Topic     string      `json:"topic"`
-    Members   []MemberDTO `json:"members,omitempty"`
-    Unread    int         `json:"unread"`
-    Highlight int         `json:"highlight"`
+    Name, Kind, Topic string
+    Members           []MemberDTO
+    Unread, Highlight int
+    State             map[string]string  // plugin buffer state (e.g. encryption)
 }
 
-type MemberDTO struct {
-    Nick  string `json:"nick"`
-    Modes string `json:"modes"`               // "@","+",""
-    Away  bool   `json:"away"`
-}
+type MemberDTO  struct { Nick, Modes string; Away bool }
 
 type MessageDTO struct {
-    ID      string            `json:"id"`
-    Network string            `json:"network"`
-    Buffer  string            `json:"buffer"`
-    Time    string            `json:"time"`    // RFC3339 (server-time)
-    From    string            `json:"from"`
-    Kind    string            `json:"kind"`    // "privmsg"|"notice"|"action"|"join"|...
-    Text    string            `json:"text"`
-    Self    bool              `json:"self"`
-    Tags    map[string]string `json:"tags,omitempty"`
+    ID, Network, Buffer, Time, From, Kind, Text string  // Time is RFC3339 server-time
+    Self, Highlight bool
+    Tags            map[string]string
 }
 ```
 
-## 2.4 Client → server events
-
-| `t`              | payload         | meaning |
-|------------------|-----------------|---------|
-| `msg:send`       | `MsgSend`       | send text/command to a buffer |
-| `buffer:open`    | `BufferRef`     | open a query / focus a buffer |
-| `buffer:close`   | `BufferRef`     | close a query or part a channel |
-| `buffer:read`    | `BufferRead`    | mark read up to a message (read-marker) |
-| `backlog:fetch`  | `BacklogFetch`  | request older history for a buffer |
-| `search`         | `SearchReq`     | FTS5 search |
-| `net:add`        | `NetworkConfigDTO` | add+connect a network |
-| `net:connect`    | `NetworkRef`    | connect/disconnect a configured network |
-| `typing`         | `TypingReq`     | IRCv3 typing indicator out |
+## Selected payloads
 
 ```go
-type MsgSend struct {
-    Network string `json:"network"`
-    Buffer  string `json:"buffer"`           // channel/query; "/cmd ..." allowed
-    Text    string `json:"text"`             // may be a slash-command
-}
-
-type BufferRef struct {
-    Network string `json:"network"`
-    Buffer  string `json:"buffer"`
-}
+type MsgSend struct { Network, Buffer, Text string }   // Text beginning "/" is a command
 
 type BacklogFetch struct {
-    Network string `json:"network"`
-    Buffer  string `json:"buffer"`
-    Before  string `json:"before,omitempty"` // RFC3339 cursor; "" = latest
-    Around  string `json:"around,omitempty"` // RFC3339; window centered on T
-    Limit   int    `json:"limit,omitempty"`
+    Network, Buffer string
+    Before string   // RFC3339 cursor; "" = latest page
+    Around string   // RFC3339; window centered on T (jump-to-message)
+    Limit  int
 }
 
-type SearchReq struct {
-    Query   string `json:"query"`
-    Network string `json:"network,omitempty"` // optional scope
-    Buffer  string `json:"buffer,omitempty"`
+type BacklogResp struct {
+    Network, Buffer string
+    Messages []MessageDTO  // oldest → newest
+    More     bool          // older history exists
+    Around   string        // echoes the request when windowed
 }
+
+type SearchReq  struct { Query, Network, Buffer string; Limit int }
+type SearchResp struct { Query string; Results []MessageDTO }
+
+type NetAdd struct {
+    Name, Addr, Nick, User, Realname string
+    SASLUser, SASLPass, ServerPass, Channels, Perform, CertPEM string
+    TLS, SASLExternal bool
+}
+type NetConnect struct { Network string; Connect bool }
+type NetRemove  struct { Network string }
+
+type Typing struct { Network, Buffer, Nick, State string }   // State: active|paused|done
+type React  struct { Network, Buffer, Target, Nick, Reaction string }  // Target is a msgid
+type Redact struct { Network, Buffer, Target, By, Reason string }
 ```
 
-`msg:send` whose `Text` begins with `/` is parsed as a command (server-side
-alias expansion + plugin `hook_command` + built-ins), so commands and chat
+`msg:send` whose `Text` begins with `/` is parsed server-side as a command
+(alias expansion → plugin `hook_command` → built-ins), so commands and chat
 share one path.
 
-## 2.5 Server → client events
+## Sync & ordering rules
 
-| `t`              | payload         | meaning |
-|------------------|-----------------|---------|
-| `msg`            | `MessageDTO`    | a new (committed) message in a buffer |
-| `msg:ack`        | `MsgAck`        | echo-message confirmation for a sent line |
-| `buffer:add`     | `ChannelDTO`    | a channel/query opened |
-| `buffer:remove`  | `BufferRef`     | a buffer closed/parted |
-| `buffer:update`  | `ChannelDTO`    | topic/unread/highlight/members changed |
-| `net:update`     | `NetworkDTO`    | connection state / nick changed |
-| `member:join`    | `MemberEvent`   | someone joined |
-| `member:part`    | `MemberEvent`   | someone left/quit |
-| `member:nick`    | `NickEvent`     | nick change |
-| `backlog`        | `BacklogResp`   | a page of history (answers `backlog:fetch`) |
-| `search:result`  | `SearchResp`    | search results |
-| `typing`         | `TypingEvent`   | someone is typing |
-| `react`          | `React`         | someone reacted to a message (by msgid) — also c2s to send one |
-| `redact`         | `Redact`        | a message was redacted/removed (by msgid) — also c2s to redact |
-| `notify`         | `Notify`        | highlight/mention worthy of a push/notification |
-
-`react`/`redact` are bidirectional (like `typing`): c2s omits the actor
-(`nick`/`by`), s2c includes it. `NetworkDTO` carries a `caps` array of the
-network's negotiated IRCv3 capabilities so the client can gate cap-dependent
-UI (reactions need `message-tags`, delete needs `draft/message-redaction`).
-See [ircv3.md](ircv3.md).
-
-```go
-type BacklogResp struct {
-    Network  string       `json:"network"`
-    Buffer   string       `json:"buffer"`
-    Messages []MessageDTO `json:"messages"`        // oldest→newest
-    More     bool         `json:"more"`            // older history exists
-    Around   string       `json:"around,omitempty"`// echoes the request when windowed
-}
-
-type MemberEvent struct {
-    Network string    `json:"network"`
-    Buffer  string    `json:"buffer"`
-    Member  MemberDTO `json:"member"`
-}
-
-type Notify struct {
-    Network string `json:"network"`
-    Buffer  string `json:"buffer"`
-    From    string `json:"from"`
-    Text    string `json:"text"`
-}
-```
-
-## 2.6 Sync & ordering rules
-
-- On (re)connect the server sends `hello` → `init` (full snapshot), then a
-  live stream of incremental `s2c` events. The client never assumes it
-  missed nothing; `init` is authoritative and replaces local state.
+- On (re)connect the server sends `hello` → `init` (a full, authoritative
+  snapshot that replaces local state), then a live stream of incremental `s2c`
+  events.
 - Backlog is **pull**: the client asks via `backlog:fetch` and renders the
-  `backlog` page. Live messages arrive as `msg`. The client de-dupes by
-  `MessageDTO.ID`.
-- `id` correlation: `c2s` events that expect a definite answer
-  (`backlog:fetch`, `search`, `net:add`) carry an `id`; the matching `s2c`
-  reply echoes it. Fire-and-forget events (`typing`) omit it.
+  `backlog` page; live messages arrive as `msg`. The client de-dupes by
+  `MessageDTO.ID`. A windowed fetch (`around`) replaces buffer contents and
+  enters a "windowed" mode that suppresses live appending until the user jumps
+  back to the latest page.
+- `id` correlation: requests expecting a definite answer (`backlog:fetch`,
+  `search`, `net:add`, `net:info`) carry an `id` the matching reply echoes;
+  fire-and-forget events (`typing`) omit it.
 
-## 2.7 TypeScript mirror (shape)
+## Adding an event
 
-```ts
-// client/src/proto/events.ts — kept in sync with internal/proto
-export interface Envelope<T = unknown> { t: string; id?: string; d?: T }
-
-export interface MessageDTO {
-  id: string; network: string; buffer: string; time: string;
-  from: string; kind: MsgKind; text: string; self: boolean;
-  tags?: Record<string, string>;
-}
-export type MsgKind =
-  | "privmsg" | "notice" | "action"
-  | "join" | "part" | "quit" | "nick"   // membership churn (client folds these)
-  | "system";
-// ...one interface per payload above, plus a discriminated union of all events.
-```
-
-## 2.8 Open questions for sign-off
-
-1. Single multiplexed socket (proposed) vs. one socket per network?
-   I propose **one socket**, network is a field on every event.
-2. Envelope shape: terse `{t,id,d}` (proposed) vs. verbose
-   `{type,correlationId,data}`? Terse keeps frames small.
-3. `protocol` integer version in `hello` — OK as the compatibility gate?
-4. Should backlog be pull-based (proposed) or should the server push a
-   fixed last-N on `buffer:open`? I lean pull + an initial small page.
+1. Add the struct + `T…` constant to `internal/proto/proto.go`.
+2. Handle it: c2s in `server.route`; s2c emitted from a `userSink` method or a
+   direct reply frame.
+3. Mirror the type and constant in `client/src/proto/events.ts` and add a
+   handler in `client/src/connection.ts`.
+</content>

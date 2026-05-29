@@ -7,18 +7,36 @@
 # Local runtime data (when STUGAN_HOME points inside the repo for dev)
 /data/
 /scripts/
+/users/          # per-user data/scripts in multi-user mode
+/dev/            # disposable home from `./stugan -home ./dev`
 config.toml
+
+# SQLite history database (+ WAL/SHM sidecars from journal_mode=WAL)
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Secrets / local environment
+.env
+.env.*
+!.env.example
 
 # Go
 *.test
 *.out
 /coverage.*
+go.work
+go.work.sum
 
 # Frontend
 client/node_modules/
 client/dist/
 *.tsbuildinfo
 *.local
+npm-debug.log*
+yarn-error.log*
+*.log
 
 # Editor/OS
 .DS_Store

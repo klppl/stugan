@@ -1,0 +1,48 @@
+# Keep the build context small. The Dockerfile builds the client and the
+# daemon from source, so only source + module files need to be sent.
+
+# VCS & tooling
+.git/
+.github/
+.gitignore
+.gitattributes
+.dockerignore
+.claude/
+.idea/
+.vscode/
+.DS_Store
+
+# Build outputs (rebuilt inside the image)
+/stugan
+/client/stugan
+/dist/
+client/dist/
+*.exe
+
+# Dependencies (reinstalled via npm ci / go mod download)
+client/node_modules/
+
+# Local runtime data & secrets
+/data/
+/scripts/
+/users/
+/dev/
+config.toml
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+.env
+.env.*
+
+# Docs (not needed to build the image)
+docs/
+*.md
+LICENSE
+
+# Misc
+*.test
+*.out
+/coverage.*
+*.tsbuildinfo
+*.log

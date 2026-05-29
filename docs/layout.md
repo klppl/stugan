@@ -1,14 +1,33 @@
-# Proposal 1 — Module & interface layout
+# Architecture & module layout
 
-This is the dependency contract for stugan. The goal is Halloy's discipline:
-a core that knows nothing about IRC libraries, transports, or UIs, talking
-to everything through interfaces. **Awaiting sign-off — nothing below is
-implemented yet beyond `config`, `logging`, and `main`.**
+stugan's design goal is Halloy's discipline: a **core that knows nothing about
+IRC libraries, transports, or UIs**, talking to everything through interfaces.
+This document is the dependency contract and a map of how data flows through
+the system.
 
-## 1.1 Dependency direction
+## Package map
 
-Arrows = "imports". Note that `core` imports nothing concrete; it sits at
-the center and is depended upon.
+```
+cmd/stugan/        main(): flags, config, per-user wiring, graceful shutdown
+internal/
+  config/          TOML config + $STUGAN_HOME resolution
+  logging/         structured logging (slog)
+  core/            GUI/transport-independent brain: state machine + event bus
+  irc/             IRCConn interface impl over girc (the only place girc lives)
+  store/           SQLite history + FTS5 search + network/KV persistence
+  plugin/          PluginHost impl: a Lua host (the only place gopher-lua lives)
+  auth/            bcrypt credentials + sessions (multi-user)
+  server/          HTTP + WebSocket, typed event router, multi-tenant hub
+  proto/           shared wire-protocol structs (TS mirror in client/)
+  scripts/         embedded bundled Lua plugins (fish.lua)
+client/            Vue 3 + TS + Vite frontend
+docs/              this documentation
+```
+
+## Dependency direction
+
+Arrows = "imports". `core` imports nothing concrete; it sits at the center and
+is depended upon.
 
 ```
         cmd/stugan
@@ -21,213 +40,103 @@ the center and is depended upon.
  │  core  ◀── plugin   (plugin imports core types │
  │    ▲           │     only; core calls it via   │
  │    │           │     the PluginHost interface)  │
- │    │           │                               │
  │  store        irc                              │
  └──────────────────────────────────────────────┘
 ```
 
-Concretely:
+| Package   | May import                              | Must NOT import |
+|-----------|-----------------------------------------|-----------------|
+| `core`    | `proto` (types), stdlib                 | `server`, `irc`, `store`, `plugin`, girc, Lua, UI |
+| `irc`     | girc, `core`, stdlib                    | `server`, `plugin` |
+| `store`   | `modernc.org/sqlite`, `core`, stdlib    | `server`, `plugin` |
+| `plugin`  | gopher-lua, `core`, stdlib              | `server`, `irc` impl, `store` impl |
+| `server`  | `core`, `proto`, `auth`, coder/websocket | girc, Lua |
+| `proto`   | stdlib only                             | everything else |
+| `config`  | go-toml/v2, stdlib                      | everything else |
 
-| Package   | May import                          | Must NOT import                         |
-|-----------|-------------------------------------|-----------------------------------------|
-| `core`    | `proto` (types only), stdlib        | `server`, `irc`, `store`, `plugin`, girc, Lua, UI |
-| `irc`     | girc, `core` (types it emits), stdlib | `server`, `plugin`                    |
-| `store`   | modernc.org/sqlite, `core` (types), stdlib | `server`, `plugin`               |
-| `plugin`  | gopher-lua, `core` (interfaces+types) | `server`, `irc` impl, `store` impl    |
-| `server`  | `core`, `proto`, coder/websocket    | girc, Lua                               |
-| `proto`   | stdlib only                         | everything else                         |
-| `config`  | go-toml/v2, stdlib                  | everything else                         |
+**The rule that matters:** core imports none of the heavy libraries, and
+girc/lua/sqlite never leak past their owning package. That is what makes them
+swappable — when we write a custom IRCv3 stack, only `irc` changes; a WASM
+plugin host would only change `plugin`.
 
 `core` defines the interfaces it consumes (`IRCConn`, `PluginHost`,
-`Store`). The concrete packages implement them and so import `core` for the
-interface and the event/domain types they produce — but the dependency is
-strictly one-directional (`irc/store/plugin → core`, never the reverse), and
-the heavy libraries (girc/lua/sqlite) point *away* from core. The rule that
-matters: **core imports none of them, and girc/lua/sqlite never leak past
-their owning package.** (Settled during Phase 1: `irc` imports `core`.)
+`NetworkStore`, `Connector`, `Sink`, `API`). The concrete packages implement
+them and import `core` for the interface and the domain/event types — strictly
+one-directional (`irc`/`store`/`plugin` → `core`, never the reverse). See
+[core.md](core.md) for the exact signatures.
 
-> **Decision needed:** where do the interfaces live? I propose **core
-> defines `IRCConn`, `PluginHost`, and `Store`** (consumer-defined
-> interfaces). Concrete types (`irc.Conn`, `plugin.LuaHost`, `store.SQLite`)
-> satisfy them structurally. Alternative: a separate `internal/iface`
-> package. I prefer the former — fewer packages, idiomatic Go.
+## The two-sided bus
 
-## 1.2 Domain types (in `core`)
+`core.Engine` owns the domain tree and is the hub of a bus with two sides:
 
-Mirrors TheLounge's `ClientManager → Client → Network → Chan → Msg`, named
-for clarity and with multi-user baked in as additive:
+- **Inbound (write side).** Connections and the browser feed `core.Event`s in.
+  Plugin hooks run *synchronously, in priority order, before an event is
+  committed*, and may drop or mutate it.
+- **Outbound (read side, `core.Sink`).** Once an event is committed and state
+  is mutated, the final result is fanned out to every registered `Sink`. The
+  store persists it; each connected browser receives it as a wire frame; the
+  terminal logger prints it.
 
-```go
-// User is the account that owns networks. Single-user today: one implicit
-// user. Multi-user later adds a UserManager and per-user auth without
-// changing the shape below.
-type User struct {
-    ID       string
-    Name     string
-    Networks []*Network
-}
+Every transport is just another consumer of this bus. The WebSocket server is
+*one* Sink-driven bridge; an IRC-server front-end (bouncer mode, see
+[ircserver.md](ircserver.md)) would be a second, mirror-image one.
 
-type Network struct {
-    ID       string            // stable id, e.g. "libera"
-    Name     string            // display name
-    Nick     string            // current nick (may differ from configured)
-    State    ConnState         // Disconnected|Connecting|Registered
-    Channels []*Channel        // joined channels + open queries
-    conn     IRCConn           // the connection (interface)
-}
+## Data flow
 
-type Channel struct {
-    Name      string           // "#go-nuts" or a nick for a query
-    Topic     string
-    Members   map[string]*Member
-    Kind      ChannelKind      // Channel|Query|Status
-    Unread    int
-    Highlight int
-}
-
-type Member struct {
-    Nick    string
-    Account string             // from account-notify / WHOX, "" if unknown
-    Modes   string             // channel prefixes: "@", "+", ...
-    Away    bool
-}
-
-type Message struct {
-    ID      string             // IRCv3 msgid if present, else generated
-    Network string
-    Buffer  string             // channel or query name
-    Time    time.Time          // server-time if present, else receipt time
-    From    string             // nick / source
-    Account string
-    Kind    MsgKind            // Privmsg|Notice|Action|Join|Part|...|System
-    Text    string
-    Tags    map[string]string  // raw IRCv3 message-tags
-    Self    bool               // echo-message: we sent this
-}
-```
-
-These are the types `proto` events carry (in DTO form) and that `plugin`
-exposes to Lua as tables.
-
-## 1.3 The event bus (in `core`) — the spine
-
-Every meaningful thing that happens becomes an `Event` published on the
-bus. Two kinds of subscribers:
-
-1. **Plugin hooks** (via `PluginHost`) run *synchronously, in priority
-   order, before the event is committed*, and may **drop** or **mutate** it.
-2. **Observers** (the `server`, the `store`) get the *final, committed*
-   event asynchronously and react (persist it, push it to sockets).
-
-```go
-type EventType string
-
-const (
-    EvMessageIn  EventType = "message_in"   // mutable/droppable
-    EvMessageOut EventType = "message_out"  // user input → IRC; mutable/droppable
-    EvJoin       EventType = "join"
-    EvPart       EventType = "part"
-    EvNick       EventType = "nick"
-    EvConnect    EventType = "connect"
-    EvDisconnect EventType = "disconnect"
-    EvCommand    EventType = "command"      // a /slash command
-    // ... extended as IRCv3 features land
-)
-
-type Event struct {
-    Type    EventType
-    Network string
-    Message *Message      // set for message events
-    // signal-specific fields (nick, channel, args) as needed
-}
-
-// PluginHost is core's view of the plugin runtime. The Lua host (or a
-// future WASM host) implements it. core calls Dispatch before committing
-// a mutable event.
-type PluginHost interface {
-    // Dispatch runs registered hooks for ev in priority order. Returns the
-    // possibly-mutated event and keep=false if a hook dropped it. Errors
-    // from individual scripts are isolated and logged, not returned.
-    Dispatch(ctx context.Context, ev Event) (out Event, keep bool)
-
-    // Commands returns the set of /command names scripts have registered,
-    // so core can route unknown slash-commands to the host.
-    Commands() []string
-
-    // Reload reloads scripts from disk (called by the hot-reload watcher).
-    Reload(ctx context.Context) error
-
-    Close() error
-}
-```
-
-`core` exposes a small **API surface back to plugins** (send raw, print to
-a buffer, read state, KV store). I propose this is a `core.API` struct
-passed into the `PluginHost` at construction, so the Lua bindings call Go
-methods on it. That keeps `plugin` free of business logic:
-
-```go
-type API interface {
-    Send(network, raw string) error          // stugan.send
-    Print(network, buffer, text string)       // stugan.print
-    Networks() []NetworkInfo                   // read state (snapshots)
-    Channel(network, name string) (ChannelInfo, bool)
-    KV(plugin string) KVStore                  // per-plugin persistence
-    Config(plugin string) map[string]any       // plugin-scoped settings
-}
-```
-
-## 1.4 The IRCConn interface (in `core`, implemented in `irc`)
-
-```go
-type IRCConn interface {
-    Connect(ctx context.Context) error
-    SendRaw(line string) error                 // raw IRC line
-    Caps() []string                            // negotiated IRCv3 caps
-    // Inbound events are delivered to core via a callback/channel set at
-    // construction, normalized into core.Event — girc types never escape.
-    Close() error
-}
-```
-
-`irc` translates girc's callbacks into normalized `core.Event`s and accepts
-raw lines out. CAP/SASL/reconnect live inside `irc`. When we write a custom
-IRCv3 core, only `irc` changes.
-
-## 1.5 The Store interface (in `core`, implemented in `store`)
-
-```go
-type Store interface {
-    AppendMessage(ctx context.Context, m Message) error
-    Backlog(ctx context.Context, network, buffer string, before time.Time, limit int) ([]Message, error)
-    Search(ctx context.Context, q SearchQuery) ([]Message, error)  // FTS5
-    SaveNetwork(ctx context.Context, n NetworkState) error
-    // ...
-    Close() error
-}
-```
-
-## 1.6 Startup wiring (in `cmd/stugan`)
+**Inbound (IRC → browser):**
 
 ```
-config.Load → logging.New → store.Open
-            → for each network: irc.New(cfg) implementing IRCConn
-            → plugin.NewLuaHost(core.API) implementing PluginHost
-            → core.New(store, host) ; core.AddNetwork(conn) per network
-            → server.New(core) ; server.ListenAndServe(ctx)
-            → block on ctx (SIGINT/SIGTERM) → graceful Close() of each
+girc callback
+  → irc.toEvent()         normalize a raw line into a core.Event (pure fn)
+  → Engine.HandleEvent()  enqueue onto the 256-deep event channel
+  → engine loop goroutine (single, serial):
+       handle()           dispatch to PluginHost (hooks may drop/mutate/claim)
+       apply/applyLocked() mutate domain state under e.mu
+       Sink fan-out       store persists; userSink → WS frame; logSink prints
 ```
 
-All share the root `context.Context`; cancellation cascades a clean
-shutdown (connections drain, sockets close, store flushes).
+**Outbound (browser → IRC):**
 
-## 1.7 Open questions for sign-off
+```
+browser sends a typed frame
+  → server.route()        switch on Envelope.T, decode payload
+  → Engine.SendInput()/AddNetworkLive()/SendReaction()/…
+       (slash-commands: alias expansion → plugin hook_command → built-ins)
+  → state change + raw line written to the IRC connection
+```
 
-1. Interfaces in `core` vs. a dedicated `iface` package? (I propose `core`.)
-2. Plugin→core calls via a `core.API` interface passed to the host? (Yes,
-   I propose.)
-3. Is the type naming (`User/Network/Channel/Member/Message`) good, or do
-   you want TheLounge's exact names (`Client/Chan/Msg`)? I lean toward the
-   spelled-out names.
-4. Should `Channel` model queries (DMs) and the server buffer as the same
-   type with a `Kind`, or separate types? I propose one type + `Kind`.
+State is **mutated only by the loop goroutine** but **read concurrently** by
+server goroutines, so it is guarded by `e.mu` (an `RWMutex`). Readers take
+deep-copied snapshots via `Snapshot()` / `SnapshotNetwork()` — live pointers
+never escape the lock.
+
+## Multi-user
+
+`server` is multi-tenant via a `Hub`: each connection resolves to a user (a
+session cookie, or the implicit `default` user when auth is off) and bridges to
+*that user's* `Engine`. `cmd/stugan` builds one `Engine` + SQLite store (+
+plugin host) per user, fully isolated. With no `[[users]]` in config the daemon
+is single-user and unauthenticated (back-compatible). **The store is the source
+of truth for networks** — config `[[networks]]` only seed it on first run.
+
+## Startup wiring (`cmd/stugan`)
+
+```
+config.Load → logging.New
+  → for each effective user:
+       open store (SQLite) at <data>/stugan.db
+       install bundled scripts (fish.lua) into <scripts>/
+       build core.Engine{ user, connector, highlighter, aliases }
+       register store + plugin host as Sinks
+       load networks from store (seed from config on first run)
+       dial each network via the Connector, add to the engine
+       wrap in server.Tenant{ Engine, History }
+  → build the Hub over all tenants
+  → server.New(hub) ; ListenAndServe(ctx)
+  → block on ctx (SIGINT/SIGTERM) → graceful Close() of each engine + store
+```
+
+All share the root `context.Context`; cancellation cascades a clean shutdown.
+The `Connector` (`ircConnector` in `cmd/stugan`) wraps `irc.New` so `core`
+never imports the IRC library.
+</content>
