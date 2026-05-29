@@ -65,6 +65,8 @@ local function fb64_encode(bytes)
 end
 
 local function fb64_decode(text)
+  -- Tolerate surrounding whitespace some clients/bouncers append to the line.
+  text = text:gsub("%s", "")
   if #text == 0 or #text % 12 ~= 0 then return nil end
   local out = {}
   for i = 1, #text, 12 do
@@ -96,8 +98,13 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Standard base64 (used by CBC mode). We accept both padded and unpadded
--- input on decode and emit unpadded on encode — that's what fish-CBC peers
--- expect in practice.
+-- input on decode. b64_encode itself is unpadded (DH1080 builds on it and
+-- supplies its own padding rules); the CBC wire format uses b64_encode_pad,
+-- which appends `=` to a 4-char boundary. Padding matters: real fish-CBC
+-- peers (mircryption, FiSHLiM, py-fishcrypt) emit padded base64 and many of
+-- their decoders reject input whose length isn't a multiple of 4 — so an
+-- unpadded frame decrypts on lenient clients but silently fails on strict
+-- ones, which looks like "some of my messages can't be read".
 -- ---------------------------------------------------------------------------
 local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local B64_IDX = {}
@@ -120,7 +127,21 @@ local function b64_encode(bytes)
   return table.concat(out)
 end
 
+-- b64_encode_pad is the CBC wire encoder: standard base64 with `=` padding to
+-- a 4-character boundary, which is what interoperable fish-CBC peers expect.
+local function b64_encode_pad(bytes)
+  local s = b64_encode(bytes)
+  local rem = #bytes % 3
+  if rem == 1 then return s .. "==" end
+  if rem == 2 then return s .. "=" end
+  return s
+end
+
 local function b64_decode(text)
+  -- Strip any whitespace (real base64 decoders ignore it; a stray trailing
+  -- space or CR from a peer would otherwise make the whole frame undecodable),
+  -- then drop padding.
+  text = text:gsub("%s", "")
   text = text:gsub("=+$", "")
   local out, n, i = {}, #text, 1
   while i <= n do
@@ -172,13 +193,18 @@ end
 -- Padding + encrypt / decrypt.
 -- ---------------------------------------------------------------------------
 local function pad(plaintext)
-  -- Null-terminate, then random-fill up to the next 8-byte boundary so the
-  -- ciphertext doesn't leak exact plaintext length and the receiver can
-  -- trim at the first null.
+  -- Null-terminate, then ZERO-fill up to the next 8-byte boundary. The fill
+  -- must be zeros, not random: canonical FiSH receivers (py-fishcrypt,
+  -- FiSHLiM, Halloy) strip *trailing* nulls, so a non-zero random tail can't
+  -- be stripped and surfaces as embedded-NUL garbage / invalid UTF-8 on their
+  -- end. Zero fill is decryptable by both trailing-null and first-null
+  -- trimmers; random fill only by first-null trimmers. (Block count already
+  -- bounds the plaintext length to ±8 bytes, so random fill bought no real
+  -- length hiding — only an interop hazard.)
   local body = plaintext .. "\0"
   local rem  = #body % BLOCK
   if rem ~= 0 then
-    body = body .. crypto.random(BLOCK - rem)
+    body = body .. string.rep("\0", BLOCK - rem)
   end
   return body
 end
@@ -197,7 +223,7 @@ local function encrypt(plaintext, key, mode)
   end
   local iv = crypto.random(BLOCK)
   local ct = crypto.blowfish_cbc_encrypt(key, iv, padded)
-  return PREFIX_CBC .. b64_encode(iv .. ct)
+  return PREFIX_CBC .. b64_encode_pad(iv .. ct)
 end
 
 -- chunk_and_encrypt splits plaintext into ≤CHUNK_BYTES pieces and encrypts
@@ -216,29 +242,48 @@ local function chunk_and_encrypt(plaintext, key, mode)
   return out
 end
 
--- Try to decrypt text with key. Returns the plaintext on success, nil if
--- text is not a recognised fish payload or decryption produced garbage.
+-- Try to decrypt text with key. Returns the plaintext on success, or
+-- (nil, reason) when text is not a recognised fish payload or decryption
+-- failed. The reason string is only used for debug logging — it lets us tell
+-- a malformed-base64 frame apart from a wrong-length or cipher-error one when
+-- diagnosing interop failures with real-world clients.
+-- fish_payload classifies an inbound line by its FiSH prefix and returns
+-- (mode, body) where mode is "cbc" or "ecb", or nil if it carries no prefix.
+-- Both the IRC-native "+OK" and Mircryption's "mcps" prefixes are accepted,
+-- in CBC ("* ...") and ECB forms. CBC is checked first because "+OK *" also
+-- has "+OK " as a prefix.
+local function fish_payload(text)
+  for _, p in ipairs({ "+OK *", "mcps *" }) do
+    if text:sub(1, #p) == p then return "cbc", text:sub(#p + 1) end
+  end
+  for _, p in ipairs({ "+OK ", "mcps " }) do
+    if text:sub(1, #p) == p then return "ecb", text:sub(#p + 1) end
+  end
+  return nil, nil
+end
+
 local function decrypt(text, key)
-  if text:sub(1, #PREFIX_CBC) == PREFIX_CBC then
-    local raw = b64_decode(text:sub(#PREFIX_CBC + 1))
-    if not raw or #raw < BLOCK * 2 or (#raw - BLOCK) % BLOCK ~= 0 then return nil end
+  local mode, body = fish_payload(text)
+  if mode == "cbc" then
+    local raw = b64_decode(body)
+    if not raw then return nil, "cbc: base64 decode failed (non-base64 byte?)" end
+    if #raw < BLOCK * 2 or (#raw - BLOCK) % BLOCK ~= 0 then
+      return nil, "cbc: bad length " .. #raw .. " (need >=16 and IV+ct multiple of 8)"
+    end
     local iv  = raw:sub(1, BLOCK)
     local ct  = raw:sub(BLOCK + 1)
     local ok, pt = pcall(crypto.blowfish_cbc_decrypt, key, iv, ct)
-    if not ok then return nil end
+    if not ok then return nil, "cbc: cipher error: " .. tostring(pt) end
     return trim_at_null(pt)
   end
-  if text:sub(1, #PREFIX_ECB) == PREFIX_ECB then
-    -- Some implementations prefix the ECB body with "mcps " (Mircryption);
-    -- strip that before fish-base64 decoding.
-    local body = text:sub(#PREFIX_ECB + 1):gsub("^mcps ", "")
-    local ct   = fb64_decode(body)
-    if not ct or #ct == 0 then return nil end
+  if mode == "ecb" then
+    local ct = fb64_decode(body)
+    if not ct or #ct == 0 then return nil, "ecb: fish-base64 decode failed (length not a multiple of 12?)" end
     local ok, pt = pcall(crypto.blowfish_ecb_decrypt, key, ct)
-    if not ok then return nil end
+    if not ok then return nil, "ecb: cipher error: " .. tostring(pt) end
     return trim_at_null(pt)
   end
-  return nil
+  return nil, "not a +OK/mcps fish payload"
 end
 
 -- ---------------------------------------------------------------------------
@@ -378,7 +423,17 @@ end
 stugan.hook_input(function(input, ctx)
   if input == "" then return input end
   local key, mode = get_key(ctx.network, ctx.buffer)
-  if not key then return input end
+  if not key then
+    -- No key for the buffer we're sending from → this line goes out in
+    -- plaintext. Log the exact lookup so a send-side miss (e.g. the key was
+    -- stored under a different buffer name than the one we send from) is
+    -- diagnosable instead of silently leaking cleartext.
+    stugan.log.debug("fish: NO send key for buffer '" .. tostring(ctx.buffer)
+      .. "' (network '" .. tostring(ctx.network) .. "') — sending PLAINTEXT")
+    return input
+  end
+  stugan.log.debug("fish: encrypting outgoing for buffer '" .. tostring(ctx.buffer)
+    .. "' (" .. tostring(mode) .. ")")
   local cts = chunk_and_encrypt(input, key, mode)
   for i = 2, #cts do
     stugan.send(ctx.network, "PRIVMSG " .. ctx.buffer .. " :" .. cts[i])
@@ -428,9 +483,26 @@ stugan.hook_message(function(msg)
   -- our own echoed self-message. msg.buffer already holds the right value
   -- (translate.go assigns it accordingly), so the lookup is one-shot.
   local key, _ = get_key(msg.network, msg.buffer)
-  if not key then return msg end
-  local pt = decrypt(msg.text, key)
-  if pt then msg.text = pt end
+  if not key then
+    -- A keyed channel that looks encrypted but has no key here usually means
+    -- a buffer/casemapping mismatch — surface it so the gap is diagnosable.
+    if fish_payload(msg.text) then
+      stugan.log.debug("fish: no key for buffer '" .. tostring(msg.buffer)
+        .. "' (network " .. tostring(msg.network) .. ") — leaving ciphertext as-is")
+    end
+    return msg
+  end
+  local pt, reason = decrypt(msg.text, key)
+  if pt then
+    msg.text = pt
+  elseif fish_payload(msg.text) then
+    -- Had a key and the line looked like fish, but decryption bailed. Log the
+    -- reason and the offending body so an undecryptable frame can be pinned to
+    -- a concrete cause instead of silently passing through as raw ciphertext.
+    stugan.log.debug("fish: decrypt failed (" .. tostring(reason) .. ") buffer='"
+      .. tostring(msg.buffer) .. "' from=" .. tostring(msg.from)
+      .. " text=" .. string.format("%q", msg.text))
+  end
   return msg
 end, { priority = 900 })
 

@@ -116,6 +116,111 @@ func TestFishCBCRoundTrip(t *testing.T) {
 	}
 }
 
+// TestFishDecryptsWithTrailingWhitespace guards the most common real-world
+// interop failure: a peer client or bouncer appends a stray space or CR to the
+// line. The ciphertext is still valid base64 — strict decoding would reject it
+// and the frame would pass through as raw +OK. b64_decode must ignore it.
+func TestFishDecryptsWithTrailingWhitespace(t *testing.T) {
+	h, _ := loadFish(t)
+	setKey(t, h, "n", "#chan", "hunter2", "cbc")
+
+	out, _ := h.Dispatch(context.Background(), core.Event{
+		Type: core.EvMessageOut, Network: "n",
+		Message: &core.Message{Network: "n", Buffer: "#chan", Text: "hello world", Self: true},
+	})
+	cipher := out.Message.Text
+
+	for _, suffix := range []string{" ", "\r", "  \r", "\t"} {
+		in, keep := h.Dispatch(context.Background(), core.Event{
+			Type: core.EvMessageIn, Network: "n",
+			Message: &core.Message{
+				Network: "n", Buffer: "#chan", From: "peer",
+				Kind: core.MsgPrivmsg, Text: cipher + suffix,
+			},
+		})
+		if !keep {
+			t.Fatalf("suffix %q: hook dropped the line", suffix)
+		}
+		if in.Message.Text != "hello world" {
+			t.Errorf("suffix %q: got %q, want %q", suffix, in.Message.Text, "hello world")
+		}
+	}
+}
+
+// TestFishCBCBase64IsPadded guards the interop bug where stugan emitted
+// unpadded CBC base64. Standard fish-CBC peers (mircryption, FiSHLiM,
+// py-fishcrypt) reject base64 whose length isn't a multiple of 4, so an
+// unpadded frame decrypts on lenient clients but fails on strict ones —
+// "some of my messages can't be read". Every CBC frame must be 4-aligned,
+// regardless of plaintext length.
+func TestFishCBCBase64IsPadded(t *testing.T) {
+	h, _ := loadFish(t)
+	setKey(t, h, "n", "#chan", "hunter2", "cbc")
+
+	// Cover payload lengths that hit each rem-mod-3 case (1, 2, 3, … chars →
+	// 16/24/32-byte payloads etc.), including the short single-block messages
+	// like "test1" that triggered the report.
+	for _, text := range []string{"a", "test1", "den andra raden", "och jag ser vad ni skriver", "men ni ser inte vad jag skriver va?"} {
+		out, _ := h.Dispatch(context.Background(), core.Event{
+			Type: core.EvMessageOut, Network: "n",
+			Message: &core.Message{Network: "n", Buffer: "#chan", Text: text, Self: true},
+		})
+		body := strings.TrimPrefix(out.Message.Text, "+OK *")
+		if len(body)%4 != 0 {
+			t.Errorf("CBC base64 for %q is not 4-aligned (len=%d): %q — strict peers will fail to decrypt",
+				text, len(body), body)
+		}
+	}
+}
+
+// TestFishECBDeterministic proves the padding fill is zero, not random.
+// Canonical FiSH ECB has no IV and zero-pads, so the same plaintext always
+// produces the same ciphertext. Random-fill padding (the old behavior) would
+// make these differ — and would break peers that strip trailing nulls.
+func TestFishECBDeterministic(t *testing.T) {
+	h, _ := loadFish(t)
+	setKey(t, h, "n", "#chan", "hunter2", "ecb")
+
+	enc := func() string {
+		out, _ := h.Dispatch(context.Background(), core.Event{
+			Type: core.EvMessageOut, Network: "n",
+			Message: &core.Message{Network: "n", Buffer: "#chan", Text: "test1", Self: true},
+		})
+		return out.Message.Text
+	}
+	if a, b := enc(), enc(); a != b {
+		t.Errorf("ECB output not deterministic — padding fill is not zero:\n  %q\n  %q", a, b)
+	}
+}
+
+// TestFishDecryptsMcpsPrefix checks interop with Mircryption peers, which use
+// the "mcps" prefix instead of "+OK". A frame stugan produced under "+OK *"
+// must still decrypt when relabeled "mcps *" (CBC) or "mcps " (ECB).
+func TestFishDecryptsMcpsPrefix(t *testing.T) {
+	h, _ := loadFish(t)
+	setKey(t, h, "n", "#chan", "hunter2", "cbc")
+
+	out, _ := h.Dispatch(context.Background(), core.Event{
+		Type: core.EvMessageOut, Network: "n",
+		Message: &core.Message{Network: "n", Buffer: "#chan", Text: "hello world", Self: true},
+	})
+	mcps := "mcps *" + strings.TrimPrefix(out.Message.Text, "+OK *")
+
+	in, keep := h.Dispatch(context.Background(), core.Event{
+		Type: core.EvMessageIn, Network: "n",
+		Message: &core.Message{
+			Network: "n", Buffer: "#chan", From: "peer",
+			Kind: core.MsgPrivmsg, Text: mcps,
+		},
+	})
+	if !keep {
+		t.Fatal("mcps frame was dropped")
+	}
+	if in.Message.Text != "hello world" {
+		t.Errorf("mcps CBC decrypt: got %q, want %q", in.Message.Text, "hello world")
+	}
+}
+
 func TestFishECBRoundTrip(t *testing.T) {
 	h, _ := loadFish(t)
 	setKey(t, h, "n", "#legacy", "hunter2", "ecb")
