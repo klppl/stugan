@@ -105,6 +105,7 @@ plugin).
 | [storage](docs/storage.md) | SQLite schema, history, search, persistence |
 | [server](docs/server.md) | HTTP/WebSocket server, multi-tenant hub, auth, security |
 | [frontend](docs/frontend.md) | The Vue 3 client architecture |
+| [theming](docs/theming.md) | Creating and installing custom themes |
 | [docker](docs/docker.md) | Pulling the GHCR image and running it on a server |
 | [plugins](docs/plugins.md) | The Lua plugin API |
 | [config](docs/config.md) | Configuration reference |
