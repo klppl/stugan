@@ -43,3 +43,6 @@ yarn-error.log*
 *.swp
 .idea/
 .vscode/
+
+# Local-only Claude Code settings (personal tool permissions; not shared)
+.claude/settings.local.json
