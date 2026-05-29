@@ -37,7 +37,10 @@ type Options struct {
 	// presented during the TLS handshake for CertFP / SASL EXTERNAL.
 	CertPEM  string
 	Channels []string // auto-joined after registration
-	Logger   *slog.Logger
+	// ChannelKeys maps a channel in Channels to its join key (+k password).
+	// Channels without a key are absent.
+	ChannelKeys map[string]string
+	Logger      *slog.Logger
 }
 
 // Conn is a girc-backed implementation of core.IRCConn.
@@ -127,9 +130,7 @@ func (c *Conn) registerHandlers() {
 
 	h.Add(girc.CONNECTED, func(gc *girc.Client, _ girc.Event) {
 		c.emit(core.Event{Type: core.EvConnect, Network: c.opts.Network, Nick: gc.GetNick()})
-		if len(c.opts.Channels) > 0 {
-			gc.Cmd.Join(c.opts.Channels...)
-		}
+		c.autojoin(gc)
 	})
 	h.Add(girc.DISCONNECTED, func(_ *girc.Client, e girc.Event) {
 		c.emit(core.Event{Type: core.EvDisconnect, Network: c.opts.Network, Text: e.Last()})
@@ -161,6 +162,34 @@ func (c *Conn) registerHandlers() {
 			}
 		}
 	})
+}
+
+// autojoin (re)joins the configured channels after registration. Keyed
+// channels are sent individually with their key; keyless ones are batched.
+func (c *Conn) autojoin(gc *girc.Client) {
+	keyed, keyless := planAutojoin(c.opts.Channels, c.opts.ChannelKeys)
+	for _, k := range keyed {
+		gc.Cmd.JoinKey(k.channel, k.key)
+	}
+	if len(keyless) > 0 {
+		gc.Cmd.Join(keyless...)
+	}
+}
+
+type channelKey struct{ channel, key string }
+
+// planAutojoin splits the auto-join list into keyed channels (joined one at a
+// time with JoinKey) and keyless channels (batched into one JOIN). Keeping it
+// pure makes the keyed/keyless decision unit-testable without a live client.
+func planAutojoin(channels []string, keys map[string]string) (keyed []channelKey, keyless []string) {
+	for _, ch := range channels {
+		if key := keys[ch]; key != "" {
+			keyed = append(keyed, channelKey{ch, key})
+		} else {
+			keyless = append(keyless, ch)
+		}
+	}
+	return keyed, keyless
 }
 
 func (c *Conn) emit(ev core.Event) {

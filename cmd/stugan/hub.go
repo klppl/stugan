@@ -225,7 +225,7 @@ func (c ircConnector) Dial(p core.NetworkParams, h core.ConnHandler) (core.IRCCo
 		Nick: p.Nick, User: p.User, Realname: p.Realname,
 		SASLUser: p.SASLUser, SASLPass: p.SASLPass,
 		ServerPass: p.ServerPass, SASLExternal: p.SASLExternal, CertPEM: p.CertPEM,
-		Channels: p.Channels, Logger: c.log,
+		Channels: p.Channels, ChannelKeys: p.ChannelKeys, Logger: c.log,
 	}, h)
 }
 

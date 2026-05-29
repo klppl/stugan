@@ -62,3 +62,30 @@ func TestNewClientCert(t *testing.T) {
 		t.Fatal("expected error for malformed client certificate")
 	}
 }
+
+func TestPlanAutojoin(t *testing.T) {
+	channels := []string{"#open", "#secret", "#also-open", "#vip"}
+	keys := map[string]string{"#secret": "hunter2", "#vip": "swordfish"}
+
+	keyed, keyless := planAutojoin(channels, keys)
+
+	wantKeyed := map[string]string{"#secret": "hunter2", "#vip": "swordfish"}
+	if len(keyed) != len(wantKeyed) {
+		t.Fatalf("keyed = %v, want %d entries", keyed, len(wantKeyed))
+	}
+	for _, k := range keyed {
+		if wantKeyed[k.channel] != k.key {
+			t.Errorf("keyed %q = %q, want %q", k.channel, k.key, wantKeyed[k.channel])
+		}
+	}
+	want := []string{"#open", "#also-open"}
+	if strings.Join(keyless, ",") != strings.Join(want, ",") {
+		t.Errorf("keyless = %v, want %v", keyless, want)
+	}
+
+	// No keys at all → everything batches as keyless, nothing keyed.
+	keyed, keyless = planAutojoin(channels, nil)
+	if len(keyed) != 0 || len(keyless) != len(channels) {
+		t.Errorf("nil keys: keyed=%v keyless=%v", keyed, keyless)
+	}
+}

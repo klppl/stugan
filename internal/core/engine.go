@@ -92,9 +92,15 @@ type Engine struct {
 	// "<network>\t<lowercase-nick>"; cleared on the matching end-of
 	// marker (318/369/315). Mutated only on the engine loop goroutine.
 	pendingWhois map[string]string
-	running      bool
-	runCtx       context.Context
-	runWG        sync.WaitGroup
+	// pendingKeys records the join key (+k password) supplied with a /join
+	// command, so it can be committed to the persisted auto-join list when the
+	// matching self-JOIN is confirmed by the server. Key is
+	// "<network>\t<lowercase-channel>"; only non-empty keys are stored.
+	// Touched only on the engine loop goroutine (like pendingWhois).
+	pendingKeys map[string]string
+	running     bool
+	runCtx      context.Context
+	runWG       sync.WaitGroup
 
 	events chan Event
 	done   chan struct{}
@@ -138,6 +144,7 @@ func New(opts Options) *Engine {
 		connCancels:  map[string]context.CancelFunc{},
 		listAccum:    map[string][]ChannelListItem{},
 		pendingWhois: map[string]string{},
+		pendingKeys:  map[string]string{},
 		events:       make(chan Event, 256),
 		done:         make(chan struct{}),
 	}
@@ -265,6 +272,11 @@ func (e *Engine) UpdateNetwork(p NetworkParams) error {
 		return errors.New("unknown network")
 	}
 	old := n.Params
+	// The GUI edit form doesn't carry per-channel join keys, so preserve the
+	// stored keys for channels still in the auto-join list (dropping keys for
+	// channels the edit removed). This runs before both branches so a reconnect
+	// dials with the keys intact.
+	p.ChannelKeys = reconcileKeys(old.ChannelKeys, p.Channels)
 
 	if needsReconnect(old, p) {
 		if e.connector == nil {
@@ -325,6 +337,30 @@ func needsReconnect(old, p NetworkParams) bool {
 		old.SASLUser != p.SASLUser || old.SASLPass != p.SASLPass ||
 		old.ServerPass != p.ServerPass || old.SASLExternal != p.SASLExternal ||
 		old.CertPEM != p.CertPEM
+}
+
+// reconcileKeys keeps only the join keys whose channel is still in the
+// auto-join list (case-insensitive), returning nil when none remain. Used on
+// edit to carry stored keys across a GUI update that can't send them.
+func reconcileKeys(keys map[string]string, channels []string) map[string]string {
+	if len(keys) == 0 {
+		return nil
+	}
+	var out map[string]string
+	for k, v := range keys {
+		for _, ch := range channels {
+			if eqFold(ch, k) {
+				if out == nil {
+					out = map[string]string{}
+				}
+				// Store under the channel-list casing so the exact-match
+				// lookup in planAutojoin (keys[ch]) hits.
+				out[ch] = v
+				break
+			}
+		}
+	}
+	return out
 }
 
 // diffChannels returns the channels added to and removed from the auto-join
@@ -703,15 +739,61 @@ func (e *Engine) apply(ev Event) {
 	}
 
 	e.mu.Lock()
-	emit, netChanged := e.applyLocked(ev)
+	emit, netChanged, persist := e.applyLocked(ev)
+	// Snapshot the params to persist while still holding the lock, so the
+	// write-back below sees a stable copy and not a concurrently-mutated one.
+	var params NetworkParams
+	if persist && e.netStore != nil {
+		if n := e.user.Network(ev.Network); n != nil {
+			params = n.Params.clone()
+		} else {
+			persist = false
+		}
+	}
 	e.mu.Unlock()
 
 	for _, m := range emit {
 		e.broadcast(m)
 	}
+	if persist && e.netStore != nil {
+		if err := e.netStore.SaveNetwork(params); err != nil {
+			e.log.Warn("persist autojoin", "network", ev.Network, "err", err)
+		}
+	}
 	if netChanged {
 		e.notifyNetwork(ev.Network)
 	}
+}
+
+// recordPendingKeys parses a /join argument string ("#a,#b k1,k2") and stashes
+// each channel's key so it can be committed to the persisted auto-join list
+// when the server confirms the self-JOIN. Keys are positional; channels
+// without a key contribute no entry.
+func (e *Engine) recordPendingKeys(network, text string) {
+	chans, keys, _ := strings.Cut(strings.TrimSpace(text), " ")
+	chanList := strings.Split(chans, ",")
+	keyList := strings.Split(strings.TrimSpace(keys), ",")
+	for i, ch := range chanList {
+		ch = strings.TrimSpace(ch)
+		if ch == "" || i >= len(keyList) {
+			continue
+		}
+		if key := strings.TrimSpace(keyList[i]); key != "" {
+			e.pendingKeys[network+"\t"+lower(ch)] = key
+		}
+	}
+}
+
+// takePendingKey returns and clears any join key recorded for a channel by a
+// preceding /join. ok reports whether a key was pending (always a non-empty
+// key when true). Called from applyLocked on the loop goroutine.
+func (e *Engine) takePendingKey(network, channel string) (key string, ok bool) {
+	k := network + "\t" + lower(channel)
+	key, ok = e.pendingKeys[k]
+	if ok {
+		delete(e.pendingKeys, k)
+	}
+	return key, ok
 }
 
 // applyNumeric routes a server numeric (WHOIS/WHO/WHOWAS reply, an error
@@ -858,15 +940,17 @@ func (e *Engine) inject(m Message) {
 	}
 }
 
-// applyLocked mutates state for ev and returns the buffer lines to emit and
+// applyLocked mutates state for ev and returns the buffer lines to emit,
 // whether the network's structure changed (so a snapshot should be pushed to
-// observers). The caller holds e.mu for writing. EvMessageOut is handled
-// separately (see applyMessageOut) because it needs the echo-message
+// observers), and whether the network's persisted params changed (so they
+// should be written back to the store — e.g. the auto-join list after we join
+// or part a channel). The caller holds e.mu for writing. EvMessageOut is
+// handled separately (see applyMessageOut) because it needs the echo-message
 // capability check, which can't take the lock that this holds.
-func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged bool) {
+func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool) {
 	n := e.user.Network(ev.Network)
 	if n == nil {
-		return nil, false
+		return nil, false, false
 	}
 	sys := func(buffer, text string) {
 		emit = append(emit, Message{
@@ -916,7 +1000,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged bool) {
 
 	case EvMessageIn:
 		if ev.Message == nil {
-			return emit, false
+			return emit, false, false
 		}
 		m := *ev.Message
 		if !m.Self && (m.Kind == MsgPrivmsg || m.Kind == MsgNotice || m.Kind == MsgAction) {
@@ -951,12 +1035,23 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged bool) {
 		c.Members[lower(ev.Nick)] = &Member{Nick: ev.Nick, Account: ev.Account}
 		line(MsgJoin, ev.Channel, ev.Nick, fmt.Sprintf("%s has joined %s", ev.Nick, ev.Channel))
 		netChanged = true
+		// When we join a channel ourselves, remember it (and the join key, if
+		// the /join carried one) so it is rejoined on the next (re)connect.
+		if eqFold(ev.Nick, n.Nick) {
+			key, hasKey := e.takePendingKey(ev.Network, ev.Channel)
+			if n.addAutojoin(ev.Channel, key, hasKey) {
+				persist = true
+			}
+		}
 
 	case EvPart:
-		// If we are the one parting, drop the buffer entirely; otherwise just
-		// remove the member.
+		// If we are the one parting, drop the buffer entirely and forget its
+		// auto-join entry; otherwise just remove the member.
 		if eqFold(ev.Nick, n.Nick) {
 			n.remove(ev.Channel)
+			if n.removeAutojoin(ev.Channel) {
+				persist = true
+			}
 		} else if c := n.Channel(ev.Channel); c != nil {
 			delete(c.Members, lower(ev.Nick))
 		}
@@ -1005,7 +1100,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged bool) {
 		sys(ev.Channel, fmt.Sprintf("%s set topic: %s", who, ev.Text))
 		netChanged = true
 	}
-	return emit, netChanged
+	return emit, netChanged, persist
 }
 
 // broadcast fans a committed line out to every registered sink.

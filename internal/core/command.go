@@ -34,6 +34,7 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 		// Pass the full argument string so channel keys come along:
 		// /join #chan key  →  JOIN #chan key (also /join #a,#b k1,k2).
 		if ev.Text != "" {
+			e.recordPendingKeys(ev.Network, ev.Text)
 			conn.SendRaw("JOIN " + ev.Text)
 		}
 	case "part":

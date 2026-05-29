@@ -405,6 +405,81 @@ func TestPartSelfRemovesBuffer(t *testing.T) {
 	}
 }
 
+func TestJoinPartPersistsAutojoin(t *testing.T) {
+	netStore := &recordingNetStore{}
+	e := New(Options{Sink: &captureSink{}, Networks: netStore})
+	e.AddNetwork(NetworkParams{ID: "net", Name: "net", Nick: "me"}, nil)
+	baseSaves := len(netStore.saved) // AddNetwork persists once
+
+	// We join a channel ourselves → it lands in the persisted auto-join list.
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Channel: "#go"})
+	if got := net0(e).Params.Channels; len(got) != 1 || got[0] != "#go" {
+		t.Fatalf("autojoin = %v, want [#go]", got)
+	}
+	if len(netStore.saved) != baseSaves+1 {
+		t.Fatalf("self-join saves = %d, want %d", len(netStore.saved), baseSaves+1)
+	}
+	if last := netStore.saved[len(netStore.saved)-1]; len(last.Channels) != 1 || last.Channels[0] != "#go" {
+		t.Errorf("persisted channels = %v, want [#go]", last.Channels)
+	}
+
+	// Re-joining the same channel (e.g. the server echo of the initial
+	// auto-join) must not duplicate it or write again.
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Channel: "#GO"})
+	if got := net0(e).Params.Channels; len(got) != 1 {
+		t.Errorf("autojoin after re-join = %v, want one entry", got)
+	}
+	if len(netStore.saved) != baseSaves+1 {
+		t.Errorf("re-join wrote to store; saves = %d, want %d", len(netStore.saved), baseSaves+1)
+	}
+
+	// Someone else joining must not touch the auto-join list or persist.
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Channel: "#go"})
+	if len(netStore.saved) != baseSaves+1 {
+		t.Errorf("other join wrote to store; saves = %d", len(netStore.saved))
+	}
+
+	// We part → the channel is dropped from the persisted list.
+	e.apply(Event{Type: EvPart, Network: "net", Nick: "me", Channel: "#go"})
+	if got := net0(e).Params.Channels; len(got) != 0 {
+		t.Errorf("autojoin after part = %v, want empty", got)
+	}
+	if len(netStore.saved) != baseSaves+2 {
+		t.Fatalf("self-part saves = %d, want %d", len(netStore.saved), baseSaves+2)
+	}
+}
+
+func TestJoinKeyPersists(t *testing.T) {
+	netStore := &recordingNetStore{}
+	conn := &fakeRuntimeConn{}
+	e := New(Options{Sink: &captureSink{}, Networks: netStore})
+	e.AddNetwork(NetworkParams{ID: "net", Name: "net", Nick: "me"}, conn)
+
+	// /join #secret hunter2 records the key; the self-JOIN commits it.
+	e.runBuiltinCommand(Event{Type: EvCommand, Network: "net", Command: "join", Text: "#secret hunter2"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Channel: "#secret"})
+
+	if got := net0(e).Params.ChannelKeys["#secret"]; got != "hunter2" {
+		t.Fatalf("stored key = %q, want hunter2", got)
+	}
+	last := netStore.saved[len(netStore.saved)-1]
+	if last.ChannelKeys["#secret"] != "hunter2" {
+		t.Errorf("persisted key = %q, want hunter2", last.ChannelKeys["#secret"])
+	}
+
+	// A plain (keyless) re-join must not wipe the stored key.
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Channel: "#secret"})
+	if got := net0(e).Params.ChannelKeys["#secret"]; got != "hunter2" {
+		t.Errorf("keyless re-join wiped key: %q", got)
+	}
+
+	// Parting drops both the channel and its key.
+	e.apply(Event{Type: EvPart, Network: "net", Nick: "me", Channel: "#secret"})
+	if _, ok := net0(e).Params.ChannelKeys["#secret"]; ok {
+		t.Error("part did not drop the join key")
+	}
+}
+
 func TestAddRemoveNetworkLive(t *testing.T) {
 	sink := &captureSink{}
 	conn := &fakeConnector{}
@@ -471,6 +546,38 @@ func TestUpdateNetwork(t *testing.T) {
 	last := netStore.saved[len(netStore.saved)-1]
 	if last.Addr != "new:6697" || last.SASLUser != "acct" {
 		t.Errorf("update not persisted: %+v", last)
+	}
+}
+
+func TestUpdateNetworkPreservesJoinKeys(t *testing.T) {
+	conn := &fakeConnector{}
+	netStore := &recordingNetStore{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn, Networks: netStore})
+	if err := e.AddNetworkLive(NetworkParams{
+		ID: "libera", Name: "libera", Addr: "a:6697", Nick: "me",
+		Channels: []string{"#a", "#b"}, ChannelKeys: map[string]string{"#a": "k1", "#b": "k2"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.apply(Event{Type: EvConnect, Network: "libera", Nick: "me"})
+
+	// A GUI edit (no ChannelKeys on the wire) that drops #b must keep #a's key
+	// and forget #b's.
+	if err := e.UpdateNetwork(NetworkParams{
+		ID: "libera", Name: "libera", Addr: "a:6697", Nick: "me", Channels: []string{"#a"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := e.NetworkConfig("libera")
+	if got.ChannelKeys["#a"] != "k1" {
+		t.Errorf("edit lost #a key: %v", got.ChannelKeys)
+	}
+	if _, ok := got.ChannelKeys["#b"]; ok {
+		t.Errorf("edit kept key for dropped channel #b: %v", got.ChannelKeys)
+	}
+	last := netStore.saved[len(netStore.saved)-1]
+	if last.ChannelKeys["#a"] != "k1" || len(last.ChannelKeys) != 1 {
+		t.Errorf("persisted keys after edit = %v, want {#a:k1}", last.ChannelKeys)
 	}
 }
 

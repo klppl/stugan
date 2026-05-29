@@ -1,5 +1,7 @@
 package core
 
+import "maps"
+
 // NetworkParams fully describes a network connection. It is the unit added
 // at runtime (from the GUI) and persisted, so it carries everything needed
 // to dial — unlike NetworkSpec, which only seeds display state.
@@ -14,6 +16,10 @@ type NetworkParams struct {
 	SASLUser string   `json:"sasl_user"`
 	SASLPass string   `json:"sasl_pass"`
 	Channels []string `json:"channels"`
+	// ChannelKeys maps a channel name (as stored in Channels) to its join key
+	// (+k password), so keyed channels rejoin automatically on (re)connect.
+	// Channels without a key are simply absent from the map.
+	ChannelKeys map[string]string `json:"channel_keys,omitempty"`
 	// ServerPass is the connection password (IRC PASS), used by bouncers
 	// (ZNC/soju) and password-gated servers. Empty disables it.
 	ServerPass string `json:"server_pass,omitempty"`
@@ -30,6 +36,22 @@ type NetworkParams struct {
 	// PEM form) presented during the TLS handshake. Enables CertFP and is
 	// required for SASLExternal. Empty disables the client certificate.
 	CertPEM string `json:"cert_pem,omitempty"`
+}
+
+// clone returns a deep copy of p, duplicating its slice fields so the copy can
+// be handed off (e.g. to the store) without aliasing the live engine state.
+func (p NetworkParams) clone() NetworkParams {
+	c := p
+	if p.Channels != nil {
+		c.Channels = append([]string(nil), p.Channels...)
+	}
+	if p.Perform != nil {
+		c.Perform = append([]string(nil), p.Perform...)
+	}
+	if p.ChannelKeys != nil {
+		c.ChannelKeys = maps.Clone(p.ChannelKeys)
+	}
+	return c
 }
 
 // Connector builds an IRCConn from params, delivering inbound events to the

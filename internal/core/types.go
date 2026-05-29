@@ -139,6 +139,94 @@ func (n *Network) remove(name string) {
 	}
 }
 
+// addAutojoin records a channel in the persisted auto-join list so it is
+// rejoined on the next (re)connect. Only real channels are tracked (queries
+// and status are not auto-joinable). When hasKey is set, key is stored as the
+// channel's join key (+k password) — an empty key clears any previous one;
+// when hasKey is false the stored key (if any) is left untouched, so a server
+// re-join echo never wipes a known key. Returns whether anything changed.
+func (n *Network) addAutojoin(name, key string, hasKey bool) bool {
+	if !isChannelName(name) {
+		return false
+	}
+	changed := true
+	for _, c := range n.Params.Channels {
+		if eqFold(c, name) {
+			changed = false // already present; only a key change can dirty it
+			name = c        // keep the stored casing for the key lookup
+			break
+		}
+	}
+	if changed {
+		n.Params.Channels = append(n.Params.Channels, name)
+	}
+	if hasKey {
+		if n.setChannelKey(name, key) {
+			changed = true
+		}
+	}
+	return changed
+}
+
+// setChannelKey stores (or, for an empty key, clears) a channel's join key,
+// matching the channel case-insensitively. Returns whether the map changed.
+func (n *Network) setChannelKey(name, key string) bool {
+	cur, had := n.lookupChannelKey(name)
+	if key == "" {
+		if !had {
+			return false
+		}
+		n.deleteChannelKey(name)
+		return true
+	}
+	if had && cur == key {
+		return false
+	}
+	if n.Params.ChannelKeys == nil {
+		n.Params.ChannelKeys = map[string]string{}
+	}
+	n.deleteChannelKey(name) // drop any differently-cased prior entry
+	n.Params.ChannelKeys[name] = key
+	return true
+}
+
+// lookupChannelKey returns a channel's stored join key (case-insensitive).
+func (n *Network) lookupChannelKey(name string) (key string, ok bool) {
+	for k, v := range n.Params.ChannelKeys {
+		if eqFold(k, name) {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// deleteChannelKey removes a channel's join key (case-insensitive).
+func (n *Network) deleteChannelKey(name string) {
+	for k := range n.Params.ChannelKeys {
+		if eqFold(k, name) {
+			delete(n.Params.ChannelKeys, k)
+		}
+	}
+}
+
+// removeAutojoin drops a channel (and its join key) from the persisted
+// auto-join list. Returns whether anything changed.
+func (n *Network) removeAutojoin(name string) bool {
+	changed := false
+	for i, c := range n.Params.Channels {
+		if eqFold(c, name) {
+			n.Params.Channels = append(n.Params.Channels[:i], n.Params.Channels[i+1:]...)
+			changed = true
+			break
+		}
+	}
+	if _, had := n.lookupChannelKey(name); had {
+		n.deleteChannelKey(name)
+		changed = true
+	}
+	return changed
+}
+
 // Channel is a chat buffer: a real channel, a private query, or status.
 //
 // State is an opaque per-buffer key/value bag set by plugins via
