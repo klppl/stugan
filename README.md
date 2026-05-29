@@ -61,7 +61,10 @@ docker run -d --name stugan -p 8080:8080 -v stugan-data:/data \
 
 Config, history, scripts, and uploads live in the `/data` volume. Put a
 `config.toml` there with `listen = "0.0.0.0:8080"`; set `public_url` /
-`origin_patterns` when serving from a non-localhost host.
+`origin_patterns` when serving from a non-localhost host. See
+[docs/docker.md](docs/docker.md) for the full run guide (compose, reverse
+proxy + TLS, auth, updates). The image is built and published by
+`.github/workflows/docker.yml`.
 
 ## Configuration
 
@@ -102,6 +105,7 @@ plugin).
 | [storage](docs/storage.md) | SQLite schema, history, search, persistence |
 | [server](docs/server.md) | HTTP/WebSocket server, multi-tenant hub, auth, security |
 | [frontend](docs/frontend.md) | The Vue 3 client architecture |
+| [docker](docs/docker.md) | Pulling the GHCR image and running it on a server |
 | [plugins](docs/plugins.md) | The Lua plugin API |
 | [config](docs/config.md) | Configuration reference |
 
