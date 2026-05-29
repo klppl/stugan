@@ -1305,3 +1305,47 @@ body {
   .members li:hover { background: transparent; }
   .browser-item:hover { background: transparent; }
 }
+
+/* Toasts — transient server-error notices, stacked bottom-right above all
+   other chrome. Producer is the s2c `error` frame (see Connection.pushToast);
+   click to dismiss early, else auto-cleared. Uses --hl as the accent so it
+   reads as an error in every theme. */
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  cursor: pointer;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--hl);
+  border-radius: 6px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.toast:hover {
+  background: var(--bg-alt);
+}
+.toast-msg {
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.35;
+  flex: 1;
+}
+.toast-code {
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+}

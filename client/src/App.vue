@@ -6,6 +6,7 @@ import TopBar from "./components/TopBar.vue";
 import Settings from "./components/Settings.vue";
 import Login from "./components/Login.vue";
 import MagicWord from "./components/MagicWord.vue";
+import Toast from "./components/Toast.vue";
 import { authState, canEnter, needsMagicWord } from "./auth";
 import { ui, closeDrawers } from "./ui";
 
@@ -33,5 +34,6 @@ const showSettings = ref(false);
       @click="closeDrawers"
     />
     <Settings v-if="showSettings" @close="showSettings = false" />
+    <Toast />
   </div>
 </template>
