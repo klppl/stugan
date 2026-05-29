@@ -7,8 +7,10 @@
 # Local runtime data (when STUGAN_HOME points inside the repo for dev)
 /data/
 /scripts/
-/users/          # per-user data/scripts in multi-user mode
-/dev/            # disposable home from `./stugan -home ./dev`
+# per-user data/scripts in multi-user mode
+/users/
+# disposable home from `./stugan -home ./dev`
+/dev/
 config.toml
 
 # SQLite history database (+ WAL/SHM sidecars from journal_mode=WAL)
