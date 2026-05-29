@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { connection, bufKey, type Buffer } from "../connection";
+import { connection, bufKey, type Buffer, type Network } from "../connection";
 import { isMuted, toggleMute } from "../settings";
 import { useContextMenu } from "../contextMenu";
 import { ui, closeDrawers } from "../ui";
@@ -13,7 +13,19 @@ const showAdd = ref(false);
 const settingsFor = ref<string | null>(null);
 const keyDialogFor = ref<{ network: string; buffer: string } | null>(null);
 
-const ctx = useContextMenu<{ network: string; buffer: string }>({ height: 140 });
+const ctx = useContextMenu<{ network: string; buffer: string; kind: string }>({ height: 180 });
+
+// The per-network status buffer ("*status") is folded into the network
+// header rather than shown as its own list item — clicking the network name
+// opens it, while the gear (to the right) still opens network settings.
+const STATUS = "*status";
+
+function statusBuf(net: Network): Buffer | undefined {
+  return net.buffers.find((b) => b.kind === "status");
+}
+function channelBuffers(net: Network): Buffer[] {
+  return net.buffers.filter((b) => b.kind !== "status");
+}
 
 function isActive(network: string, buffer: string): boolean {
   return store.view === "chat" && store.active?.network === network && store.active?.buffer === buffer;
@@ -44,6 +56,12 @@ function keyFromMenu() {
   keyDialogFor.value = { network: p.network, buffer: p.buffer };
   ctx.close();
 }
+function leaveFromMenu() {
+  const p = ctx.state.value?.payload;
+  if (!p) return;
+  connection.send(p.network, p.buffer, "/part");
+  ctx.close();
+}
 </script>
 
 <template>
@@ -51,18 +69,31 @@ function keyFromMenu() {
     <div class="brand">stugan</div>
 
     <div v-for="net in store.networks" :key="net.id" class="network">
-      <div class="network-name" @click="settingsFor = net.id" title="network settings">
-        <span>{{ net.name }} <span class="nick">({{ net.nick }})</span></span>
-        <span class="net-gear" @click.stop="settingsFor = net.id">⚙</span>
+      <div
+        class="network-name"
+        :class="{ active: isActive(net.id, STATUS) }"
+        @click="selectBuffer(net.id, STATUS)"
+        title="server status — click to open; ⚙ for network settings"
+      >
+        <span class="net-label">{{ net.name }} <span class="nick">({{ net.nick }})</span></span>
+        <span class="net-right">
+          <span
+            v-if="statusBuf(net) && statusBuf(net)!.unread > 0 && !isActive(net.id, STATUS)"
+            class="badge"
+            :class="{ highlight: statusBuf(net)!.highlight > 0 }"
+            >{{ statusBuf(net)!.unread }}</span
+          >
+          <span class="net-gear" @click.stop="settingsFor = net.id" title="network settings">⚙</span>
+        </span>
       </div>
       <ul class="buffers">
         <li
-          v-for="buf in net.buffers"
+          v-for="buf in channelBuffers(net)"
           :key="buf.name"
           :class="{ active: isActive(net.id, buf.name), [buf.kind]: true, muted: isMuted(bufKey(net.id, buf.name)) }"
           @click="selectBuffer(net.id, buf.name)"
-          @contextmenu="ctx.onContext({ network: net.id, buffer: buf.name }, $event)"
-          @touchstart.passive="ctx.onTouchStart({ network: net.id, buffer: buf.name }, $event)"
+          @contextmenu="ctx.onContext({ network: net.id, buffer: buf.name, kind: buf.kind }, $event)"
+          @touchstart.passive="ctx.onTouchStart({ network: net.id, buffer: buf.name, kind: buf.kind }, $event)"
           @touchmove.passive="ctx.onTouchMove($event)"
           @touchend="ctx.cancelLp"
           @touchcancel="ctx.cancelLp"
@@ -103,6 +134,14 @@ function keyFromMenu() {
       </button>
       <button class="ctx-item" type="button" @click="keyFromMenu">
         Set encryption key…
+      </button>
+      <button
+        v-if="ctx.state.value.payload.kind === 'channel'"
+        class="ctx-item"
+        type="button"
+        @click="leaveFromMenu"
+      >
+        Leave channel
       </button>
     </div>
   </nav>

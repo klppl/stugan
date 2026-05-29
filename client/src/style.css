@@ -104,6 +104,20 @@ body {
 .network-name:hover {
   color: var(--fg);
 }
+.network-name.active {
+  color: var(--accent);
+}
+.network-name .net-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.network-name .net-right {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .net-gear {
   opacity: 0;
   font-size: 13px;
