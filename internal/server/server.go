@@ -473,6 +473,14 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	case proto.TBacklogFetch:
 		s.handleBacklog(ctx, c, env)
 
+	case proto.TCompleteReq:
+		var d proto.CompleteReq
+		if err := decode(env, &d); err != nil {
+			return // completion is best-effort; ignore malformed
+		}
+		items := c.tenant.Engine.Complete(d.Network, d.Buffer, d.Word)
+		s.reply(c, env.ID, proto.TCompleteRes, proto.CompleteRes{Seq: d.Seq, Items: items})
+
 	case proto.TSearch:
 		s.handleSearch(ctx, c, env)
 
@@ -578,6 +586,37 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		}); err != nil {
 			c.sendError(env.ID, "bad_request", err.Error())
 		}
+
+	case proto.TPluginList:
+		s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
+			Plugins: toPluginInfos(c.tenant.Engine.Plugins()),
+		})
+
+	case proto.TPluginAction:
+		var d proto.PluginAction
+		if err := decode(env, &d); err != nil || d.Name == "" {
+			c.sendError(env.ID, "bad_request", "plugin:action requires name and action")
+			return
+		}
+		var err error
+		switch d.Action {
+		case "load":
+			err = c.tenant.Engine.LoadPlugin(d.Name)
+		case "unload":
+			err = c.tenant.Engine.UnloadPlugin(d.Name)
+		case "reload":
+			err = c.tenant.Engine.ReloadPlugin(d.Name)
+		default:
+			c.sendError(env.ID, "bad_request", "plugin:action requires action load|unload|reload")
+			return
+		}
+		if err != nil {
+			c.sendError(env.ID, "bad_request", err.Error())
+			return
+		}
+		s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
+			Plugins: toPluginInfos(c.tenant.Engine.Plugins()),
+		})
 
 	default:
 		s.log.Debug("ignoring unknown frame", "t", env.T)
@@ -698,7 +737,8 @@ func (s *Server) connectedCount(user string) int {
 // caps lists the optional features this server supports.
 func (s *Server) caps() []string {
 	caps := []string{"uploads", "previews"}
-	caps = append(caps, "search") // every tenant has a history store
+	caps = append(caps, "search")  // every tenant has a history store
+	caps = append(caps, "plugins") // plugin manager (list/load/unload/reload)
 	if s.push != nil {
 		caps = append(caps, "push")
 	}

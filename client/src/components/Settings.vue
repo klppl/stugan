@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { settings, themeNames, installTheme, uninstallTheme, TEMPLATE } from "../settings";
 import { connection } from "../connection";
+import type { PluginInfo } from "../proto/events";
 import { enablePush } from "../pwa";
 import { authState, logout } from "../auth";
 
@@ -9,6 +10,26 @@ const emit = defineEmits<{ close: [] }>();
 const pushMsg = ref("");
 
 const notifSupported = typeof Notification !== "undefined";
+
+// Plugins: the server exposes a manager when it advertises the "plugins" cap.
+// Ask for the current list when the panel opens; the reply lands in
+// connection.store.plugins, and every load/unload/reload refreshes it.
+const hasPlugins = connection.hasCap("plugins");
+const plugins = computed(() => connection.store.plugins);
+onMounted(() => {
+  if (hasPlugins) connection.listPlugins();
+});
+
+// summary is the "what it does" line: the script's own description if it set
+// one via stugan.describe(), otherwise the commands/hooks it registered.
+function summary(p: PluginInfo): string {
+  if (p.description) return p.description;
+  if (!p.loaded) return "not loaded";
+  const parts: string[] = [];
+  if (p.commands?.length) parts.push(p.commands.map((c) => "/" + c).join(" "));
+  if (p.hooks) parts.push(`${p.hooks} hook${p.hooks === 1 ? "" : "s"}`);
+  return parts.join(" · ") || "no commands or hooks";
+}
 
 // Theme installer state.
 const showInstall = ref(false);
@@ -101,6 +122,30 @@ async function enableNotifications() {
         <span>Signed in as {{ authState.user }}</span>
         <button @click="logout">Log out</button>
       </div>
+
+      <!-- Plugin manager: list loaded + available Lua scripts, with controls
+           to load/unload/reload each without restarting the daemon. -->
+      <template v-if="hasPlugins">
+        <h3 class="section">Plugins</h3>
+        <p v-if="!plugins.length" class="hint">No plugins found in the scripts directory.</p>
+        <div v-for="p in plugins" :key="p.name" class="plugin">
+          <div class="plugin-head">
+            <span class="plugin-name">{{ p.name }}</span>
+            <span v-if="p.disabled" class="plugin-badge disabled" title="auto-disabled after repeated errors">disabled</span>
+            <span v-else-if="p.loaded" class="plugin-badge on">loaded</span>
+            <span v-else class="plugin-badge off">off</span>
+            <span class="spacer" />
+            <button v-if="p.loaded" class="link" @click="connection.pluginAction(p.name, 'reload')">reload</button>
+            <button v-if="p.loaded" class="link" @click="connection.pluginAction(p.name, 'unload')">unload</button>
+            <button v-else class="link" @click="connection.pluginAction(p.name, 'load')">load</button>
+          </div>
+          <p class="plugin-desc">{{ summary(p) }}</p>
+        </div>
+        <p class="hint">
+          Scripts live in your <code>scripts/</code> directory. A plugin can
+          describe itself with <code>stugan.describe("…")</code>.
+        </p>
+      </template>
 
       <button class="close" @click="emit('close')">Close</button>
     </div>

@@ -65,6 +65,11 @@ function token(): { word: string; start: number; end: number } {
   return { word, start: pos - word.length, end: pos };
 }
 
+// reqSeq tags each completion pass. A bump invalidates any in-flight plugin
+// reply (from a superseding refresh, or from accept/escape/submit), so a
+// late complete:res can't reopen or mutate a menu the user moved past.
+let reqSeq = 0;
+
 function refresh() {
   const { word, start, end } = token();
   let items: string[] = [];
@@ -93,12 +98,36 @@ function refresh() {
   ac.end = end;
   ac.index = 0;
   ac.open = items.length > 0;
+
+  // Plugins (hook_completion) contribute extra candidates over the wire. The
+  // request is async, so the local menu shows instantly and plugin items are
+  // appended when the reply lands — unless the token has moved on by then.
+  const mine = ++reqSeq;
+  if (props.buffer && word.length >= 1) {
+    connection.requestCompletions(props.network, props.buffer.name, word).then((extra) => {
+      if (mine !== reqSeq || !extra.length) return;
+      const cur = token();
+      if (cur.word !== word) return; // user kept typing; this reply is stale
+      const have = new Set(ac.items);
+      for (const e of extra) {
+        const item = e.endsWith(" ") ? e : e + " ";
+        if (have.has(item)) continue;
+        have.add(item);
+        ac.items.push(item);
+        ac.labels.push(e);
+      }
+      ac.start = cur.start;
+      ac.end = cur.end;
+      ac.open = ac.items.length > 0;
+    });
+  }
 }
 
 function accept(i = ac.index) {
   if (!ac.open || !ac.items[i]) return;
   text.value = text.value.slice(0, ac.start) + ac.items[i] + text.value.slice(ac.end);
   ac.open = false;
+  reqSeq++; // drop any in-flight plugin reply for the token we just replaced
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -120,6 +149,7 @@ function onKeydown(e: KeyboardEvent) {
     }
     if (e.key === "Escape") {
       ac.open = false;
+      reqSeq++;
       return;
     }
   } else if (e.key === "Tab") {
@@ -142,6 +172,7 @@ function submit() {
   connection.sendTyping(props.network, props.buffer.name, "done");
   text.value = "";
   ac.open = false;
+  reqSeq++;
 }
 
 async function onPaste(e: ClipboardEvent) {

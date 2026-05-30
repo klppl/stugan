@@ -6,6 +6,8 @@
 
 local word = stugan.config("word", "ping")
 
+stugan.describe("Auto-reply 'pong' when someone mentions '" .. word .. "'")
+
 stugan.hook_message(function(msg)
   if msg.kind == "privmsg" and not msg.self
      and msg.text:lower():find(word) then

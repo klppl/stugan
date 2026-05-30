@@ -39,6 +39,13 @@ stugan.hook_message(fn)
 -- fn(input, ctx) -> input | nil   (input is the raw text the user sent)
 stugan.hook_input(fn)
 
+-- Extend tab-completion. fn(word, ctx) -> array of candidate strings | nil
+-- where `word` is the partial token under the cursor. Each candidate is a
+-- full replacement token (the client appends a space). Results from every
+-- completion hook are gathered and merged into the client's built-in
+-- nick/channel/emoji/command menu.
+stugan.hook_completion(fn)
+
 -- Listen to signals. event is "join","part","quit","nick","connect",
 -- "disconnect","topic","mode", ... fn(signal) -> ignored (notify-only)
 stugan.hook_signal(event, fn)
@@ -86,7 +93,8 @@ the message everywhere downstream — storage, UI, notifications. Returning
 
 ## 3.4 The context table (`ctx`)
 
-Passed to `hook_command` and `hook_input`, describing where the user acted:
+Passed to `hook_command`, `hook_input`, and `hook_completion`, describing
+where the user acted:
 
 ```lua
 ctx = {
@@ -156,7 +164,18 @@ stugan.log.warn("…"); stugan.log.error("…"); stugan.log.debug("…")
 
 -- Identity:
 stugan.script_name   -- this script's basename, e.g. "greet"
+
+-- Self-description. Call at the top level to give the plugin a one-line
+-- summary shown in the web client's plugin manager (Settings → Plugins).
+stugan.describe("auto-reply 'pong' when someone says 'ping'")
 ```
+
+The plugin manager in **Settings → Plugins** lists every script in the scripts
+directory — loaded and not — with its description (or, lacking one, the
+commands and hook count it registered) and buttons to **load**, **unload**, or
+**reload** it at runtime. Reloading re-reads the file from disk without
+restarting the daemon or dropping IRC connections (the same teardown the
+fsnotify watcher uses on save).
 
 ## 3.6.1 Crypto primitives
 
@@ -212,8 +231,10 @@ FiSH-style Blowfish-CBC encryption for IRC.
   and the script flagged. Protects the single plugin goroutine.
 - **Sandboxing:** `[plugins].sandbox` knob. `false` (single-user default):
   full Lua stdlib, but each load is logged at WARN noting full-stdlib access.
-  `true`: a restricted environment removing `os.execute`, `io`, `package`,
-  raw `loadfile`/`dofile`, etc. (allowlist TBD in Phase 5).
+  `true`: a restricted environment that removes the globals `io`, `package`,
+  `require`, `load`, `loadstring`, `loadfile`, `dofile`, and the
+  process-affecting `os.*` functions (`execute`, `exit`, `remove`, `rename`,
+  `setenv`, `tmpname`, `getenv`). The rest of the Lua stdlib stays available.
   > TODO(multi-user): in multi-user mode sandbox defaults to `true`; for
   > hard isolation, a WASM host (wazero) implements the same `PluginHost`
   > interface — no API changes for script authors using the documented
@@ -252,6 +273,23 @@ stugan.hook_message(function(msg)
     stugan.message(msg.network, msg.buffer, msg.from .. ": pong")
   end
   return msg
+end)
+```
+
+### team_mentions.lua — extend tab-completion
+
+```lua
+-- Complete "@team" group mentions the client knows nothing about. Typing
+-- "@de<Tab>" offers "@dev"; the candidates merge into the normal menu.
+local GROUPS = { "@dev", "@ops", "@all", "@oncall" }
+
+stugan.hook_completion(function(word, ctx)
+  if word:sub(1, 1) ~= "@" then return end
+  local out = {}
+  for _, g in ipairs(GROUPS) do
+    if g:sub(1, #word) == word then out[#out + 1] = g end
+  end
+  return out
 end)
 ```
 
@@ -295,12 +333,31 @@ key…" affordance in the web UI just works without you copying anything by
 hand. Edits and deletions are preserved across restarts: a missing file is
 only re-installed if the script with that exact name doesn't exist.
 
+### ignore.lua — server-side per-nick ignore
+
+IRC has no native IGNORE, so this drops messages **in the engine** via
+`hook_message` before they are stored, counted, or turned into
+highlights/notifications — an ignored nick leaves no trace, unlike a
+client-side hide. The list is persisted per-network in `stugan.kv`.
+Commands: `/ignore` (list), `/ignore <nick> …` (add), `/unignore <nick> …`
+(remove). See `internal/scripts/ignore.lua`.
+
+**Bundled and auto-installed** the same way as fish.lua. The web UI's
+right-click "Ignore" / "Unignore" on a member sends these commands, so the
+daemon is the single source of truth — there is no separate client-side
+ignore list.
+
 ## 3.9 Decisions (locked in Phase 5)
 
 1. Global table name is `stugan`, no alias.
 2. Command hooks use `fn(args, ctx)` with pre-split `args` and a structured
    `ctx` (network, buffer, kind, nick).
-3. `hook_completion` and `hook_modifier` are deferred past v1.
+3. `hook_completion` extends the client's tab-completion (candidates are
+   gathered server-side and merged into the menu over the wire). A separate
+   weechat-style `hook_modifier` is **not** provided: `hook_message`
+   (incoming) and `hook_input` (outgoing) already are the modifier hooks —
+   they mutate or drop text in flight — so a named-modifier API would only
+   duplicate them.
 4. The KV store is per-script, SQLite-backed (`plugin_kv` table), and
    survives both hot-reload and daemon restart. The host caches values in
    memory for fast access and writes through on every set/delete.

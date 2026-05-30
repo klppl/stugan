@@ -28,15 +28,19 @@ const (
 	TTyping       = "typing"        // s2c (and c2s)
 	TReact        = "react"         // s2c (and c2s) — emoji reactions
 	TRedact       = "redact"        // s2c (and c2s) — message redaction
+	TPluginList   = "plugin:list"   // s2c (answers c2s plugin:list/plugin:action)
+	TCompleteRes  = "complete:res"  // s2c (answers c2s complete:req)
 	TError        = "error"         // s2c
 
 	TMsgSend      = "msg:send"      // c2s
+	TCompleteReq  = "complete:req"  // c2s — ask plugins for tab-completion candidates
 	TBacklogFetch = "backlog:fetch" // c2s
 	TSearch       = "search"        // c2s
 	TNetAdd       = "net:add"       // c2s
 	TNetEdit      = "net:edit"      // c2s
 	TNetConnect   = "net:connect"   // c2s
 	TList         = "list"          // c2s
+	TPluginAction = "plugin:action" // c2s — load/unload/reload a plugin
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -283,6 +287,53 @@ type NetConfig struct {
 	SASLExternal bool     `json:"sasl_external"`
 	CertPEM      string   `json:"cert_pem"`
 	Channels     []string `json:"channels"`
+}
+
+// PluginAction is a client→server request to load, unload, or reload a
+// plugin script at runtime. Action is "load", "unload", or "reload"; Name
+// is a bare script name (the filename without ".lua"). The reply is a
+// plugin:list frame with the refreshed list.
+type PluginAction struct {
+	Name   string `json:"name"`
+	Action string `json:"action"`
+}
+
+// PluginInfo is the wire projection of core.PluginInfo: one row in the
+// plugin manager. Loaded is false for *.lua files present in the scripts
+// dir but not currently running.
+type PluginInfo struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Loaded      bool     `json:"loaded"`
+	Disabled    bool     `json:"disabled,omitempty"`
+	Errors      int      `json:"errors,omitempty"`
+	Commands    []string `json:"commands,omitempty"`
+	Hooks       int      `json:"hooks"`
+}
+
+// PluginListResp answers a plugin:list request (and every plugin:action),
+// carrying the full set of known plugins.
+type PluginListResp struct {
+	Plugins []PluginInfo `json:"plugins"`
+}
+
+// CompleteReq asks the plugin host for tab-completion candidates for the
+// partial Word the user is typing in (Network, Buffer). Sent on Tab and as
+// the user keeps typing. Seq lets the client discard a stale reply that
+// arrives after the token has already changed.
+type CompleteReq struct {
+	Network string `json:"network"`
+	Buffer  string `json:"buffer"`
+	Word    string `json:"word"`
+	Seq     int    `json:"seq"`
+}
+
+// CompleteRes answers a CompleteReq with the plugin-contributed candidates,
+// echoing the request's Seq. Items are full replacement tokens; the client
+// merges them into its local nick/channel/emoji/command menu.
+type CompleteRes struct {
+	Seq   int      `json:"seq"`
+	Items []string `json:"items"`
 }
 
 // WireError is a server→client error, correlated to a request id when set

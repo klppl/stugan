@@ -1,6 +1,9 @@
 package core
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // IRCConn is core's view of a single network connection. It is implemented
 // in internal/irc; the underlying IRC library never leaks past that
@@ -28,6 +31,19 @@ type ConnHandler interface {
 	HandleEvent(ev Event)
 }
 
+// PluginInfo describes one plugin script for the management UI. It is a
+// read-only projection the host builds on demand; the runtime types (LState,
+// hooks) never leak into core.
+type PluginInfo struct {
+	Name        string   // script identity (filename without .lua)
+	Description string   // text the script declared via stugan.describe()
+	Loaded      bool     // a *.lua file present and currently running
+	Disabled    bool     // auto-disabled after repeated runtime errors
+	Errors      int      // runtime errors raised since it was (re)loaded
+	Commands    []string // /command names it registered
+	Hooks       int      // message/input/signal/timer hooks it registered
+}
+
 // PluginHost is core's view of the plugin runtime (implemented in
 // internal/plugin in Phase 5). For mutable events the Engine calls
 // Dispatch before committing; the runtime type never leaks into core.
@@ -38,14 +54,33 @@ type PluginHost interface {
 	Dispatch(ctx context.Context, ev Event) (out Event, keep bool)
 	// Commands returns the /command names scripts have registered.
 	Commands() []string
+	// Complete returns plugin-contributed tab-completion candidates for the
+	// partial word being typed in (network, buffer). Each candidate is a full
+	// replacement token. Empty when no completion hook matches. Read-only.
+	Complete(word, network, buffer string) []string
+	// Plugins lists every script the host knows about — both the loaded
+	// ones and the *.lua files in the scripts dir that are not loaded — for
+	// the management UI.
+	Plugins() []PluginInfo
+	// LoadPlugin loads (or reloads) the script named name from the scripts
+	// dir. UnloadPlugin tears one down; ReloadPlugin re-reads it from disk.
+	// name is a bare script name (no path separators).
+	LoadPlugin(name string) error
+	UnloadPlugin(name string) error
+	ReloadPlugin(name string) error
 	// Close releases the runtime.
 	Close() error
 }
 
 // nopHost is the default PluginHost: it passes every event through
-// unchanged. Used until the Lua host is wired in Phase 5.
+// unchanged. Used when the Lua host is disabled.
 type nopHost struct{}
 
 func (nopHost) Dispatch(_ context.Context, ev Event) (Event, bool) { return ev, true }
 func (nopHost) Commands() []string                                 { return nil }
+func (nopHost) Complete(_, _, _ string) []string                   { return nil }
+func (nopHost) Plugins() []PluginInfo                              { return nil }
+func (nopHost) LoadPlugin(string) error                            { return errors.New("plugins are disabled") }
+func (nopHost) UnloadPlugin(string) error                          { return errors.New("plugins are disabled") }
+func (nopHost) ReloadPlugin(string) error                          { return errors.New("plugins are disabled") }
 func (nopHost) Close() error                                       { return nil }

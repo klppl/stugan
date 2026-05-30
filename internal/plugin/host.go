@@ -13,9 +13,11 @@ package plugin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -77,19 +79,22 @@ type Host struct {
 	// The fields below are touched only on the plugin goroutine (during New
 	// before the goroutine starts, and via do() afterwards), so they need no
 	// locking.
-	scripts     map[string]*script
-	kv          map[string]map[string]string // per-script KV, survives reload
-	msgHooks    []*hook
-	inputHooks  []*hook
-	signalHooks map[string][]*hook
-	cmdHooks    map[string]*hook
-	timers      []*timerHook
-	nextID      int
-	unhookers   map[int]func()
+	scripts         map[string]*script
+	kv              map[string]map[string]string // per-script KV, survives reload
+	msgHooks        []*hook
+	inputHooks      []*hook
+	completionHooks []*hook
+	signalHooks     map[string][]*hook
+	cmdHooks        map[string]*hook
+	timers          []*timerHook
+	nextID          int
+	unhookers       map[int]func()
 }
 
 type script struct {
 	name     string
+	path     string // source file, for reload
+	desc     string // set by stugan.describe()
 	L        *lua.LState
 	errs     int
 	disabled bool
@@ -189,6 +194,147 @@ func (h *Host) Commands() []string {
 		}
 	})
 	return cmds
+}
+
+// Complete implements core.PluginHost. It runs the registered hook_completion
+// callbacks on the plugin goroutine and gathers their candidates.
+func (h *Host) Complete(word, network, buffer string) []string {
+	var out []string
+	h.do(func() { out = h.runCompletionHooks(word, network, buffer) })
+	return out
+}
+
+// Plugins implements core.PluginHost. It merges the loaded scripts with the
+// *.lua files in the scripts dir that are not currently loaded, so the
+// management UI can show both running plugins and ones available to load.
+func (h *Host) Plugins() []core.PluginInfo {
+	var out []core.PluginInfo
+	h.do(func() {
+		seen := map[string]bool{}
+		for name, s := range h.scripts {
+			seen[name] = true
+			out = append(out, core.PluginInfo{
+				Name:        name,
+				Description: s.desc,
+				Loaded:      true,
+				Disabled:    s.disabled,
+				Errors:      s.errs,
+				Commands:    h.commandsFor(s),
+				Hooks:       h.hookCount(s),
+			})
+		}
+		// Unloaded files on disk: present but not running.
+		if h.dir != "" {
+			entries, _ := os.ReadDir(h.dir)
+			for _, e := range entries {
+				if e.IsDir() || !strings.HasSuffix(e.Name(), ".lua") {
+					continue
+				}
+				if name := scriptName(e.Name()); !seen[name] {
+					seen[name] = true
+					out = append(out, core.PluginInfo{Name: name})
+				}
+			}
+		}
+	})
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// commandsFor returns the /command names registered by script s (plugin
+// goroutine).
+func (h *Host) commandsFor(s *script) []string {
+	var cmds []string
+	for name, hk := range h.cmdHooks {
+		if hk.script == s {
+			cmds = append(cmds, name)
+		}
+	}
+	sort.Strings(cmds)
+	return cmds
+}
+
+// hookCount totals the message/input/signal/timer hooks owned by script s
+// (plugin goroutine). Command hooks are reported separately via Commands.
+func (h *Host) hookCount(s *script) int {
+	n := 0
+	for _, hk := range h.msgHooks {
+		if hk.script == s {
+			n++
+		}
+	}
+	for _, hk := range h.inputHooks {
+		if hk.script == s {
+			n++
+		}
+	}
+	for _, hk := range h.completionHooks {
+		if hk.script == s {
+			n++
+		}
+	}
+	for _, hks := range h.signalHooks {
+		for _, hk := range hks {
+			if hk.script == s {
+				n++
+			}
+		}
+	}
+	for _, t := range h.timers {
+		if t.script == s {
+			n++
+		}
+	}
+	return n
+}
+
+// LoadPlugin loads (or reloads) the named script from the scripts dir.
+func (h *Host) LoadPlugin(name string) error {
+	path, err := h.scriptPath(name)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("no such plugin %q", name)
+	}
+	h.do(func() { h.loadScript(path) })
+	if !h.isLoaded(name) {
+		return fmt.Errorf("plugin %q failed to load (check the log)", name)
+	}
+	return nil
+}
+
+// UnloadPlugin tears down a loaded script's hooks and LState.
+func (h *Host) UnloadPlugin(name string) error {
+	if _, err := h.scriptPath(name); err != nil {
+		return err
+	}
+	if !h.isLoaded(name) {
+		return fmt.Errorf("plugin %q is not loaded", name)
+	}
+	h.do(func() { h.unloadScript(name) })
+	return nil
+}
+
+// ReloadPlugin re-reads a script from disk, dropping its old hooks first.
+func (h *Host) ReloadPlugin(name string) error { return h.LoadPlugin(name) }
+
+// scriptPath resolves a bare script name to its file, rejecting anything
+// that looks like a path (traversal guard — name comes from the client).
+func (h *Host) scriptPath(name string) (string, error) {
+	if name == "" || name != filepath.Base(name) || strings.ContainsAny(name, `/\`) {
+		return "", fmt.Errorf("invalid plugin name %q", name)
+	}
+	if h.dir == "" {
+		return "", errors.New("no scripts directory")
+	}
+	return filepath.Join(h.dir, name+".lua"), nil
+}
+
+func (h *Host) isLoaded(name string) bool {
+	loaded := false
+	h.do(func() { _, loaded = h.scripts[name] })
+	return loaded
 }
 
 // Close implements core.PluginHost: stop watching, stop timers, drain the
@@ -307,6 +453,39 @@ func (h *Host) runCommand(ev core.Event) (core.Event, bool) {
 		L.Push(ctxTable(L, ev.Network, ev.Channel, nick))
 	}, 0)
 	return ev, false // consumed
+}
+
+// runCompletionHooks gathers candidates from hook_completion callbacks, in
+// priority order. Each hook is handed the partial word and the buffer ctx and
+// returns an array of replacement strings (or nil); the results are flattened.
+func (h *Host) runCompletionHooks(word, network, buffer string) []string {
+	if len(h.completionHooks) == 0 {
+		return nil
+	}
+	nick := h.api.Nick(network)
+	var out []string
+	for _, hk := range h.completionHooks {
+		if hk.script.disabled {
+			continue
+		}
+		ret, ok := h.call(hk.script, hk.fn, func(L *lua.LState) {
+			L.Push(lua.LString(word))
+			L.Push(ctxTable(L, network, buffer, nick))
+		}, 1)
+		if !ok {
+			continue
+		}
+		tbl, ok := ret.(*lua.LTable)
+		if !ok {
+			continue
+		}
+		tbl.ForEach(func(_, v lua.LValue) {
+			if s, ok := v.(lua.LString); ok && string(s) != "" {
+				out = append(out, string(s))
+			}
+		})
+	}
+	return out
 }
 
 // runSignalHooks notifies hook_signal subscribers for an event.

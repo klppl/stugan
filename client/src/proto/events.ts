@@ -17,14 +17,18 @@ export const T = {
   Typing: "typing",
   React: "react",
   Redact: "redact",
+  PluginList: "plugin:list",
+  CompleteRes: "complete:res",
   Error: "error",
   MsgSend: "msg:send",
+  CompleteReq: "complete:req",
   BacklogFetch: "backlog:fetch",
   Search: "search",
   NetAdd: "net:add",
   NetEdit: "net:edit",
   NetConnect: "net:connect",
   List: "list",
+  PluginAction: "plugin:action",
 } as const;
 
 export interface Envelope<D = unknown> {
@@ -214,6 +218,40 @@ export interface NetConfig {
   sasl_external: boolean;
   cert_pem: string;
   channels: string[];
+}
+
+export interface PluginAction {
+  name: string;
+  action: "load" | "unload" | "reload";
+}
+
+export interface PluginInfo {
+  name: string;
+  description?: string;
+  loaded: boolean;
+  disabled?: boolean;
+  errors?: number;
+  commands?: string[];
+  hooks: number;
+}
+
+export interface PluginListResp {
+  plugins: PluginInfo[];
+}
+
+// CompleteReq asks the plugin host for tab-completion candidates for the
+// partial `word`. `seq` lets the client discard a stale reply.
+export interface CompleteReq {
+  network: string;
+  buffer: string;
+  word: string;
+  seq: number;
+}
+
+// CompleteRes returns plugin completion candidates, echoing the request seq.
+export interface CompleteRes {
+  seq: number;
+  items: string[];
 }
 
 export interface WireError {

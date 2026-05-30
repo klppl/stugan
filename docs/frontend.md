@@ -48,7 +48,7 @@ a "new messages" line above it, cleared on navigation.
 | Module | Holds |
 |--------|-------|
 | `connection.store` | networks, buffers, messages, active buffer, reactions, typing — ephemeral, re-synced on reconnect |
-| `settings.ts` | theme, custom themes, muted buffers, ignored nicks, fold-events, colored-nicks — **persisted to localStorage** |
+| `settings.ts` | theme, custom themes, muted buffers, fold-events, colored-nicks — **persisted to localStorage** (per-nick ignore is server-side, see the bundled `ignore.lua`) |
 | `auth.ts` | auth-enabled/authenticated, user, magic-word required/granted; `refresh()`, `login()`, `logout()`, `submitMagicWord()` |
 | `ui.ts` | `sidebarOpen`, `membersOpen`, `isMobile` (responsive drawers, 720px breakpoint) |
 
@@ -63,9 +63,9 @@ explicit store library.
 | `Sidebar.vue` | Network/buffer list, unread/highlight badges, lock icon, context menu |
 | `ChatView.vue` | Message view: day grouping, event folding, unread divider, jump/scroll, drag-drop upload |
 | `MessageItem.vue` | One line: colored nick, links, image/video embeds, OG preview cards, reactions, redact button |
-| `ChatInput.vue` | Input with Tab autocomplete (nicks/emoji/commands), typing indicator, paste/drop upload |
+| `ChatInput.vue` | Input with Tab autocomplete (nicks/emoji/commands, plus plugin `hook_completion` candidates), typing indicator, paste/drop upload |
 | `TopBar.vue` | Menu/search/mentions/members toggles, network status, settings |
-| `Settings.vue` | Theme + custom-theme installer, notifications/push, mutes/ignores, network list, logout |
+| `Settings.vue` | Theme + custom-theme installer, notifications/push, mutes, network list, logout |
 | `NetworkSettings.vue` | Edit a network (host/TLS/nick/SASL/cert/perform/channels), connect/disconnect, channel browser, delete |
 | `AddNetwork.vue` | Add-network form |
 | `ChannelBrowser.vue` | LIST browser: filterable, sortable channel list; click to join |

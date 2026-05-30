@@ -176,6 +176,25 @@ func (e *Engine) SetHost(h PluginHost) {
 	e.host = h
 }
 
+// Plugins lists the plugin scripts the host knows about, for the management
+// UI. Safe to call concurrently; the host is fixed after startup.
+func (e *Engine) Plugins() []PluginInfo { return e.host.Plugins() }
+
+// Complete returns plugin-contributed tab-completion candidates for the
+// partial word being typed in (network, buffer). Read-only; the host runs
+// the completion hooks on its own goroutine, so this is safe to call from
+// server goroutines while the engine loop runs.
+func (e *Engine) Complete(network, buffer, word string) []string {
+	return e.host.Complete(word, network, buffer)
+}
+
+// LoadPlugin, UnloadPlugin, and ReloadPlugin manage a single script at
+// runtime by name (no path separators). They delegate to the plugin host,
+// which runs them on its own goroutine; IRC connections are untouched.
+func (e *Engine) LoadPlugin(name string) error   { return e.host.LoadPlugin(name) }
+func (e *Engine) UnloadPlugin(name string) error { return e.host.UnloadPlugin(name) }
+func (e *Engine) ReloadPlugin(name string) error { return e.host.ReloadPlugin(name) }
+
 // AddNetwork registers a pre-built connection and its initial state. Call
 // before Run (used for networks loaded at startup).
 func (e *Engine) AddNetwork(p NetworkParams, conn IRCConn) {
@@ -1143,6 +1162,9 @@ func (e *Engine) SnapshotNetwork(id string) *Network {
 
 // bufferKind classifies a buffer name into channel vs query.
 func bufferKind(name string) ChannelKind {
+	if name == StatusBuffer {
+		return KindStatus
+	}
 	if isChannelName(name) {
 		return KindChannel
 	}

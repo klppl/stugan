@@ -14,8 +14,12 @@ import _ "embed"
 //go:embed fish.lua
 var Fish []byte
 
+//go:embed ignore.lua
+var Ignore []byte
+
 // Builtins maps a script filename to its embedded contents. The hub uses
 // this map to seed a user's scripts directory at startup.
 var Builtins = map[string][]byte{
-	"fish.lua": Fish,
+	"fish.lua":   Fish,
+	"ignore.lua": Ignore,
 }
