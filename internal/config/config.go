@@ -65,6 +65,13 @@ type AuthConfig struct {
 // AuthEnabled reports whether multi-user authentication is in effect.
 func (c *Config) AuthEnabled() bool { return len(c.Users) > 0 }
 
+// PluginsEnabled reports whether the Lua plugin host should run. It defaults
+// to true (the documented default) when [plugins].enabled is omitted, while
+// still honouring an explicit `enabled = false`.
+func (c *Config) PluginsEnabled() bool {
+	return c.Plugins.Enabled == nil || *c.Plugins.Enabled
+}
+
 // EffectiveUsers returns the users to run: the configured accounts, or a
 // single implicit "default" user owning the top-level networks.
 func (c *Config) EffectiveUsers() []UserConfig {
@@ -106,8 +113,9 @@ type LogConfig struct {
 
 // PluginsConfig controls the Lua plugin host.
 type PluginsConfig struct {
-	// Enabled toggles the plugin host entirely.
-	Enabled bool `toml:"enabled"`
+	// Enabled toggles the plugin host entirely. A nil pointer (the field
+	// omitted from config) means "use the default" — see PluginsEnabled.
+	Enabled *bool `toml:"enabled"`
 	// Sandbox, when true, restricts the Lua stdlib exposed to scripts.
 	// Single-user defaults to false (full stdlib) but the load is logged.
 	// TODO(multi-user): default to true and back with a WASM host.

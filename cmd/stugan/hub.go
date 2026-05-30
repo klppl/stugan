@@ -153,7 +153,7 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 		})
 		eng.AddSink(db)
 
-		if cfg.Plugins.Enabled {
+		if cfg.PluginsEnabled() {
 			host, err := plugin.New(plugin.Options{
 				API:      eng.API(),
 				Logger:   log.With("user", u.Name),

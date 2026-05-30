@@ -73,7 +73,7 @@ func run() error {
 		"home", cfg.Home(),
 		"listen", cfg.Server.Listen,
 		"networks", len(cfg.Networks),
-		"plugins_enabled", cfg.Plugins.Enabled,
+		"plugins_enabled", cfg.PluginsEnabled(),
 	)
 
 	// Root context cancelled on SIGINT/SIGTERM, or when either long-running
