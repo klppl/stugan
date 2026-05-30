@@ -38,6 +38,18 @@ function doSearch() {
 // mentions render their own title inside ChatView). The topic is click-to-edit
 // for channels, mirroring the old standalone chat-header row.
 const showBufferHeader = computed(() => store.view === "chat" && !!buffer.value);
+
+// The per-network status buffer ("*status") is folded into the network header
+// in the sidebar, so showing its literal name here would read "*status". Show
+// the network name instead, matching what the user clicked to get here.
+const bufferTitle = computed(() => {
+  const b = buffer.value;
+  if (!b) return "";
+  if (b.kind === "status") {
+    return store.networks.find((n) => n.id === store.active?.network)?.name ?? b.name;
+  }
+  return b.name;
+});
 const editingTopic = ref(false);
 const topicDraft = ref("");
 const topicInput = ref<HTMLInputElement | null>(null);
@@ -68,7 +80,7 @@ function saveTopic() {
     </button>
 
     <template v-if="showBufferHeader && buffer">
-      <span class="buffer-name">{{ buffer.name }}</span>
+      <span class="buffer-name">{{ bufferTitle }}</span>
       <input
         v-if="editingTopic"
         ref="topicInput"

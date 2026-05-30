@@ -61,6 +61,36 @@ body {
   overscroll-behavior: none;
 }
 
+/* Slim, theme-blended scrollbars. The thumb is a translucent tint of the
+   foreground colour so it reads against any --bg and only firms up on hover.
+   Firefox uses the standard properties; Chromium/WebKit the pseudo-elements. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--fg-dim) 35%, transparent)
+    transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg-dim) 35%, transparent);
+  border-radius: 6px;
+  /* Inset the thumb so it doesn't touch the edges of the track. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg-dim) 60%, transparent);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 .app {
   display: flex;
   height: 100%;
@@ -887,6 +917,57 @@ body {
 .settings .spacer {
   flex: 1;
 }
+.settings h3.section {
+  margin: 8px 0 0;
+  font-size: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.plugin {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.plugin-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.plugin-name {
+  font-weight: 600;
+  font-family: ui-monospace, monospace;
+}
+.plugin-badge {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+.plugin-badge.on {
+  background: var(--accent);
+  color: var(--bg);
+}
+.plugin-badge.off {
+  background: var(--border);
+  color: var(--fg-dim);
+}
+.plugin-badge.disabled {
+  background: var(--hl);
+  color: #fff;
+}
+.plugin-desc {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.plugin-head .link {
+  font-size: 13px;
+}
 
 /* Buffer context menu (right-click in the sidebar). Floats above everything
    at fixed coordinates; openMenu() in Sidebar.vue clamps the coords so the
@@ -940,11 +1021,6 @@ body {
   background: var(--border);
   margin: 4px 0;
 }
-.members li.ignored {
-  opacity: 0.4;
-  text-decoration: line-through;
-}
-
 .add-network {
   display: block;
   width: calc(100% - 24px);

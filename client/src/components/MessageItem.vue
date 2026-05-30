@@ -51,7 +51,7 @@ function doRedact() {
 
 function time(iso: string): string {
   if (!iso) return "";
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 // Membership churn (join/part/quit/nick) and true system notices both render
