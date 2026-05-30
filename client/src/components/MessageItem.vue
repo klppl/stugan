@@ -83,6 +83,16 @@ function preview(u: string): Preview | null {
   return e && e !== "loading" && e !== "error" ? (e as Preview) : null;
 }
 
+// The bare host (sans www.) shown as a small label above the title, giving
+// the card some provenance the way Slack/Discord unfurls do.
+function host(u: string): string {
+  try {
+    return new URL(u).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
 // nickCtx is provided by ChatView; it forwards right-click and long-press
 // on a sender nick into the same buffer-list context menu (WHOIS, ignore,
 // DM, mode shortcuts, kick, …). Falls back to a no-op object so this
@@ -158,16 +168,19 @@ const nickCtx = inject<NickCtx>("nickCtx", {
       </template>
     </div>
 
-    <!-- link previews -->
-    <template v-for="u in links" :key="'p' + u">
-      <a v-if="preview(u)" :href="u" target="_blank" rel="noopener noreferrer" class="preview-card">
-        <img v-if="preview(u)!.image" :src="proxied(preview(u)!.image)" class="preview-img" loading="lazy" alt="" />
-        <span class="preview-text">
-          <span class="preview-title">{{ preview(u)!.title }}</span>
-          <span class="preview-desc">{{ preview(u)!.description }}</span>
-        </span>
-      </a>
-    </template>
+    <!-- link previews: always break onto their own full-width row -->
+    <div v-if="links.some((u) => preview(u))" class="previews">
+      <template v-for="u in links" :key="'p' + u">
+        <a v-if="preview(u)" :href="u" target="_blank" rel="noopener noreferrer" class="preview-card">
+          <img v-if="preview(u)!.image" :src="proxied(preview(u)!.image)" class="preview-img" loading="lazy" alt="" />
+          <span class="preview-text">
+            <span v-if="host(u)" class="preview-host">{{ host(u) }}</span>
+            <span class="preview-title">{{ preview(u)!.title }}</span>
+            <span v-if="preview(u)!.description" class="preview-desc">{{ preview(u)!.description }}</span>
+          </span>
+        </a>
+      </template>
+    </div>
 
     <!-- reactions -->
     <div v-if="reactions.length" class="reactions">
