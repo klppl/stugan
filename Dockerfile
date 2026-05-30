@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 
 # --- Stage 1: build the Vue client -----------------------------------------
-FROM node:22-alpine AS client
+# Output is plain JS/CSS (arch-independent), so always build on the native
+# builder platform — never under QEMU emulation.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS client
 WORKDIR /client
 COPY client/package.json client/package-lock.json ./
 RUN npm ci
@@ -9,12 +11,18 @@ COPY client/ ./
 RUN npm run build
 
 # --- Stage 2: build the Go daemon (static, pure-Go SQLite → CGO off) -------
-FROM golang:1.26-alpine AS build
+# Build on the native builder platform and cross-compile to the target arch.
+# CGO is off, so GOARCH cross-compilation is free and avoids emulating the
+# (very slow) arm64 compile under QEMU.
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.buildVersion=docker" -o /out/stugan ./cmd/stugan
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags "-s -w -X main.buildVersion=docker" -o /out/stugan ./cmd/stugan
 
 # --- Stage 3: minimal runtime ----------------------------------------------
 FROM alpine:3.20
