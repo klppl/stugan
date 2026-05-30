@@ -1,6 +1,8 @@
 -- greet.lua — a slash-command plus a content filter.
 -- Proposed API (Phase 5); see docs/plugins.md.
 
+stugan.describe("/greet <nick> to say hello; drops messages mentioning 'spoiler'")
+
 -- /greet <nick>  → say hello to <nick> from the current buffer's network.
 stugan.hook_command("greet", function(args, ctx)
   if not args[1] then

@@ -1,6 +1,8 @@
 -- auto_away.lua — set AWAY after an idle period, clear it on our next line.
 -- Proposed API (Phase 5); see docs/plugins.md.
 
+stugan.describe("Set AWAY after 10 minutes idle; clear it on your next line")
+
 local IDLE_MS = 10 * 60 * 1000
 local last = {} -- network name -> unix seconds of our last sent line
 

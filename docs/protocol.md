@@ -40,6 +40,8 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `backlog`       | `BacklogResp`  | a page of history (answers `backlog:fetch`) |
 | `search:result` | `SearchResp`   | search results (answers `search`) |
 | `list:result`   | `ListResp`     | channel-browser results (answers `list`) |
+| `plugin:list`   | `PluginListResp` | the plugin manager list (answers `plugin:list` and `plugin:action`) |
+| `complete:res`  | `CompleteRes`  | plugin tab-completion candidates (answers `complete:req`) |
 | `error`         | `WireError`    | `{code, message}`, correlated to a request `id` |
 
 ### Client → server
@@ -53,6 +55,9 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `net:edit`      | `NetConfig`    | apply settings changes to a network |
 | `net:connect`   | `NetConnect`   | connect/disconnect a network |
 | `net:info`      | (ref)          | request a network's full config |
+| `plugin:list`   | (none)         | request the plugin manager list |
+| `plugin:action` | `PluginAction` | load/unload/reload a plugin by name |
+| `complete:req`  | `CompleteReq`  | ask plugins for tab-completion candidates (`seq`-correlated) |
 
 ### Bidirectional
 
@@ -128,6 +133,15 @@ type NetRemove  struct { Network string }
 type Typing struct { Network, Buffer, Nick, State string }   // State: active|paused|done
 type React  struct { Network, Buffer, Target, Nick, Reaction string }  // Target is a msgid
 type Redact struct { Network, Buffer, Target, By, Reason string }
+
+type PluginAction struct { Name, Action string }   // Action: load|unload|reload
+type PluginInfo struct {
+    Name, Description string
+    Loaded, Disabled bool
+    Errors, Hooks    int
+    Commands         []string   // /command names it registered
+}
+type PluginListResp struct { Plugins []PluginInfo }
 ```
 
 `msg:send` whose `Text` begins with `/` is parsed server-side as a command

@@ -63,6 +63,23 @@ func toNetworkDTO(n *core.Network) proto.NetworkDTO {
 	}
 }
 
+// toPluginInfos projects the engine's plugin list onto its wire form.
+func toPluginInfos(ps []core.PluginInfo) []proto.PluginInfo {
+	out := make([]proto.PluginInfo, len(ps))
+	for i, p := range ps {
+		out[i] = proto.PluginInfo{
+			Name:        p.Name,
+			Description: p.Description,
+			Loaded:      p.Loaded,
+			Disabled:    p.Disabled,
+			Errors:      p.Errors,
+			Commands:    p.Commands,
+			Hooks:       p.Hooks,
+		}
+	}
+	return out
+}
+
 func toChannelDTO(c *core.Channel) proto.ChannelDTO {
 	mems := make([]proto.MemberDTO, 0, len(c.Members))
 	for _, m := range c.Members {

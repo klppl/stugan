@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { connection, bufKey } from "../connection";
-import { isIgnored, toggleIgnore, settings } from "../settings";
+import { settings } from "../settings";
 import { nickColor } from "../nickColor";
 import { useContextMenu } from "../contextMenu";
 import { ui, closeDrawers } from "../ui";
@@ -313,10 +313,20 @@ function ctxWhois() {
   connection.send(store.active.network, store.active.buffer, "/whois " + m.nick);
   memberCtx.close();
 }
+// Ignore is enforced server-side by the bundled ignore.lua plugin, which
+// claims /ignore and /unignore and drops the nick's messages in the engine.
+// The client just sends the command — the daemon is the source of truth, so
+// there's no local ignore state to keep in sync.
 function ctxIgnore() {
   const m = memberCtx.state.value?.payload;
   if (!m || !store.active) return;
-  toggleIgnore(store.active.network, m.nick);
+  connection.send(store.active.network, store.active.buffer, "/ignore " + m.nick);
+  memberCtx.close();
+}
+function ctxUnignore() {
+  const m = memberCtx.state.value?.payload;
+  if (!m || !store.active) return;
+  connection.send(store.active.network, store.active.buffer, "/unignore " + m.nick);
   memberCtx.close();
 }
 function ctxDM() {
@@ -462,10 +472,7 @@ async function onDrop(e: DragEvent) {
             <li
               v-for="mem in members"
               :key="mem.nick"
-              :class="{
-                away: mem.away,
-                ignored: store.active && isIgnored(store.active.network, mem.nick),
-              }"
+              :class="{ away: mem.away }"
               :title="mem.away ? mem.nick + ' (away)' : 'click to DM; right-click for more'"
               @click="openQuery(mem.nick)"
               @contextmenu="memberCtx.onContext(mem, $event)"
@@ -487,9 +494,8 @@ async function onDrop(e: DragEvent) {
         >
           <div class="ctx-header">{{ memberCtx.state.value.payload.nick }}</div>
           <button class="ctx-item" type="button" @click="ctxWhois">WHOIS</button>
-          <button class="ctx-item" type="button" @click="ctxIgnore">
-            {{ store.active && isIgnored(store.active.network, memberCtx.state.value.payload.nick) ? "Unignore" : "Ignore" }}
-          </button>
+          <button class="ctx-item" type="button" @click="ctxIgnore">Ignore</button>
+          <button class="ctx-item" type="button" @click="ctxUnignore">Unignore</button>
           <button class="ctx-item" type="button" @click="ctxDM">Open DM</button>
           <div class="ctx-sep"></div>
           <button class="ctx-item" type="button" :disabled="!activeChannel()" @click="ctxMode('o')">

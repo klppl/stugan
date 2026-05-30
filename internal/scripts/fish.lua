@@ -32,6 +32,8 @@
 -- key…" opens a dialog that sends /setkey, /setkey-ecb, or /delkey here.
 -- The same slash commands work from the input box.
 
+stugan.describe("FiSH Blowfish encryption (/setkey, /keyx, per-channel keys)")
+
 local crypto = stugan.crypto
 local BLOCK   = 8
 local PREFIX_CBC = "+OK *"

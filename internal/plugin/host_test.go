@@ -103,6 +103,68 @@ func newHost(t *testing.T, api core.API, scripts map[string]string, settings map
 	return h
 }
 
+func TestPluginManagement(t *testing.T) {
+	api := &fakeAPI{nickVal: "me"}
+	h := newHost(t, api, map[string]string{
+		"greet.lua": `
+			stugan.describe("say hi")
+			stugan.hook_command("greet", function() end)`,
+		"filter.lua": `stugan.hook_message(function(msg) return msg end)`,
+	}, nil)
+
+	byName := func() map[string]core.PluginInfo {
+		m := map[string]core.PluginInfo{}
+		for _, p := range h.Plugins() {
+			m[p.Name] = p
+		}
+		return m
+	}
+
+	ps := byName()
+	if len(ps) != 2 {
+		t.Fatalf("Plugins() = %d entries, want 2: %+v", len(ps), ps)
+	}
+	if g := ps["greet"]; !g.Loaded || g.Description != "say hi" || len(g.Commands) != 1 || g.Commands[0] != "greet" {
+		t.Errorf("greet info = %+v", g)
+	}
+	if f := ps["filter"]; !f.Loaded || f.Hooks != 1 {
+		t.Errorf("filter info = %+v (want loaded, 1 hook)", f)
+	}
+
+	// Unload → still listed (file on disk) but not loaded, and its command gone.
+	if err := h.UnloadPlugin("greet"); err != nil {
+		t.Fatalf("UnloadPlugin: %v", err)
+	}
+	if g := byName()["greet"]; g.Loaded {
+		t.Errorf("greet still loaded after unload: %+v", g)
+	}
+	if cmds := h.Commands(); len(cmds) != 0 {
+		t.Errorf("Commands() = %v after unload, want none", cmds)
+	}
+
+	// Unloading again errors; reload brings it back.
+	if err := h.UnloadPlugin("greet"); err == nil {
+		t.Error("UnloadPlugin twice should error")
+	}
+	if err := h.LoadPlugin("greet"); err != nil {
+		t.Fatalf("LoadPlugin: %v", err)
+	}
+	if g := byName()["greet"]; !g.Loaded {
+		t.Errorf("greet not loaded after load: %+v", g)
+	}
+	if err := h.ReloadPlugin("filter"); err != nil {
+		t.Fatalf("ReloadPlugin: %v", err)
+	}
+
+	// Bad names and missing files are rejected.
+	if err := h.LoadPlugin("../escape"); err == nil {
+		t.Error("LoadPlugin with path separator should error")
+	}
+	if err := h.LoadPlugin("nope"); err == nil {
+		t.Error("LoadPlugin of missing file should error")
+	}
+}
+
 func inMsg(text string) core.Event {
 	return core.Event{Type: core.EvMessageIn, Network: "n", Message: &core.Message{
 		Network: "n", Buffer: "#c", From: "alice", Kind: core.MsgPrivmsg, Text: text,
@@ -203,6 +265,38 @@ func TestHookInputRewrite(t *testing.T) {
 		Message: &core.Message{Network: "n", Buffer: "#c", Text: "drop"},
 	}); keep {
 		t.Error("input hook returning nil did not drop the line")
+	}
+}
+
+func TestHookCompletion(t *testing.T) {
+	api := &fakeAPI{nickVal: "me"}
+	h := newHost(t, api, map[string]string{
+		// One hook that completes "@team" mentions, and a second whose
+		// candidates are gathered alongside the first's (flattened).
+		"complete.lua": `
+			stugan.hook_completion(function(word, ctx)
+			  if word == "@te" then return { "@dev", "@ops" } end
+			  return nil
+			end)
+			stugan.hook_completion(function(word, ctx)
+			  if word == "@te" then return { "@all" } end
+			end)`,
+	}, nil)
+
+	got := h.Complete("@te", "n", "#c")
+	want := map[string]bool{"@dev": true, "@ops": true, "@all": true}
+	if len(got) != len(want) {
+		t.Fatalf("Complete returned %v, want 3 items", got)
+	}
+	for _, g := range got {
+		if !want[g] {
+			t.Errorf("unexpected completion %q", g)
+		}
+	}
+
+	// A word no hook matches yields nothing.
+	if c := h.Complete("xyz", "n", "#c"); len(c) != 0 {
+		t.Errorf("Complete(xyz) = %v, want empty", c)
 	}
 }
 

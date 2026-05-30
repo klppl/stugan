@@ -33,7 +33,7 @@ func (h *Host) loadScript(path string) {
 	name := scriptName(path)
 	h.unloadScript(name)
 
-	s := &script{name: name, L: h.newState()}
+	s := &script{name: name, path: path, L: h.newState()}
 	s.L.SetGlobal("stugan", h.buildAPI(s))
 	if err := s.L.DoFile(path); err != nil {
 		h.log.Error("plugin load failed", "script", name, "err", err)
@@ -52,6 +52,7 @@ func (h *Host) unloadScript(name string) {
 	}
 	h.msgHooks = dropHooks(h.msgHooks, s)
 	h.inputHooks = dropHooks(h.inputHooks, s)
+	h.completionHooks = dropHooks(h.completionHooks, s)
 	for k := range h.signalHooks {
 		h.signalHooks[k] = dropHooks(h.signalHooks[k], s)
 	}
@@ -113,6 +114,9 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 	}))
 	t.RawSetString("hook_input", s.L.NewFunction(func(L *lua.LState) int {
 		return h.registerListHook(L, s, &h.inputHooks)
+	}))
+	t.RawSetString("hook_completion", s.L.NewFunction(func(L *lua.LState) int {
+		return h.registerListHook(L, s, &h.completionHooks)
 	}))
 	t.RawSetString("hook_signal", s.L.NewFunction(func(L *lua.LState) int {
 		event := lc(L.CheckString(1))
@@ -249,6 +253,13 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 	}))
 	t.RawSetString("log", h.buildLog(s))
 	t.RawSetString("script_name", lua.LString(s.name))
+
+	// describe(text) records a one-line human description shown in the
+	// client's plugin manager. Call it at the top level of a script.
+	t.RawSetString("describe", s.L.NewFunction(func(L *lua.LState) int {
+		s.desc = L.CheckString(1)
+		return 0
+	}))
 
 	return t
 }
