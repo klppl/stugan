@@ -187,13 +187,13 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  padding-top: max(8px, env(safe-area-inset-top));
+  padding: 3px 12px;
+  padding-top: max(3px, env(safe-area-inset-top));
   background: var(--bg-alt);
   border-bottom: 1px solid var(--border);
 }
 .topbar .search {
-  flex: 0 1 280px;
+  flex: 0 1 220px;
   padding: 5px 9px;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -205,12 +205,25 @@ body {
 .topbar .spacer {
   flex: 1;
 }
+/* Channel name + topic live inline in the bar (folded in from the old
+   chat-header row). The name holds its width; the topic truncates before it
+   would crowd out the spacer + right-hand controls. */
+.topbar .buffer-name {
+  flex: 0 0 auto;
+}
+.topbar .topic {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.topbar .topic-edit {
+  flex: 0 1 320px;
+}
 .ghost {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg);
   border-radius: 4px;
-  padding: 5px 9px;
+  padding: 3px 9px;
   cursor: pointer;
   position: relative;
   font-size: 14px;
@@ -235,8 +248,8 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 36px;
-  height: 36px;
+  min-width: 30px;
+  height: 28px;
   padding: 0 8px;
 }
 /* The hamburger and the search-toggle icon are mobile-only. */
@@ -301,6 +314,8 @@ body {
      correctly; this is the missing link one level up. */
   min-height: 0;
 }
+/* Used by the search / mentions views (the chat view's header is now folded
+   into the topbar). */
 .chat-header {
   padding: 10px 16px;
   background: var(--bg-alt);
@@ -1178,6 +1193,17 @@ body {
     padding-left: max(8px, env(safe-area-inset-left));
     padding-right: max(8px, env(safe-area-inset-right));
     gap: 6px;
+  }
+  /* No room for the topic on phones; keep just the channel name, truncated. */
+  .topbar .topic {
+    display: none;
+  }
+  .topbar .buffer-name {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .menu-btn,
   .search-toggle {

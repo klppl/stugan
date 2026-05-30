@@ -354,22 +354,6 @@ function ctxKickBan() {
   memberCtx.close();
 }
 
-// Inline topic editing for channel buffers.
-const editingTopic = ref(false);
-const topicDraft = ref("");
-const topicInput = ref<HTMLInputElement | null>(null);
-
-function startEditTopic() {
-  if (buffer.value?.kind !== "channel") return;
-  topicDraft.value = buffer.value.topic;
-  editingTopic.value = true;
-  nextTick(() => topicInput.value?.focus());
-}
-function saveTopic() {
-  if (store.active) connection.send(store.active.network, store.active.buffer, "/topic " + topicDraft.value.trim());
-  editingTopic.value = false;
-}
-
 // Auto-focus the chat input when the user starts typing somewhere else in
 // the chat view (e.g. focus landed on a sidebar button after picking a
 // buffer, or nothing in particular). Same affordance as Discord/Slack:
@@ -444,27 +428,6 @@ async function onDrop(e: DragEvent) {
 
     <!-- Chat -->
     <template v-else>
-      <header v-if="buffer" class="chat-header">
-        <span class="buffer-name">{{ buffer.name }}</span>
-        <input
-          v-if="editingTopic"
-          ref="topicInput"
-          v-model="topicDraft"
-          class="topic-edit"
-          @keydown.enter="saveTopic"
-          @keydown.esc="editingTopic = false"
-          @blur="editingTopic = false"
-        />
-        <span
-          v-else
-          class="topic"
-          :class="{ editable: buffer.kind === 'channel' }"
-          :title="buffer.kind === 'channel' ? 'click to edit topic' : ''"
-          @click="startEditTopic"
-        >{{ buffer.topic || (buffer.kind === "channel" ? "(set topic…)" : "") }}</span>
-      </header>
-      <div v-else class="chat-header">no buffer selected</div>
-
       <div
         class="chat-body"
         @dragover.prevent="dragging = true"
