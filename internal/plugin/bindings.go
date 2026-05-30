@@ -354,6 +354,18 @@ func (h *Host) buildKV(s *script) *lua.LTable {
 		}
 		return 0
 	}))
+	// all() returns every persisted key/value for this script as a Lua table.
+	// Touching store() lazily fills from the backing store, so a script can
+	// enumerate what it saved across restarts — e.g. fish.lua re-publishing
+	// buffer state for each keyed channel at load.
+	kv.RawSetString("all", s.L.NewFunction(func(L *lua.LState) int {
+		t := L.NewTable()
+		for k, v := range store() {
+			t.RawSetString(k, lua.LString(v))
+		}
+		L.Push(t)
+		return 1
+	}))
 	return kv
 }
 

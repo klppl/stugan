@@ -142,6 +142,7 @@ argument types.
 stugan.kv.set("last_seen", os.time())
 local t = stugan.kv.get("last_seen")        -- nil if unset
 stugan.kv.delete("last_seen")
+local all = stugan.kv.all()                  -- table of every key->value
 
 -- Read plugin-scoped config from config.toml:
 --   [plugins.settings.greet]

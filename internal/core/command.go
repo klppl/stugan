@@ -375,11 +375,16 @@ func (a engineAPI) Print(network, buffer, text string) {
 // SetBufferState mutates the named buffer's State map under the engine
 // lock and re-broadcasts the network snapshot so every sink (terminal log,
 // store, every connected client) sees the change. Calling with a nil or
-// empty map clears state entirely. If the network or buffer is unknown the
-// call is a no-op — plugins targeting a buffer that doesn't exist yet
-// should re-publish when one appears.
+// empty map clears state entirely.
+//
+// The state is also remembered (setPendingStateLocked) and re-applied whenever
+// the buffer is (re)created. So a plugin can set state for a buffer that does
+// not exist yet — at script load, before JOIN — and it survives a daemon
+// restart, where the live buffer is gone but is recreated on rejoin. fish.lua
+// relies on this to keep the encrypted-buffer lock icon across reboots.
 func (a engineAPI) SetBufferState(network, buffer string, state map[string]string) {
 	a.e.mu.Lock()
+	a.e.setPendingStateLocked(network, buffer, state)
 	n := a.e.user.Network(network)
 	if n == nil {
 		a.e.mu.Unlock()
@@ -401,6 +406,50 @@ func (a engineAPI) SetBufferState(network, buffer string, state map[string]strin
 	}
 	a.e.mu.Unlock()
 	a.e.notifyNetwork(network)
+}
+
+// setPendingStateLocked records (state non-empty) or clears (state empty) the
+// buffer state a plugin wants for network+buffer, so applyPendingStateLocked
+// can apply it when the buffer is created. Buffer names are keyed
+// case-insensitively, mirroring Network.Channel. Caller holds e.mu.
+func (e *Engine) setPendingStateLocked(network, buffer string, state map[string]string) {
+	bk := lower(buffer)
+	if len(state) == 0 {
+		if m := e.pendingState[network]; m != nil {
+			delete(m, bk)
+			if len(m) == 0 {
+				delete(e.pendingState, network)
+			}
+		}
+		return
+	}
+	m := e.pendingState[network]
+	if m == nil {
+		m = map[string]map[string]string{}
+		e.pendingState[network] = m
+	}
+	cp := make(map[string]string, len(state))
+	for k, v := range state {
+		cp[k] = v
+	}
+	m[bk] = cp
+}
+
+// applyPendingStateLocked copies any remembered state onto a freshly created
+// channel. Caller holds e.mu.
+func (e *Engine) applyPendingStateLocked(network string, c *Channel) {
+	if c == nil {
+		return
+	}
+	st := e.pendingState[network][lower(c.Name)]
+	if len(st) == 0 {
+		return
+	}
+	next := make(map[string]string, len(st))
+	for k, v := range st {
+		next[k] = v
+	}
+	c.State = next
 }
 
 func (a engineAPI) Networks() []NetworkInfo {

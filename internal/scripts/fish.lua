@@ -621,4 +621,18 @@ stugan.hook_command("keyx", function(args, ctx)
   stugan.print(ctx, "fish: DH1080 INIT sent to " .. target .. "; waiting for FINISH…")
 end)
 
+-- Re-apply the sidebar lock icon after a restart. Encryption keys live in kv
+-- and survive reboots, but per-buffer state does not. We re-publish the
+-- "encrypted" state for every persisted key at load; the host remembers it
+-- and applies it the moment each buffer is (re)created on join, so the lock
+-- shows immediately — even on idle channels. kv keys are "<network>\t<target>"
+-- and values "<mode>\t<key>" (see kv_key / set_key above).
+for k, v in pairs(stugan.kv.all()) do
+  local network, target = k:match("^([^\t]+)\t(.+)$")
+  local mode = v and v:match("^([^\t]+)\t")
+  if network and target and mode then
+    stugan.set_buffer_state(network, target, { encrypted = mode })
+  end
+end
+
 stugan.log.info("fish loaded (CBC default, ECB legacy, manual keys)")

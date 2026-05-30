@@ -98,9 +98,18 @@ type Engine struct {
 	// "<network>\t<lowercase-channel>"; only non-empty keys are stored.
 	// Touched only on the engine loop goroutine (like pendingWhois).
 	pendingKeys map[string]string
-	running     bool
-	runCtx      context.Context
-	runWG       sync.WaitGroup
+
+	// pendingState holds per-buffer State a plugin set (via SetBufferState),
+	// keyed by network id → lowercased buffer name. It is applied when the
+	// buffer is (re)created, so plugin state — e.g. fish.lua's "encrypted"
+	// lock flag — survives the buffer not existing yet (set at script load,
+	// before JOIN) and a daemon restart (live state is in-memory only).
+	// Guarded by mu.
+	pendingState map[string]map[string]map[string]string
+
+	running bool
+	runCtx  context.Context
+	runWG   sync.WaitGroup
 
 	events chan Event
 	done   chan struct{}
@@ -144,6 +153,7 @@ func New(opts Options) *Engine {
 		connCancels:  map[string]context.CancelFunc{},
 		listAccum:    map[string][]ChannelListItem{},
 		pendingWhois: map[string]string{},
+		pendingState: map[string]map[string]map[string]string{},
 		pendingKeys:  map[string]string{},
 		events:       make(chan Event, 256),
 		done:         make(chan struct{}),
@@ -1006,7 +1016,10 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		if !m.Self && (m.Kind == MsgPrivmsg || m.Kind == MsgNotice || m.Kind == MsgAction) {
 			m.Highlight = e.highlight.Match(m.Text, n.Nick)
 		}
-		_, created := n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
+		c, created := n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
+		if created {
+			e.applyPendingStateLocked(ev.Network, c)
+		}
 		emit = append(emit, m)
 		netChanged = created
 
@@ -1031,7 +1044,10 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		}
 
 	case EvJoin:
-		c, _ := n.getOrCreate(ev.Channel, KindChannel)
+		c, created := n.getOrCreate(ev.Channel, KindChannel)
+		if created {
+			e.applyPendingStateLocked(ev.Network, c)
+		}
 		c.Members[lower(ev.Nick)] = &Member{Nick: ev.Nick, Account: ev.Account}
 		line(MsgJoin, ev.Channel, ev.Nick, fmt.Sprintf("%s has joined %s", ev.Nick, ev.Channel))
 		netChanged = true
