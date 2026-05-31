@@ -199,17 +199,18 @@ body {
 }
 .badge {
   flex-shrink: 0;
-  min-width: 18px;
+  min-width: 16px;
   text-align: center;
-  font-size: 11px;
-  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 5px;
   border-radius: 9px;
-  background: var(--fg-dim);
-  color: var(--bg);
+  background: color-mix(in srgb, var(--fg-dim) 18%, transparent);
+  color: var(--fg-dim);
 }
 .badge.highlight {
-  background: var(--hl);
-  color: #fff;
+  background: color-mix(in srgb, var(--hl) 28%, transparent);
+  color: var(--hl);
 }
 
 /* Top bar */
