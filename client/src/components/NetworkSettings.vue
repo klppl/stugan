@@ -11,6 +11,20 @@ const netState = computed(
 );
 const connected = computed(() => netState.value !== "disconnected");
 
+// caps are the IRCv3 capabilities the live connection negotiated (populated
+// on snapshots; empty while disconnected). features maps the ones the UI
+// cares about to a human label so the user can see why an affordance like
+// reactions is or isn't available. See connection.hasNetCap.
+const caps = computed(() => connection.store.networks.find((n) => n.id === props.network)?.caps ?? []);
+const features = computed(() => {
+  const has = (...cs: string[]) => cs.some((c) => caps.value.includes(c));
+  return [
+    { label: "Reactions & typing", cap: "message-tags", on: has("message-tags") },
+    { label: "Delete messages", cap: "draft/message-redaction", on: has("draft/message-redaction") },
+    { label: "History sync", cap: "draft/chathistory", on: has("draft/chathistory", "chathistory") },
+  ];
+});
+
 function toggleConnected() {
   connection.setConnected(props.network, !connected.value);
 }
@@ -143,6 +157,29 @@ function remove() {
           SASL, server-password, or client-certificate changes reconnect the
           network. Perform runs on every reconnect.
         </p>
+
+        <div class="caps-section">
+          <h3>Server features (IRCv3)</h3>
+          <p v-if="caps.length === 0" class="hint">
+            {{ connected ? "This server negotiated no IRCv3 capabilities." : "Connect to see what this server supports." }}
+          </p>
+          <template v-else>
+            <ul class="feature-list">
+              <li v-for="f in features" :key="f.cap" :class="{ off: !f.on }">
+                <span class="feature-mark">{{ f.on ? "✓" : "—" }}</span>
+                <span class="feature-label">{{ f.label }}</span>
+                <code class="feature-cap">{{ f.cap }}</code>
+              </li>
+            </ul>
+            <details class="caps-raw">
+              <summary>All negotiated caps ({{ caps.length }})</summary>
+              <div class="cap-chips">
+                <span v-for="c in caps" :key="c" class="cap-chip">{{ c }}</span>
+              </div>
+            </details>
+          </template>
+        </div>
+
         <div class="row">
           <button type="button" class="danger" @click="remove">Remove network</button>
           <button type="button" @click="toggleConnected">{{ connected ? "Disconnect" : "Connect" }}</button>
@@ -154,3 +191,66 @@ function remove() {
     </form>
   </div>
 </template>
+
+<style scoped>
+.caps-section {
+  margin-top: 14px;
+}
+.caps-section h3 {
+  margin: 0 0 6px;
+  font-size: 0.9em;
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+.feature-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.feature-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9em;
+}
+.feature-list li.off {
+  color: var(--fg-dim);
+}
+.feature-mark {
+  width: 1em;
+  text-align: center;
+  color: var(--self);
+}
+.feature-list li.off .feature-mark {
+  color: var(--fg-dim);
+}
+.feature-cap {
+  margin-left: auto;
+  font-size: 0.82em;
+  color: var(--fg-dim);
+}
+.caps-raw {
+  margin-top: 8px;
+  font-size: 0.85em;
+}
+.caps-raw summary {
+  cursor: pointer;
+  color: var(--fg-dim);
+}
+.cap-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.cap-chip {
+  font-size: 0.8em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-alt);
+  color: var(--fg-dim);
+}
+</style>
