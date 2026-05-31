@@ -47,6 +47,17 @@ type ChannelListItem struct {
 	Topic string
 }
 
+// UnreadCount is the persisted, per-buffer tally of messages newer than the
+// user's read marker, computed by the history store at connect time so unread
+// badges survive a page reload (the live counter in core.Channel is only ever
+// incremented in the browser). See store.UnreadCounts / store.MarkRead.
+type UnreadCount struct {
+	Network   string
+	Buffer    string
+	Unread    int
+	Highlight int
+}
+
 // maxListItems caps a LIST result so a huge network can't exhaust memory or
 // produce an enormous frame.
 const maxListItems = 2000

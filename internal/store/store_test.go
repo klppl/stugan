@@ -266,3 +266,74 @@ func TestNetworkPersistence(t *testing.T) {
 }
 
 func text(i int) string { return string(rune('a'+i)) + "-line" }
+
+func TestReadMarkersUnreadCounts(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	base := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	at := func(secs int) time.Time { return base.Add(time.Duration(secs) * time.Second) }
+
+	// A buffer with no read marker contributes nothing, even with history —
+	// there's no baseline, so old history is never retroactively "unread".
+	s.Print(msg("libera", "#go", "alice", "hi", core.MsgPrivmsg, at(0)))
+	got, err := s.UnreadCounts(ctx)
+	if err != nil {
+		t.Fatalf("UnreadCounts: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("no marker should yield no counts, got %+v", got)
+	}
+
+	// Read up to t=10. Messages at/before it are read; later ones are unread.
+	if err := s.MarkRead(ctx, "libera", "#go", at(10)); err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+	s.Print(msg("libera", "#go", "bob", "before", core.MsgPrivmsg, at(5))) // read
+	s.Print(msg("libera", "#go", "carol", "new1", core.MsgPrivmsg, at(20)))
+	s.Print(msg("libera", "#go", "dave", "new2", core.MsgNotice, at(30)))
+	// A highlight (counts toward both unread and highlight).
+	hl := msg("libera", "#go", "erin", "ping you", core.MsgPrivmsg, at(40))
+	hl.Highlight = true
+	s.Print(hl)
+	// Excluded: our own echo, and a non-conversational join.
+	self := msg("libera", "#go", "me", "echo", core.MsgPrivmsg, at(50))
+	self.Self = true
+	s.Print(self)
+	s.Print(msg("libera", "#go", "frank", "joined", core.MsgJoin, at(60)))
+
+	got, err = s.UnreadCounts(ctx)
+	if err != nil {
+		t.Fatalf("UnreadCounts: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 buffer, got %+v", got)
+	}
+	u := got[0]
+	if u.Network != "libera" || u.Buffer != "#go" {
+		t.Errorf("wrong buffer: %+v", u)
+	}
+	if u.Unread != 3 { // new1, new2, ping (before/self/join excluded)
+		t.Errorf("Unread = %d, want 3", u.Unread)
+	}
+	if u.Highlight != 1 {
+		t.Errorf("Highlight = %d, want 1", u.Highlight)
+	}
+
+	// Marker is monotonic: a stale, earlier MarkRead must not move it back.
+	if err := s.MarkRead(ctx, "libera", "#go", at(5)); err != nil {
+		t.Fatalf("MarkRead stale: %v", err)
+	}
+	got, _ = s.UnreadCounts(ctx)
+	if len(got) != 1 || got[0].Unread != 3 {
+		t.Errorf("stale MarkRead moved marker back: %+v", got)
+	}
+
+	// Reading up to the end clears the buffer entirely.
+	if err := s.MarkRead(ctx, "libera", "#go", at(100)); err != nil {
+		t.Fatalf("MarkRead end: %v", err)
+	}
+	got, _ = s.UnreadCounts(ctx)
+	if len(got) != 0 {
+		t.Errorf("after reading to end, want no counts, got %+v", got)
+	}
+}
