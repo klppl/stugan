@@ -39,8 +39,9 @@ func (noopSink) Redact(string, string, string, string, string) {}
 
 // fakeHistory returns a canned backlog page.
 type fakeHistory struct {
-	msgs []core.Message
-	more bool
+	msgs   []core.Message
+	more   bool
+	unread []core.UnreadCount
 }
 
 func (f *fakeHistory) Backlog(_ context.Context, _, _ string, _ time.Time, _ int) ([]core.Message, bool, error) {
@@ -51,6 +52,10 @@ func (f *fakeHistory) BacklogAround(_ context.Context, _, _ string, _ time.Time,
 }
 func (f *fakeHistory) Search(_ context.Context, _, _, _ string, _ int) ([]core.Message, error) {
 	return f.msgs, nil
+}
+func (f *fakeHistory) MarkRead(_ context.Context, _, _ string, _ time.Time) error { return nil }
+func (f *fakeHistory) UnreadCounts(_ context.Context) ([]core.UnreadCount, error) {
+	return f.unread, nil
 }
 
 // readFrame reads one envelope with a timeout.

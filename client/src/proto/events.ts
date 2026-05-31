@@ -29,6 +29,7 @@ export const T = {
   NetConnect: "net:connect",
   List: "list",
   PluginAction: "plugin:action",
+  Read: "read",
 } as const;
 
 export interface Envelope<D = unknown> {
@@ -165,6 +166,14 @@ export interface Typing {
 export interface NetConnect {
   network: string;
   connect: boolean;
+}
+
+// ReadMark tells the server the user has read a buffer up to now, advancing
+// the server-side read marker so unread badges survive a reload. The server
+// stamps the time with its own clock, so there is no time field here.
+export interface ReadMark {
+  network: string;
+  buffer: string;
 }
 
 export interface React {

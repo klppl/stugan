@@ -36,11 +36,17 @@ const magicCookie = "stugan_magic"
 // magicWordTTL is how long a granted magic-word cookie lasts.
 const magicWordTTL = 30 * 24 * time.Hour
 
-// History provides paged message backlog for replay and full-text search.
+// History provides paged message backlog for replay and full-text search,
+// plus the per-buffer read markers that let unread counts survive a reload.
 type History interface {
 	Backlog(ctx context.Context, network, buffer string, before time.Time, limit int) ([]core.Message, bool, error)
 	BacklogAround(ctx context.Context, network, buffer string, around time.Time, limit int) ([]core.Message, bool, error)
 	Search(ctx context.Context, query, network, buffer string, limit int) ([]core.Message, error)
+	// MarkRead advances a buffer's read marker to ts (zero = now).
+	MarkRead(ctx context.Context, network, buffer string, ts time.Time) error
+	// UnreadCounts reports per-buffer unread/highlight tallies since each
+	// buffer's read marker, for seeding badges at connect time.
+	UnreadCounts(ctx context.Context) ([]core.UnreadCount, error)
 }
 
 // Tenant is one user's engine and history.
@@ -436,7 +442,18 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	go c.writePump(ctx)
 
 	hello, _ := proto.Frame(proto.THello, proto.Hello{Protocol: proto.Protocol, Server: s.serverName, Caps: s.caps()})
-	init, _ := proto.Frame(proto.TInit, toInitState(tenant.Engine.Snapshot()))
+	state := toInitState(tenant.Engine.Snapshot())
+	// The live unread counter in core.Channel is browser-only (always 0 here);
+	// seed real counts from the persisted read markers so badges survive a
+	// reload. Best-effort: on error the client just starts everything at 0.
+	if tenant.History != nil {
+		if counts, err := tenant.History.UnreadCounts(ctx); err != nil {
+			s.log.Error("unread counts", "user", userID, "err", err)
+		} else {
+			applyUnread(&state, counts)
+		}
+	}
+	init, _ := proto.Frame(proto.TInit, state)
 	c.trySend(hello)
 	c.trySend(init)
 
@@ -472,6 +489,18 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 
 	case proto.TBacklogFetch:
 		s.handleBacklog(ctx, c, env)
+
+	case proto.TRead:
+		var d proto.ReadMark
+		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" {
+			return // read marks are best-effort; ignore malformed
+		}
+		if c.tenant.History == nil {
+			return
+		}
+		if err := c.tenant.History.MarkRead(ctx, d.Network, d.Buffer, time.Time{}); err != nil {
+			s.log.Error("mark read", "network", d.Network, "buffer", d.Buffer, "err", err)
+		}
 
 	case proto.TCompleteReq:
 		var d proto.CompleteReq

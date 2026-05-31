@@ -68,6 +68,13 @@ CREATE TABLE IF NOT EXISTS plugin_kv (
   value  TEXT NOT NULL,
   PRIMARY KEY (script, key)
 );
+
+CREATE TABLE IF NOT EXISTS read_markers (
+  network TEXT NOT NULL,
+  buffer  TEXT NOT NULL,
+  ts      INTEGER NOT NULL,        -- unix millis; messages with ts > this are unread
+  PRIMARY KEY (network, buffer)
+);
 `
 
 // Open opens (creating if needed) the database at path and applies the
@@ -219,6 +226,52 @@ func (s *Store) Networks() ([]core.NetworkParams, error) {
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// MarkRead advances the read marker for a buffer to ts (the moment the user
+// last viewed it). A zero ts means "now". The marker only ever moves forward —
+// MAX(existing, new) — so a stale or out-of-order frame can never un-read a
+// buffer. UnreadCounts tallies messages with a timestamp newer than the marker.
+func (s *Store) MarkRead(ctx context.Context, network, buffer string, ts time.Time) error {
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO read_markers(network, buffer, ts) VALUES(?, ?, ?)
+		 ON CONFLICT(network, buffer) DO UPDATE SET ts = MAX(ts, excluded.ts)`,
+		network, buffer, ts.UnixMilli())
+	return err
+}
+
+// UnreadCounts returns, per buffer, how many conversational messages (and how
+// many of those are highlights) arrived since the user's read marker. Only
+// buffers that have a marker are reported: until a buffer has been read at
+// least once there is no baseline, so its existing history is never
+// retroactively counted as unread. Self-sent lines and non-conversational
+// events (joins, mode changes, etc.) are excluded, matching the browser's
+// live counter. Used at connect time to seed unread badges that survive a
+// page reload.
+func (s *Store) UnreadCounts(ctx context.Context) ([]core.UnreadCount, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT m.network, m.buffer, COUNT(*), COALESCE(SUM(m.highlight), 0)
+		 FROM messages m
+		 JOIN read_markers r ON r.network = m.network AND r.buffer = m.buffer
+		 WHERE m.ts > r.ts AND m.self = 0
+		   AND m.kind IN ('privmsg', 'notice', 'action')
+		 GROUP BY m.network, m.buffer`)
+	if err != nil {
+		return nil, fmt.Errorf("unread counts: %w", err)
+	}
+	defer rows.Close()
+	var out []core.UnreadCount
+	for rows.Next() {
+		var u core.UnreadCount
+		if err := rows.Scan(&u.Network, &u.Buffer, &u.Unread, &u.Highlight); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
 	}
 	return out, rows.Err()
 }

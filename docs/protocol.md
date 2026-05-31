@@ -58,6 +58,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `plugin:list`   | (none)         | request the plugin manager list |
 | `plugin:action` | `PluginAction` | load/unload/reload a plugin by name |
 | `complete:req`  | `CompleteReq`  | ask plugins for tab-completion candidates (`seq`-correlated) |
+| `read`          | `ReadMark`     | mark a buffer read up to now (advances the persisted read marker) |
 
 ### Bidirectional
 

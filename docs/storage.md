@@ -42,6 +42,13 @@ CREATE TABLE plugin_kv (
   value  TEXT NOT NULL,
   PRIMARY KEY (script, key)
 );
+
+CREATE TABLE read_markers (
+  network TEXT NOT NULL,
+  buffer  TEXT NOT NULL,
+  ts      INTEGER NOT NULL,        -- unix millis; messages newer than this are unread
+  PRIMARY KEY (network, buffer)
+);
 ```
 
 Pragmas: `journal_mode=WAL` (concurrent reads alongside the writer),
@@ -63,6 +70,23 @@ Pragmas: `journal_mode=WAL` (concurrent reads alongside the writer),
 
 These feed the server's `backlog`, `backlog` (windowed), and `search:result`
 frames (see [protocol.md](protocol.md)).
+
+## Read markers (unread that survives a reload)
+
+The browser's unread badge is a live, in-memory counter — it would reset to
+zero on every page load. `read_markers` makes it durable: one timestamp per
+buffer recording how far the user has read.
+
+- **`MarkRead(ctx, network, buffer, ts)`** — upsert the marker to `ts` (zero =
+  now), `MAX`-merged so it only ever moves forward; a stale frame can't un-read
+  a buffer. Driven by the c2s `read` frame, sent when a buffer is focused and
+  (debounced) as messages arrive while it's focused.
+- **`UnreadCounts(ctx)`** — per buffer, how many conversational
+  (`privmsg`/`notice`/`action`), non-self messages arrived after its marker,
+  and how many of those are highlights. Only buffers that *have* a marker are
+  reported, so a buffer's existing history is never retroactively counted as
+  unread before it's been opened once. The server calls this at connect time
+  and folds the counts into the `init` snapshot's `ChannelDTO.unread/highlight`.
 
 ## Network persistence
 

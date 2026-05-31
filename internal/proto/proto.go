@@ -41,6 +41,7 @@ const (
 	TNetConnect   = "net:connect"   // c2s
 	TList         = "list"          // c2s
 	TPluginAction = "plugin:action" // c2s — load/unload/reload a plugin
+	TRead         = "read"          // c2s — mark a buffer read (advance read marker)
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -253,6 +254,16 @@ type Redact struct {
 	Target  string `json:"target"` // msgid being redacted
 	By      string `json:"by,omitempty"`
 	Reason  string `json:"reason,omitempty"`
+}
+
+// ReadMark is a client→server notice that the user has read a buffer up to
+// "now" — it advances the server-side read marker so unread counts survive a
+// reload. Sent when a buffer is focused and (debounced) as messages arrive in
+// the focused buffer. The server stamps the marker with its own clock; there
+// is no time field to keep client/server clocks from disagreeing.
+type ReadMark struct {
+	Network string `json:"network"`
+	Buffer  string `json:"buffer"`
 }
 
 // NetConnect is a client→server request to connect or disconnect a network

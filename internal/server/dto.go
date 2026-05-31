@@ -1,11 +1,37 @@
 package server
 
 import (
+	"strings"
 	"time"
 
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/proto"
 )
+
+// applyUnread seeds each channel's unread/highlight badge counts in an init
+// snapshot from the persisted per-buffer read markers. Matching is
+// case-insensitive on the buffer name so a marker recorded under one casing
+// still lights up the channel as the snapshot names it.
+func applyUnread(state *proto.InitState, counts []core.UnreadCount) {
+	if len(counts) == 0 {
+		return
+	}
+	type key struct{ net, buf string }
+	byBuf := make(map[key]core.UnreadCount, len(counts))
+	for _, u := range counts {
+		byBuf[key{u.Network, strings.ToLower(u.Buffer)}] = u
+	}
+	for ni := range state.Networks {
+		n := &state.Networks[ni]
+		for ci := range n.Channels {
+			c := &n.Channels[ci]
+			if u, ok := byBuf[key{n.ID, strings.ToLower(c.Name)}]; ok {
+				c.Unread = u.Unread
+				c.Highlight = u.Highlight
+			}
+		}
+	}
+}
 
 // toMessageDTO projects a core.Message onto its wire form.
 func toMessageDTO(m core.Message) proto.MessageDTO {
