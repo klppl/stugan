@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Swedish cottage at night">
+  <!-- Minimalist cozy-night Swedish 'stuga': Falu-red house with white trim
+       (eave + corner boards) and a single warm-glowing cross-muntin window. -->
+  <defs>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="82" fill="#1b2533"/>
+  <g transform="translate(15.36,15.36) scale(0.94)">
+    <!-- house silhouette -->
+    <polygon points="97.3,250.9 256,102.4 414.7,250.9" fill="#a83a2d"/>
+    <rect x="133.1" y="240.6" width="245.8" height="179.2" fill="#a83a2d"/>
+    <!-- white trim: eave fascia + corner boards -->
+    <rect x="122.9" y="248.3" width="266.2" height="15.4" fill="#f0ece3"/>
+    <rect x="133.1" y="250.9" width="17.9" height="169" fill="#f0ece3"/>
+    <rect x="361.0" y="250.9" width="17.9" height="169" fill="#f0ece3"/>
+    <!-- cozy glow -->
+    <circle cx="256" cy="320" r="69" fill="#f4b13a" opacity="0.55" filter="url(#glow)"/>
+    <!-- single window: white frame, warm glass, white cross muntin -->
+    <rect x="220.2" y="281.6" width="71.7" height="76.8" fill="#f0ece3"/>
+    <rect x="227.3" y="288.8" width="57.3" height="62.5" fill="#f6c863"/>
+    <rect x="252.4" y="288.8" width="7.2" height="62.5" fill="#f0ece3"/>
+    <rect x="227.3" y="316.4" width="57.3" height="7.2" fill="#f0ece3"/>
+  </g>
+</svg>
