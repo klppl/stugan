@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { connection, bufKey, type Buffer, type Network } from "../connection";
 import { useContextMenu } from "../contextMenu";
 import { ui, closeDrawers } from "../ui";
@@ -13,6 +13,11 @@ const settingsFor = ref<string | null>(null);
 const keyDialogFor = ref<{ network: string; buffer: string } | null>(null);
 
 const ctx = useContextMenu<{ network: string; buffer: string; kind: string }>({ height: 180 });
+
+// Map the raw WebSocket state to a friendly label, shown in the footer pill.
+const statusLabel = computed(
+  () => ({ connecting: "connecting", open: "connected", closed: "disconnected" })[store.status],
+);
 
 // The per-network status buffer ("*status") is folded into the network
 // header rather than shown as its own list item — clicking the network name
@@ -143,5 +148,10 @@ function leaveFromMenu() {
         Leave channel
       </button>
     </div>
+
+    <span class="conn-pill sidebar-conn" :class="store.status" :title="statusLabel">
+      <span class="conn-dot" aria-hidden="true" />
+      <span class="conn-label">{{ statusLabel }}</span>
+    </span>
   </nav>
 </template>

@@ -111,6 +111,8 @@ body {
 .sidebar {
   width: 220px;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--bg-sidebar);
   overflow-y: auto;
   padding: 12px 0;
@@ -330,6 +332,22 @@ body {
   height: 8px;
   border-radius: 50%;
   background: currentColor;
+}
+/* The pill lives at the very bottom of the sidebar, below the network list. */
+.conn-pill.sidebar-conn {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 0;
+  padding-bottom: max(0px, env(safe-area-inset-bottom));
+}
+.conn-pill.sidebar-conn .conn-dot {
+  display: inline-block;
+  flex-shrink: 0;
+}
+.conn-pill.sidebar-conn .conn-label {
+  display: inline;
 }
 
 /* Chat */
@@ -740,13 +758,19 @@ body {
 .chat-input button:disabled {
   opacity: 0.5;
 }
-/* The upload (gem) button is secondary to Send: no accent fill, just the icon. */
+/* The upload (paperclip) button is secondary to Send: no accent fill, just the icon. */
 .chat-input button.upload-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 8px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
-  font-size: 16px;
+  color: var(--fg-dim);
   line-height: 1;
+}
+.chat-input button.upload-btn:hover:not(:disabled) {
+  color: var(--fg);
 }
 .autocomplete {
   position: absolute;
@@ -1420,13 +1444,6 @@ body {
     display: inline;
     font-size: 16px;
     line-height: 1;
-  }
-  /* The connection text shrinks to a small status dot. */
-  .conn-label {
-    display: none;
-  }
-  .conn-dot {
-    display: inline-block;
   }
   /* Channels-browser button drops on the narrowest screens; /join still works. */
   @media (max-width: 380px) {

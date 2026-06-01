@@ -25,11 +25,6 @@ const hasMembers = computed(() => {
   return !!b && b.members.length > 0;
 });
 
-// Map the raw WebSocket state to a friendly label.
-const statusLabel = computed(
-  () => ({ connecting: "connecting", open: "connected", closed: "disconnected" })[store.status],
-);
-
 function doSearch() {
   if (q.value.trim()) connection.search(q.value);
 }
@@ -127,10 +122,6 @@ function saveTopic() {
       <span class="btn-label">⊞ Channels</span>
       <span class="btn-icon" aria-hidden="true">⊞</span>
     </button>
-    <span class="conn-pill" :class="store.status" :title="statusLabel">
-      <span class="conn-label">{{ statusLabel }}</span>
-      <span class="conn-dot" aria-hidden="true" />
-    </span>
     <button
       v-if="hasMembers"
       class="ghost icon-btn members-btn"

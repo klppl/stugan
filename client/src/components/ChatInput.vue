@@ -183,7 +183,7 @@ async function onPaste(e: ClipboardEvent) {
   if (url) text.value = (text.value ? text.value + " " : "") + url;
 }
 
-// File-picker upload: the gem button opens a hidden <input type=file>; picked
+// File-picker upload: the paperclip button opens a hidden <input type=file>; picked
 // files are uploaded the same way as paste/drag-drop, their URLs appended to
 // the message. Only available when the server negotiated the uploads cap.
 const fileEl = ref<HTMLInputElement | null>(null);
@@ -265,10 +265,14 @@ defineExpose({ inputEl, appendText, focus, typeChar });
       v-if="uploads"
       type="button"
       class="upload-btn"
-      title="Upload a file"
+      title="Attach a file"
       :disabled="!buffer"
       @click="pickFile"
-    >💎</button>
+    >
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+      </svg>
+    </button>
     <input ref="fileEl" type="file" multiple hidden @change="onFilePicked" />
     <button type="submit" :disabled="!buffer">Send</button>
   </form>
