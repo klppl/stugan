@@ -462,7 +462,11 @@ body {
   opacity: 0.7;
 }
 .message .body {
-  flex: 1 1 auto;
+  /* basis 0 (not auto): keep the body on the same line as the timestamp +
+     nick and let it fill the remaining width, wrapping text internally. With
+     `auto` its hypothetical size is the whole message's width, so a long line
+     gets bumped to its own row below the nick. */
+  flex: 1 1 0;
   min-width: 0;
 }
 .message a {
@@ -820,6 +824,54 @@ body {
   flex: 1;
   height: 1px;
   background: color-mix(in srgb, var(--hl) 55%, transparent);
+}
+
+/* Floating "jump to unread" bar — shown over the top of the message pane when
+   you open a buffer holding messages from before you last read it. Absolutely
+   positioned within .chat-body (position: relative) so it stays pinned while
+   the log scrolls. The whole pill is in the highlight color, matching the
+   "new messages" divider it jumps to. */
+.unread-jump {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: stretch;
+  max-width: calc(100% - 32px);
+  border-radius: 6px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--hl) 22%, var(--bg-alt));
+  border: 1px solid color-mix(in srgb, var(--hl) 55%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.unread-jump-go {
+  border: none;
+  background: transparent;
+  color: var(--hl);
+  font: inherit;
+  font-size: 0.85em;
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.unread-jump-go:hover {
+  background: color-mix(in srgb, var(--hl) 18%, transparent);
+}
+.unread-jump-x {
+  border: none;
+  border-left: 1px solid color-mix(in srgb, var(--hl) 40%, transparent);
+  background: transparent;
+  color: var(--hl);
+  font-size: 0.85em;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.unread-jump-x:hover {
+  background: color-mix(in srgb, var(--hl) 25%, transparent);
 }
 
 .load-older {

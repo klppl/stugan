@@ -34,6 +34,43 @@ const buffer = computed(() => connection.activeBuffer());
 // compared against the row's message). null = no divider for this buffer.
 const markerMsg = computed(() => buffer.value?.unreadMarker ?? null);
 
+// unreadCount: how many messages sit from the divider down to the live tail —
+// the number shown in the jump bar. indexOf compares by reference, matching
+// how the divider itself is placed (r.msg === markerMsg).
+const unreadCount = computed(() => {
+  const m = markerMsg.value;
+  const msgs = buffer.value?.messages;
+  if (!m || !msgs) return 0;
+  const i = msgs.indexOf(m);
+  return i < 0 ? 0 : msgs.length - i;
+});
+
+// The "jump to unread" bar floats over the top of the log when you open a
+// buffer with messages from before you last read it. It hides once the user
+// acts on it (jump or dismiss) while the divider itself stays; a fresh marker
+// (new unread, or switching to another buffer's divider) re-shows it.
+const barHidden = ref(false);
+watch(markerMsg, () => (barHidden.value = false));
+const showUnreadBar = computed(
+  () => !!markerMsg.value && unreadCount.value > 0 && !barHidden.value,
+);
+
+// jumpToMarker scrolls the divider into view and releases stick-to-bottom so
+// the user reads upward from where they left off. dismissMarker drops the
+// divider entirely — the boundary has been acknowledged.
+function jumpToMarker() {
+  const sep = listEl.value?.querySelector(".unread-sep") as HTMLElement | null;
+  if (sep) {
+    sep.scrollIntoView({ block: "center", behavior: "smooth" });
+    stick = false;
+  }
+  barHidden.value = true;
+}
+function dismissMarker() {
+  if (buffer.value) buffer.value.unreadMarker = null;
+  barHidden.value = true;
+}
+
 // Group messages by calendar day so the list shows "— Today —" / "— Yesterday —"
 // / "— Wed, May 21 —" separators wherever the date changes.
 function dayLabel(iso: string): string {
@@ -465,6 +502,12 @@ async function onDrop(e: DragEvent) {
             class="load-older back-to-latest"
             @click="backToLatest"
           >Back to latest messages</button>
+        </div>
+        <div v-if="showUnreadBar" class="unread-jump" role="status">
+          <button type="button" class="unread-jump-go" @click="jumpToMarker">
+            ↑ {{ unreadCount }} new message{{ unreadCount === 1 ? "" : "s" }} — jump to first unread
+          </button>
+          <button type="button" class="unread-jump-x" aria-label="Dismiss" @click="dismissMarker">✕</button>
         </div>
         <aside v-if="members.length" class="members" :class="{ open: ui.membersOpen }">
           <div class="members-head">{{ members.length }} users</div>
