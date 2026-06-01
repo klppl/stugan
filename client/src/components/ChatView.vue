@@ -25,6 +25,7 @@ const typingText = computed(() => {
   return "several people are typing…";
 });
 const listEl = ref<HTMLElement | null>(null);
+const contentEl = ref<HTMLElement | null>(null);
 const inputRef = ref<InstanceType<typeof ChatInput> | null>(null);
 const dragging = ref(false);
 
@@ -185,6 +186,10 @@ function onScroll() {
   if (!el) return;
   stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
 }
+function scrollToBottom() {
+  const el = listEl.value;
+  if (el) el.scrollTop = el.scrollHeight;
+}
 function loadOlder() {
   const el = listEl.value;
   prependHeight = el ? el.scrollHeight : 0;
@@ -216,7 +221,7 @@ watch(
       el.scrollTop = el.scrollHeight - prependHeight;
       prependHeight = 0;
     } else if (stick) {
-      el.scrollTop = el.scrollHeight;
+      scrollToBottom();
     }
   },
 );
@@ -229,7 +234,7 @@ watch(
       tryJump();
       return;
     }
-    if (listEl.value) listEl.value.scrollTop = listEl.value.scrollHeight;
+    scrollToBottom();
   },
 );
 
@@ -423,7 +428,37 @@ function onGlobalKeydown(e: KeyboardEvent) {
   inputRef.value?.typeChar(e.key);
 }
 onMounted(() => document.addEventListener("keydown", onGlobalKeydown));
-onUnmounted(() => document.removeEventListener("keydown", onGlobalKeydown));
+onUnmounted(() => {
+  document.removeEventListener("keydown", onGlobalKeydown);
+  contentRO?.disconnect();
+});
+
+// Keep the view pinned to the bottom as late-loading content (link-preview
+// embeds, images) expands *after* the initial scroll-to-bottom. Without this,
+// opening a buffer whose tail holds an embed lands a little short of the
+// bottom: the scroll fires at nextTick, then the embed finishes loading and
+// grows the log, leaving the viewport above the new bottom. The observer
+// re-pins only while sticking — a user scrolled up to read history, or
+// mid-jump, is never yanked down.
+//
+// contentEl mounts/unmounts with the chat view (it sits behind the v-else for
+// the search/mentions views), so (re)bind the observer whenever the element
+// appears or disappears rather than once at mount.
+let contentRO: ResizeObserver | null = null;
+watch(
+  contentEl,
+  (el, prev) => {
+    if (!("ResizeObserver" in window)) return;
+    if (!contentRO) {
+      contentRO = new ResizeObserver(() => {
+        if (stick && !(store.jump && jumpMatchesActive())) scrollToBottom();
+      });
+    }
+    if (prev) contentRO.unobserve(prev);
+    if (el) contentRO.observe(el);
+  },
+  { flush: "post", immediate: true },
+);
 
 async function onDrop(e: DragEvent) {
   dragging.value = false;
@@ -482,26 +517,28 @@ async function onDrop(e: DragEvent) {
         @drop.prevent="onDrop"
       >
         <div ref="listEl" class="messages" @scroll="onScroll">
-          <button v-if="buffer?.more" class="load-older" @click="loadOlder">Load older messages</button>
-          <template v-for="(r, i) in rows" :key="r.msg?.id || (r.events && foldKey(r.events)) || i">
-            <div v-if="r.day" class="day-sep"><span>{{ r.day }}</span></div>
-            <div v-if="r.msg && markerMsg && r.msg === markerMsg" class="unread-sep"><span>new messages</span></div>
-            <MessageItem v-if="r.msg" :msg="r.msg" />
-            <template v-else-if="r.events">
-              <div class="fold" :class="{ open: isFoldOpen(r.events) }" @click="toggleFold(r.events)">
-                <span class="fold-caret">{{ isFoldOpen(r.events) ? "▾" : "▸" }}</span>
-                <span class="fold-summary">{{ eventSummary(r.events) }}</span>
-              </div>
-              <template v-if="isFoldOpen(r.events)">
-                <MessageItem v-for="(ev, j) in r.events" :key="'f' + i + '-' + j" :msg="ev" />
+          <div ref="contentEl" class="messages-content">
+            <button v-if="buffer?.more" class="load-older" @click="loadOlder">Load older messages</button>
+            <template v-for="(r, i) in rows" :key="r.msg?.id || (r.events && foldKey(r.events)) || i">
+              <div v-if="r.day" class="day-sep"><span>{{ r.day }}</span></div>
+              <div v-if="r.msg && markerMsg && r.msg === markerMsg" class="unread-sep"><span>new messages</span></div>
+              <MessageItem v-if="r.msg" :msg="r.msg" />
+              <template v-else-if="r.events">
+                <div class="fold" :class="{ open: isFoldOpen(r.events) }" @click="toggleFold(r.events)">
+                  <span class="fold-caret">{{ isFoldOpen(r.events) ? "▾" : "▸" }}</span>
+                  <span class="fold-summary">{{ eventSummary(r.events) }}</span>
+                </div>
+                <template v-if="isFoldOpen(r.events)">
+                  <MessageItem v-for="(ev, j) in r.events" :key="'f' + i + '-' + j" :msg="ev" />
+                </template>
               </template>
             </template>
-          </template>
-          <button
-            v-if="buffer?.windowed"
-            class="load-older back-to-latest"
-            @click="backToLatest"
-          >Back to latest messages</button>
+            <button
+              v-if="buffer?.windowed"
+              class="load-older back-to-latest"
+              @click="backToLatest"
+            >Back to latest messages</button>
+          </div>
         </div>
         <div v-if="showUnreadBar" class="unread-jump" role="status">
           <button type="button" class="unread-jump-go" @click="jumpToMarker">
