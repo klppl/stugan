@@ -45,6 +45,7 @@ const (
 	TRead         = "read"          // c2s — mark a buffer read (advance read marker)
 	THighlightSet = "highlight:set" // c2s — replace the highlight ruleset
 	TMute         = "mute"          // c2s set intent; s2c absolute state broadcast to the user's tabs
+	TBufClose     = "buf:close"     // c2s — close/remove a query buffer from state
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -378,6 +379,15 @@ type MuteSet struct {
 	Network string `json:"network"`
 	Buffer  string `json:"buffer"`
 	Muted   bool   `json:"muted"`
+}
+
+// BufClose is a client→server request to close a query/DM buffer, removing it
+// from the network's state. Channels are left via /part instead; the status
+// buffer cannot be closed. The engine answers by re-broadcasting the network
+// (net:update) without the buffer, so every tab drops it.
+type BufClose struct {
+	Network string `json:"network"`
+	Buffer  string `json:"buffer"`
 }
 
 // WireError is a server→client error, correlated to a request id when set

@@ -731,6 +731,16 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			s.routeToUser(c.user, frame)
 		}
 
+	case proto.TBufClose:
+		var d proto.BufClose
+		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" {
+			c.sendError(env.ID, "bad_request", "buf:close requires network and buffer")
+			return
+		}
+		if err := c.tenant.Engine.CloseBuffer(d.Network, d.Buffer); err != nil {
+			c.sendError(env.ID, "bad_request", err.Error())
+		}
+
 	default:
 		s.log.Debug("ignoring unknown frame", "t", env.T)
 	}

@@ -66,6 +66,12 @@ function leaveFromMenu() {
   connection.send(p.network, p.buffer, "/part");
   ctx.close();
 }
+function closeFromMenu() {
+  const p = ctx.state.value?.payload;
+  if (!p) return;
+  connection.closeBuffer(p.network, p.buffer);
+  ctx.close();
+}
 </script>
 
 <template>
@@ -146,6 +152,14 @@ function leaveFromMenu() {
         @click="leaveFromMenu"
       >
         Leave channel
+      </button>
+      <button
+        v-if="ctx.state.value.payload.kind === 'query'"
+        class="ctx-item"
+        type="button"
+        @click="closeFromMenu"
+      >
+        Close query
       </button>
     </div>
 

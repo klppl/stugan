@@ -33,6 +33,7 @@ export const T = {
   Read: "read",
   HighlightSet: "highlight:set",
   Mute: "mute",
+  BufClose: "buf:close",
 } as const;
 
 export interface Envelope<D = unknown> {
@@ -74,6 +75,13 @@ export interface MuteSet {
   network: string;
   buffer: string;
   muted: boolean;
+}
+
+// BufClose closes a query/DM buffer. The server answers by re-broadcasting the
+// network (net:update) without the buffer; no dedicated reply frame.
+export interface BufClose {
+  network: string;
+  buffer: string;
 }
 
 export interface UserDTO {

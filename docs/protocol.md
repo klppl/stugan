@@ -61,6 +61,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `complete:req`  | `CompleteReq`  | ask plugins for tab-completion candidates (`seq`-correlated) |
 | `read`          | `ReadMark`     | mark a buffer read up to now (advances the persisted read marker) |
 | `highlight:set` | `HighlightRules` | replace the highlight ruleset (bad regex → `error`; success → `highlight` broadcast) |
+| `buf:close`     | `BufClose`     | close a query/DM buffer (server drops it and re-broadcasts `net:update`; channels use `/part`) |
 
 ### Bidirectional
 

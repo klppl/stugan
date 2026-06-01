@@ -354,6 +354,46 @@ func TestApplyMessageRoutesBuffer(t *testing.T) {
 	}
 }
 
+func TestCloseBuffer(t *testing.T) {
+	e, sink := newTestEngine(t)
+
+	// A query (from an inbound DM) and a channel.
+	e.apply(Event{Type: EvMessageIn, Network: "net", Message: &Message{
+		Network: "net", Buffer: "alice", From: "alice", Kind: MsgPrivmsg, Text: "psst",
+	}})
+	e.apply(Event{Type: EvMessageIn, Network: "net", Message: &Message{
+		Network: "net", Buffer: "#go", From: "bob", Kind: MsgPrivmsg, Text: "hi",
+	}})
+
+	// Closing a query drops the buffer and re-broadcasts the network.
+	before := len(sink.nets)
+	if err := e.CloseBuffer("net", "alice"); err != nil {
+		t.Fatalf("CloseBuffer(query) = %v, want nil", err)
+	}
+	if c := net0(e).Channel("alice"); c != nil {
+		t.Fatalf("query buffer still present after close: %+v", c)
+	}
+	if len(sink.nets) <= before {
+		t.Fatalf("CloseBuffer did not re-broadcast the network (nets %d → %d)", before, len(sink.nets))
+	}
+
+	// Channels can't be closed (use /part); the status buffer can't either.
+	if err := e.CloseBuffer("net", "#go"); err == nil {
+		t.Fatal("CloseBuffer(channel) = nil, want error")
+	}
+	if c := net0(e).Channel("#go"); c == nil {
+		t.Fatal("channel buffer was removed by a rejected close")
+	}
+
+	// Unknown network / buffer are errors, not panics.
+	if err := e.CloseBuffer("nope", "alice"); err == nil {
+		t.Fatal("CloseBuffer(unknown network) = nil, want error")
+	}
+	if err := e.CloseBuffer("net", "ghost"); err == nil {
+		t.Fatal("CloseBuffer(unknown buffer) = nil, want error")
+	}
+}
+
 func TestNetworkChangedEmitted(t *testing.T) {
 	e, sink := newTestEngine(t)
 

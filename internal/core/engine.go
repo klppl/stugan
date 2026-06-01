@@ -320,6 +320,37 @@ func (e *Engine) RemoveNetwork(id string) error {
 	return nil
 }
 
+// CloseBuffer drops a query/DM buffer from a network's state and re-broadcasts
+// the network so every connected client (and tab) drops it too. It is only for
+// queries: channels must be left via PART (which removes their buffer through
+// the normal EvPart path) and the status buffer cannot be closed. Message
+// history in the store is left intact — reopening the query (or a new message
+// arriving) restores the buffer and its backlog. Safe to call from any
+// goroutine. Mirrors SetBufferState's lock/notify discipline: state is mutated
+// under e.mu, then notifyNetwork is called after releasing it (it RLocks).
+func (e *Engine) CloseBuffer(network, buffer string) error {
+	e.mu.Lock()
+	n := e.user.Network(network)
+	if n == nil {
+		e.mu.Unlock()
+		return errors.New("unknown network")
+	}
+	c := n.Channel(buffer)
+	if c == nil {
+		e.mu.Unlock()
+		return errors.New("unknown buffer")
+	}
+	if c.Kind != KindQuery {
+		e.mu.Unlock()
+		return fmt.Errorf("cannot close a %s buffer", c.Kind)
+	}
+	n.remove(buffer)
+	e.mu.Unlock()
+
+	e.notifyNetwork(network)
+	return nil
+}
+
 // UpdateNetwork changes an existing network's settings. Connection-level
 // changes (server address, TLS, user/realname, SASL) require re-dialing;
 // nick and channel changes are applied live (NICK/JOIN/PART) without
