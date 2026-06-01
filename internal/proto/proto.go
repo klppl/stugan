@@ -30,6 +30,7 @@ const (
 	TRedact       = "redact"        // s2c (and c2s) — message redaction
 	TPluginList   = "plugin:list"   // s2c (answers c2s plugin:list/plugin:action)
 	TCompleteRes  = "complete:res"  // s2c (answers c2s complete:req)
+	THighlight    = "highlight"     // s2c (current rules; answers highlight:set)
 	TError        = "error"         // s2c
 
 	TMsgSend      = "msg:send"      // c2s
@@ -42,6 +43,8 @@ const (
 	TList         = "list"          // c2s
 	TPluginAction = "plugin:action" // c2s — load/unload/reload a plugin
 	TRead         = "read"          // c2s — mark a buffer read (advance read marker)
+	THighlightSet = "highlight:set" // c2s — replace the highlight ruleset
+	TMute         = "mute"          // c2s set intent; s2c absolute state broadcast to the user's tabs
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -70,8 +73,10 @@ type Hello struct {
 
 // InitState is the authoritative full snapshot sent after Hello.
 type InitState struct {
-	User     UserDTO      `json:"user"`
-	Networks []NetworkDTO `json:"networks"`
+	User      UserDTO        `json:"user"`
+	Networks  []NetworkDTO   `json:"networks"`
+	Highlight HighlightRules `json:"highlight"`
+	Muted     []MuteRef      `json:"muted,omitempty"`
 }
 
 // UserDTO is the wire projection of core.User.
@@ -345,6 +350,34 @@ type CompleteReq struct {
 type CompleteRes struct {
 	Seq   int      `json:"seq"`
 	Items []string `json:"items"`
+}
+
+// HighlightRules is the user's highlight ruleset: case-insensitive regex
+// patterns that flag an incoming message (in addition to a nick mention) and
+// exceptions that suppress a would-be highlight. Delivered in InitState, echoed
+// in a highlight frame after a highlight:set, and carried by highlight:set
+// itself. A bad regex is rejected with an error frame and leaves rules
+// unchanged.
+type HighlightRules struct {
+	Patterns   []string `json:"patterns"`
+	Exceptions []string `json:"exceptions"`
+}
+
+// MuteRef identifies one muted buffer. A muted buffer shows no unread badge and
+// fires no notification (in-app or push). The set is server-persisted per user
+// so it survives reloads and is shared across the user's devices; push
+// suppression needs it server-side because push fires while no client is
+// connected. Buffer is matched case-insensitively.
+type MuteRef struct {
+	Network string `json:"network"`
+	Buffer  string `json:"buffer"`
+}
+
+// MuteSet is a client→server request to mute (Muted=true) or unmute a buffer.
+type MuteSet struct {
+	Network string `json:"network"`
+	Buffer  string `json:"buffer"`
+	Muted   bool   `json:"muted"`
 }
 
 // WireError is a server→client error, correlated to a request id when set

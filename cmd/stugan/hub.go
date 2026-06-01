@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -105,8 +106,10 @@ func (h *hub) Users() []string {
 // running and have no server sink — the caller registers sinks then runs
 // hub.Engines().
 func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
-	highlighter, err := core.NewHighlighter(cfg.Highlight.Patterns, cfg.Highlight.Exceptions)
-	if err != nil {
+	// Validate the config highlight rules up front; they seed any user who
+	// hasn't customized their own (a per-user override lives in that user's
+	// store, set from the settings UI — see the loop below).
+	if _, err := core.NewHighlighter(cfg.Highlight.Patterns, cfg.Highlight.Exceptions); err != nil {
 		return nil, nil, err
 	}
 
@@ -141,6 +144,12 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 			return nil, nil, fmt.Errorf("user %q store: %w", u.Name, err)
 		}
 		h.stores = append(h.stores, db)
+
+		// Per-user highlight rules: a stored override (set from the settings UI)
+		// wins; otherwise fall back to the config defaults. Both were validated
+		// above / on save, so a compile error here means corrupt stored JSON —
+		// log it and fall back rather than refusing to start.
+		highlighter := userHighlighter(db, cfg, log.With("user", u.Name))
 
 		connector := ircConnector{log: log.With("user", u.Name)}
 		eng := core.New(core.Options{
@@ -196,7 +205,7 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 		}
 
 		h.engines[u.Name] = eng
-		h.tenants[u.Name] = &server.Tenant{Engine: eng, History: db}
+		h.tenants[u.Name] = &server.Tenant{Engine: eng, History: db, Prefs: db}
 	}
 
 	cleanup := func() {
@@ -205,6 +214,33 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 		}
 	}
 	return h, cleanup, nil
+}
+
+// userHighlighter builds a user's highlighter from their stored override (the
+// "highlight" pref, set via the settings UI) when present, falling back to the
+// config defaults. A stored value that fails to parse or compile is logged and
+// ignored so a corrupt blob never blocks startup.
+func userHighlighter(db *store.Store, cfg *config.Config, log *slog.Logger) *core.Highlighter {
+	patterns, exceptions := cfg.Highlight.Patterns, cfg.Highlight.Exceptions
+	if v, err := db.Pref("highlight"); err != nil {
+		log.Warn("read highlight pref", "err", err)
+	} else if v != "" {
+		var r struct {
+			Patterns   []string `json:"patterns"`
+			Exceptions []string `json:"exceptions"`
+		}
+		if err := json.Unmarshal([]byte(v), &r); err != nil {
+			log.Warn("parse highlight pref", "err", err)
+		} else {
+			patterns, exceptions = r.Patterns, r.Exceptions
+		}
+	}
+	hl, err := core.NewHighlighter(patterns, exceptions)
+	if err != nil {
+		log.Warn("compile highlight pref; using defaults", "err", err)
+		hl, _ = core.NewHighlighter(cfg.Highlight.Patterns, cfg.Highlight.Exceptions)
+	}
+	return hl
 }
 
 // registerSinks wires the server's per-user sink onto each engine. Call

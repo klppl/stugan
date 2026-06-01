@@ -75,6 +75,11 @@ CREATE TABLE IF NOT EXISTS read_markers (
   ts      INTEGER NOT NULL,        -- unix millis; messages with ts > this are unread
   PRIMARY KEY (network, buffer)
 );
+
+CREATE TABLE IF NOT EXISTS prefs (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL             -- opaque JSON owned by the server (highlight rules, mutes)
+);
 `
 
 // Open opens (creating if needed) the database at path and applies the
@@ -205,6 +210,25 @@ func (s *Store) PluginKVSet(script, key, value string) error {
 // PluginKVDelete removes one entry. Missing entries are not an error.
 func (s *Store) PluginKVDelete(script, key string) error {
 	_, err := s.db.Exec(`DELETE FROM plugin_kv WHERE script = ? AND key = ?`, script, key)
+	return err
+}
+
+// Pref returns the value stored under key, or "" if there is none. The value
+// is opaque JSON the server owns (highlight rules, muted buffers); the store
+// treats it as a blob and does not interpret it.
+func (s *Store) Pref(key string) (string, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM prefs WHERE key = ?`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetPref upserts a server preference blob under key.
+func (s *Store) SetPref(key, value string) error {
+	_, err := s.db.Exec(`INSERT INTO prefs(key, value) VALUES(?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
 

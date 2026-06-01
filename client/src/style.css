@@ -939,6 +939,26 @@ body {
 .install-theme code {
   font-family: ui-monospace, monospace;
 }
+.hl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.hl-field > span {
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+.hl-field textarea {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
 .settings .danger {
   background: var(--hl);
   color: #fff;

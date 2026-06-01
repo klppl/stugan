@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { settings, themeNames, installTheme, uninstallTheme, TEMPLATE } from "../settings";
 import { connection } from "../connection";
 import type { PluginInfo } from "../proto/events";
@@ -45,6 +45,38 @@ function doInstall() {
     themeCss.value = TEMPLATE;
   }
 }
+
+// Highlight keywords: one regex per line. The server validates and persists
+// them, then echoes the normalized rules back (which updates store.highlight).
+const hlPatterns = ref(connection.store.highlight.patterns.join("\n"));
+const hlExceptions = ref(connection.store.highlight.exceptions.join("\n"));
+const hlSaved = ref(false);
+let hlPending = false;
+
+function saveHighlight() {
+  const toList = (s: string) =>
+    s
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+  hlPending = true;
+  connection.setHighlight(toList(hlPatterns.value), toList(hlExceptions.value));
+}
+
+// Reflect the server's normalized echo back into the fields, and flash "Saved"
+// — but only for a save we initiated (not an init/reconnect refresh).
+watch(
+  () => connection.store.highlight,
+  (h) => {
+    hlPatterns.value = h.patterns.join("\n");
+    hlExceptions.value = h.exceptions.join("\n");
+    if (hlPending) {
+      hlPending = false;
+      hlSaved.value = true;
+      setTimeout(() => (hlSaved.value = false), 2000);
+    }
+  },
+);
 
 async function enableNotifications() {
   pushMsg.value = "requesting…";
@@ -117,6 +149,37 @@ async function enableNotifications() {
       </div>
       <p v-if="pushMsg" class="hint">{{ pushMsg }}</p>
       <p class="hint">Mute a channel by right-clicking it in the sidebar.</p>
+
+      <!-- Highlight keywords: extra words/patterns (beyond your nick) that mark
+           a message as a highlight and fire a notification. One regex per line;
+           the server validates them and rejects a bad pattern with an error. -->
+      <h3 class="section">Highlights</h3>
+      <p class="hint">
+        Words that highlight you (in addition to your nick). One regex per line,
+        case-insensitive.
+      </p>
+      <label class="hl-field">
+        <span>Keywords</span>
+        <textarea
+          v-model="hlPatterns"
+          rows="4"
+          spellcheck="false"
+          placeholder="release&#10;\bdeploy\b"
+        />
+      </label>
+      <label class="hl-field">
+        <span>Exceptions</span>
+        <textarea
+          v-model="hlExceptions"
+          rows="3"
+          spellcheck="false"
+          placeholder="patterns here never highlight, even if a keyword matches"
+        />
+      </label>
+      <div class="row">
+        <span class="hint">{{ hlSaved ? "Saved ✓" : "" }}</span>
+        <button @click="saveHighlight">Save highlights</button>
+      </div>
 
       <div v-if="authState.authEnabled" class="row">
         <span>Signed in as {{ authState.user }}</span>
