@@ -409,11 +409,23 @@ func noStore(w http.ResponseWriter) {
 // secureCookie reports whether session cookies should carry the Secure
 // attribute. Direct TLS sets r.TLS; behind a TLS-terminating reverse proxy
 // (the documented deployment) the proxy speaks plain HTTP to the daemon, so
-// r.TLS is nil and we fall back to the X-Forwarded-Proto hint. This is
-// fail-safe: a spoofed header can only *add* Secure (at worst a plaintext
-// client can't send the cookie back — a self-inflicted no-op), never strip it.
+// r.TLS is nil and we fall back to forwarded-scheme hints. This is fail-safe:
+// a spoofed header can only *add* Secure (at worst a plaintext client can't
+// send the cookie back — a self-inflicted no-op), never strip it.
+//
+// X-Forwarded-Proto is the standard signal; the left-most entry is the
+// original client scheme when the request crossed more than one proxy.
+// CF-Visitor ({"scheme":"https"}) is Cloudflare's native equivalent, honored
+// as a fallback for Cloudflare Tunnel deployments.
 func secureCookie(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	if r.TLS != nil {
+		return true
+	}
+	proto, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
+	if strings.EqualFold(strings.TrimSpace(proto), "https") {
+		return true
+	}
+	return strings.Contains(r.Header.Get("CF-Visitor"), `"scheme":"https"`)
 }
 
 // slowFail responds with a small delay so an attacker can't pump the
