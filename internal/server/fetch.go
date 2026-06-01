@@ -50,11 +50,33 @@ func guardedDial(ctx context.Context, network, addr string) (net.Conn, error) {
 	return nil, fmt.Errorf("refusing to connect to non-public address %q", host)
 }
 
+// reservedRanges are non-globally-routable CIDRs that the standard
+// net.IP predicates (IsPrivate/IsLoopback/IsLinkLocal*/…) do NOT cover, so
+// they would otherwise slip past the SSRF guard:
+//   - 100.64.0.0/10  RFC 6598 carrier-grade NAT (common internal range)
+//   - 192.0.0.0/24   RFC 6890 IETF protocol assignments
+//   - 198.18.0.0/15  RFC 2544 benchmarking
+//   - 240.0.0.0/4    RFC 1112 reserved/future, incl. 255.255.255.255 broadcast
+var reservedRanges = func() []*net.IPNet {
+	var out []*net.IPNet
+	for _, c := range []string{"100.64.0.0/10", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4"} {
+		if _, n, err := net.ParseCIDR(c); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}()
+
 // isPublicIP reports whether ip is a globally routable address.
 func isPublicIP(ip net.IP) bool {
 	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
 		return false
+	}
+	for _, n := range reservedRanges {
+		if n.Contains(ip) {
+			return false
+		}
 	}
 	return true
 }

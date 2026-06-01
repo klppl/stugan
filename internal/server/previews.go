@@ -69,6 +69,15 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "public, max-age=86400")
+	// The proxy reflects attacker-controlled bytes from a remote origin back
+	// on *our* origin. A remote server can return Content-Type: image/svg+xml
+	// (which passes the image/ prefix check) carrying inline <script>; opened
+	// as a top-level document that would execute same-origin. <img>/<video>
+	// embedding ignores these headers, so they cost nothing for the real use
+	// while neutralising direct-navigation: nosniff pins the declared type and
+	// the sandbox CSP blocks script execution in any document context.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	_, _ = io.Copy(w, io.LimitReader(resp.Body, maxImageBytes))
 }
 

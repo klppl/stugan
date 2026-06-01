@@ -347,7 +347,7 @@ func (s *Server) handleMagicWord(w http.ResponseWriter, r *http.Request) {
 		Name: magicCookie, Value: tok, Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int(s.magicSessions.TTL().Seconds()),
-		Secure:   r.TLS != nil,
+		Secure:   secureCookie(r),
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -395,7 +395,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	tok, maxAge := s.hub.StartSession(user)
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: tok, Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Secure: r.TLS != nil,
+		SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Secure: secureCookie(r),
 	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"user": user})
@@ -404,6 +404,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 // noStore tells caches and clients not to keep auth endpoint responses.
 func noStore(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
+}
+
+// secureCookie reports whether session cookies should carry the Secure
+// attribute. Direct TLS sets r.TLS; behind a TLS-terminating reverse proxy
+// (the documented deployment) the proxy speaks plain HTTP to the daemon, so
+// r.TLS is nil and we fall back to the X-Forwarded-Proto hint. This is
+// fail-safe: a spoofed header can only *add* Secure (at worst a plaintext
+// client can't send the cookie back — a self-inflicted no-op), never strip it.
+func secureCookie(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 // slowFail responds with a small delay so an attacker can't pump the
