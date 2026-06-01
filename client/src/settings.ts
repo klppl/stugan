@@ -35,7 +35,6 @@ export interface CustomTheme {
 
 interface Settings {
   theme: string;
-  muted: string[];
   customThemes: CustomTheme[];
   foldEvents: boolean; // collapse runs of join/part/quit/nick lines
   coloredNicks: boolean; // colorize nicks by a hash of the name
@@ -48,7 +47,6 @@ function load(): Settings {
     const s = JSON.parse(localStorage.getItem(KEY) || "{}");
     return {
       theme: typeof s.theme === "string" ? s.theme : "dark",
-      muted: Array.isArray(s.muted) ? s.muted : [],
       customThemes: Array.isArray(s.customThemes) ? s.customThemes : [],
       foldEvents: typeof s.foldEvents === "boolean" ? s.foldEvents : true,
       coloredNicks: typeof s.coloredNicks === "boolean" ? s.coloredNicks : true,
@@ -56,7 +54,6 @@ function load(): Settings {
   } catch {
     return {
       theme: "dark",
-      muted: [],
       customThemes: [],
       foldEvents: true,
       coloredNicks: true,
@@ -129,14 +126,4 @@ export function installTheme(name: string, css: string): string | null {
 export function uninstallTheme(name: string) {
   settings.customThemes = settings.customThemes.filter((t) => t.name !== name);
   if (settings.theme === name) settings.theme = "dark";
-}
-
-export function isMuted(key: string): boolean {
-  return settings.muted.includes(key);
-}
-
-export function toggleMute(key: string) {
-  const i = settings.muted.indexOf(key);
-  if (i >= 0) settings.muted.splice(i, 1);
-  else settings.muted.push(key);
 }

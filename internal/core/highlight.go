@@ -11,31 +11,58 @@ import (
 type Highlighter struct {
 	patterns   []*regexp.Regexp
 	exceptions []*regexp.Regexp
+	// patternSrc/exceptionSrc are the original source strings, retained so the
+	// rules can be projected back to the client (the compiled regexes can't be
+	// stringified to their input). They mirror patterns/exceptions 1:1.
+	patternSrc   []string
+	exceptionSrc []string
 }
 
 // NewHighlighter compiles the configured patterns and exceptions. Empty
-// input yields a highlighter that still flags nick mentions.
+// input yields a highlighter that still flags nick mentions. Blank entries are
+// skipped so a trailing empty line in user input doesn't match everything.
 func NewHighlighter(patterns, exceptions []string) (*Highlighter, error) {
 	h := &Highlighter{}
-	compile := func(src []string) ([]*regexp.Regexp, error) {
+	compile := func(src []string) ([]*regexp.Regexp, []string, error) {
 		out := make([]*regexp.Regexp, 0, len(src))
+		kept := make([]string, 0, len(src))
 		for _, p := range src {
+			if p == "" {
+				continue
+			}
 			re, err := regexp.Compile("(?i)" + p)
 			if err != nil {
-				return nil, fmt.Errorf("highlight pattern %q: %w", p, err)
+				return nil, nil, fmt.Errorf("highlight pattern %q: %w", p, err)
 			}
 			out = append(out, re)
+			kept = append(kept, p)
 		}
-		return out, nil
+		return out, kept, nil
 	}
 	var err error
-	if h.patterns, err = compile(patterns); err != nil {
+	if h.patterns, h.patternSrc, err = compile(patterns); err != nil {
 		return nil, err
 	}
-	if h.exceptions, err = compile(exceptions); err != nil {
+	if h.exceptions, h.exceptionSrc, err = compile(exceptions); err != nil {
 		return nil, err
 	}
 	return h, nil
+}
+
+// Patterns and Exceptions return the highlighter's source rules (nil for the
+// default nick-mentions-only highlighter), for projecting to the client.
+func (h *Highlighter) Patterns() []string {
+	if h == nil {
+		return nil
+	}
+	return h.patternSrc
+}
+
+func (h *Highlighter) Exceptions() []string {
+	if h == nil {
+		return nil
+	}
+	return h.exceptionSrc
 }
 
 // Match reports whether text should be highlighted for the given nick.

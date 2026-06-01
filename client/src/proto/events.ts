@@ -19,6 +19,7 @@ export const T = {
   Redact: "redact",
   PluginList: "plugin:list",
   CompleteRes: "complete:res",
+  Highlight: "highlight",
   Error: "error",
   MsgSend: "msg:send",
   CompleteReq: "complete:req",
@@ -30,6 +31,8 @@ export const T = {
   List: "list",
   PluginAction: "plugin:action",
   Read: "read",
+  HighlightSet: "highlight:set",
+  Mute: "mute",
 } as const;
 
 export interface Envelope<D = unknown> {
@@ -47,6 +50,30 @@ export interface Hello {
 export interface InitState {
   user: UserDTO;
   networks: NetworkDTO[];
+  highlight: HighlightRules;
+  muted?: MuteRef[];
+}
+
+// HighlightRules is the user's highlight ruleset: case-insensitive regex
+// patterns that flag a message (beyond a nick mention), and exceptions that
+// suppress a would-be highlight. Delivered in init, echoed after highlight:set.
+export interface HighlightRules {
+  patterns: string[];
+  exceptions: string[];
+}
+
+// MuteRef identifies one muted buffer (no badge, no notification). The set is
+// server-persisted per user and shared across devices.
+export interface MuteRef {
+  network: string;
+  buffer: string;
+}
+
+// MuteSet mutes (muted=true) or unmutes a buffer.
+export interface MuteSet {
+  network: string;
+  buffer: string;
+  muted: boolean;
 }
 
 export interface UserDTO {

@@ -42,6 +42,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `list:result`   | `ListResp`     | channel-browser results (answers `list`) |
 | `plugin:list`   | `PluginListResp` | the plugin manager list (answers `plugin:list` and `plugin:action`) |
 | `complete:res`  | `CompleteRes`  | plugin tab-completion candidates (answers `complete:req`) |
+| `highlight`     | `HighlightRules` | the normalized highlight ruleset, broadcast to all the user's tabs after a `highlight:set` |
 | `error`         | `WireError`    | `{code, message}`, correlated to a request `id` |
 
 ### Client → server
@@ -59,6 +60,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `plugin:action` | `PluginAction` | load/unload/reload a plugin by name |
 | `complete:req`  | `CompleteReq`  | ask plugins for tab-completion candidates (`seq`-correlated) |
 | `read`          | `ReadMark`     | mark a buffer read up to now (advances the persisted read marker) |
+| `highlight:set` | `HighlightRules` | replace the highlight ruleset (bad regex → `error`; success → `highlight` broadcast) |
 
 ### Bidirectional
 
@@ -70,6 +72,7 @@ The actor field is omitted on c2s and filled by the server on s2c.
 | `react`     | `React`   | toggle a reaction | someone reacted (adds `nick`) |
 | `redact`    | `Redact`  | delete a message | a message was redacted (adds `by`) |
 | `net:remove`| `NetRemove` | remove a network | confirm removal |
+| `mute`      | `MuteSet` | set a buffer's muted state | the persisted state, broadcast to the user's tabs |
 
 ## State DTOs
 
@@ -143,6 +146,14 @@ type PluginInfo struct {
     Commands         []string   // /command names it registered
 }
 type PluginListResp struct { Plugins []PluginInfo }
+
+// Highlight rules and mutes are server-persisted per user (store `prefs` table)
+// and seeded into InitState (InitState.Highlight, InitState.Muted). A muted
+// buffer is matched case-insensitively on Buffer; the set is checked both
+// client-side (badges, in-app notify) and server-side (push, while away).
+type HighlightRules struct { Patterns, Exceptions []string }  // case-insensitive regexes
+type MuteRef        struct { Network, Buffer string }         // one muted buffer
+type MuteSet        struct { Network, Buffer string; Muted bool }
 ```
 
 `msg:send` whose `Text` begins with `/` is parsed server-side as a command

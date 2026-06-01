@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { connection, bufKey, type Buffer, type Network } from "../connection";
-import { isMuted, toggleMute } from "../settings";
 import { useContextMenu } from "../contextMenu";
 import { ui, closeDrawers } from "../ui";
 import AddNetwork from "./AddNetwork.vue";
@@ -47,7 +46,7 @@ function isEncrypted(buf: Buffer): boolean {
 function muteFromMenu() {
   const p = ctx.state.value?.payload;
   if (!p) return;
-  toggleMute(bufKey(p.network, p.buffer));
+  connection.toggleMute(p.network, p.buffer);
   ctx.close();
 }
 function keyFromMenu() {
@@ -90,7 +89,7 @@ function leaveFromMenu() {
         <li
           v-for="buf in channelBuffers(net)"
           :key="buf.name"
-          :class="{ active: isActive(net.id, buf.name), [buf.kind]: true, muted: isMuted(bufKey(net.id, buf.name)) }"
+          :class="{ active: isActive(net.id, buf.name), [buf.kind]: true, muted: connection.isMuted(bufKey(net.id, buf.name)) }"
           @click="selectBuffer(net.id, buf.name)"
           @contextmenu="ctx.onContext({ network: net.id, buffer: buf.name, kind: buf.kind }, $event)"
           @touchstart.passive="ctx.onTouchStart({ network: net.id, buffer: buf.name, kind: buf.kind }, $event)"
@@ -101,7 +100,7 @@ function leaveFromMenu() {
         >
           <span v-if="isEncrypted(buf)" class="lock-icon" :title="`encrypted (${buf.state.encrypted})`">🔒</span>
           <span class="buf-name">{{ buf.name }}</span>
-          <span v-if="isMuted(bufKey(net.id, buf.name))" class="mute-icon">🔇</span>
+          <span v-if="connection.isMuted(bufKey(net.id, buf.name))" class="mute-icon">🔇</span>
           <span
             v-else-if="buf.unread > 0 && !isActive(net.id, buf.name)"
             class="badge"
@@ -130,7 +129,7 @@ function leaveFromMenu() {
     >
       <div class="ctx-header">{{ ctx.state.value.payload.buffer }}</div>
       <button class="ctx-item" type="button" @click="muteFromMenu">
-        {{ isMuted(bufKey(ctx.state.value.payload.network, ctx.state.value.payload.buffer)) ? "Unmute" : "Mute" }}
+        {{ connection.isMuted(bufKey(ctx.state.value.payload.network, ctx.state.value.payload.buffer)) ? "Unmute" : "Mute" }}
       </button>
       <button class="ctx-item" type="button" @click="keyFromMenu">
         Set encryption key…

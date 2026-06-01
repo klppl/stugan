@@ -49,10 +49,19 @@ type History interface {
 	UnreadCounts(ctx context.Context) ([]core.UnreadCount, error)
 }
 
+// Prefs persists per-user server preference blobs (highlight rules, muted
+// buffers). The store implements it; it is optional (nil in tests and the
+// no-history single-user case), so every use is nil-guarded.
+type Prefs interface {
+	Pref(key string) (string, error)
+	SetPref(key, value string) error
+}
+
 // Tenant is one user's engine and history.
 type Tenant struct {
 	Engine  *core.Engine
 	History History
+	Prefs   Prefs
 }
 
 // Hub resolves users, sessions, and per-user tenants. The composition root
@@ -453,6 +462,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			applyUnread(&state, counts)
 		}
 	}
+	patterns, exceptions := tenant.Engine.HighlightRules()
+	state.Highlight = proto.HighlightRules{Patterns: patterns, Exceptions: exceptions}
+	state.Muted = loadMuted(tenant)
 	init, _ := proto.Frame(proto.TInit, state)
 	c.trySend(hello)
 	c.trySend(init)
@@ -646,6 +658,56 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
 			Plugins: toPluginInfos(c.tenant.Engine.Plugins()),
 		})
+
+	case proto.THighlightSet:
+		var d proto.HighlightRules
+		if err := decode(env, &d); err != nil {
+			c.sendError(env.ID, "bad_request", "invalid highlight:set payload")
+			return
+		}
+		hl, err := core.NewHighlighter(d.Patterns, d.Exceptions)
+		if err != nil {
+			c.sendError(env.ID, "bad_request", err.Error())
+			return
+		}
+		c.tenant.Engine.SetHighlighter(hl)
+		if c.tenant.Prefs != nil {
+			if b, err := json.Marshal(d); err == nil {
+				if err := c.tenant.Prefs.SetPref(prefHighlight, string(b)); err != nil {
+					s.log.Error("save highlight", "user", c.user, "err", err)
+				}
+			}
+		}
+		// Broadcast the normalized rules (blank lines dropped) to every one of
+		// the user's clients — the requester to confirm the save, other tabs to
+		// stay in sync without a reload. The frame is uncorrelated; only the
+		// requesting tab flashes "saved" (it tracks that locally).
+		if frame, err := proto.Frame(proto.THighlight, proto.HighlightRules{
+			Patterns: hl.Patterns(), Exceptions: hl.Exceptions(),
+		}); err == nil {
+			s.routeToUser(c.user, frame)
+		}
+
+	case proto.TMute:
+		var d proto.MuteSet
+		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" {
+			return // mute is best-effort; ignore malformed
+		}
+		if c.tenant.Prefs == nil {
+			return
+		}
+		refs := setMuted(loadMuted(c.tenant), d.Network, d.Buffer, d.Muted)
+		if b, err := json.Marshal(refs); err == nil {
+			if err := c.tenant.Prefs.SetPref(prefMuted, string(b)); err != nil {
+				s.log.Error("save mute", "user", c.user, "err", err)
+			}
+		}
+		// Broadcast the absolute new state to every tab so they converge. The
+		// client handler sets (not toggles), so the originating tab's optimistic
+		// update is a no-op and other tabs catch up.
+		if frame, err := proto.Frame(proto.TMute, d); err == nil {
+			s.routeToUser(c.user, frame)
+		}
 
 	default:
 		s.log.Debug("ignoring unknown frame", "t", env.T)

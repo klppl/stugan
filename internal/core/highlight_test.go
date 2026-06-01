@@ -27,6 +27,69 @@ func TestHighlighter(t *testing.T) {
 	}
 }
 
+func TestHighlighterRulesRoundTrip(t *testing.T) {
+	// Blank entries are dropped (a trailing empty line in the form must not
+	// compile to a match-everything regex), and the kept sources round-trip.
+	h, err := NewHighlighter([]string{"release", "", `\bship\b`}, []string{"", "draft"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := h.Patterns(), []string{"release", `\bship\b`}; !equalStrings(got, want) {
+		t.Errorf("Patterns() = %v, want %v", got, want)
+	}
+	if got, want := h.Exceptions(), []string{"draft"}; !equalStrings(got, want) {
+		t.Errorf("Exceptions() = %v, want %v", got, want)
+	}
+	// A blank line never matches.
+	if h.Match("", "") {
+		t.Error("empty text highlighted")
+	}
+
+	// A bad regex is rejected.
+	if _, err := NewHighlighter([]string{"("}, nil); err == nil {
+		t.Error("expected error for invalid regex")
+	}
+
+	// The nil highlighter (default) reports no rules and matches nothing.
+	var nilH *Highlighter
+	if nilH.Patterns() != nil || nilH.Exceptions() != nil {
+		t.Error("nil highlighter should report nil rules")
+	}
+}
+
+func TestEngineSetHighlighter(t *testing.T) {
+	e := New(Options{}) // default: nick mentions only
+	if p, ex := e.HighlightRules(); len(p) != 0 || len(ex) != 0 {
+		t.Fatalf("default rules = %v/%v, want empty", p, ex)
+	}
+	hl, err := NewHighlighter([]string{"ping"}, []string{"ouch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.SetHighlighter(hl)
+	p, ex := e.HighlightRules()
+	if !equalStrings(p, []string{"ping"}) || !equalStrings(ex, []string{"ouch"}) {
+		t.Fatalf("after swap rules = %v/%v", p, ex)
+	}
+	// A nil swap restores the default (nick-mentions-only) without panicking.
+	e.SetHighlighter(nil)
+	if p, ex := e.HighlightRules(); len(p) != 0 || len(ex) != 0 {
+		t.Fatalf("after nil swap rules = %v/%v, want empty", p, ex)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestExpandAlias(t *testing.T) {
 	cases := []struct {
 		tmpl string

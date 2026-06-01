@@ -72,6 +72,36 @@ func TestPluginKVRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPrefRoundTrip(t *testing.T) {
+	s := openTest(t)
+
+	// An unset key reads as empty without error.
+	if v, err := s.Pref("highlight"); err != nil || v != "" {
+		t.Fatalf("Pref(unset) = %q, %v; want \"\", nil", v, err)
+	}
+
+	if err := s.SetPref("highlight", `{"patterns":["x"]}`); err != nil {
+		t.Fatalf("SetPref: %v", err)
+	}
+	if v, _ := s.Pref("highlight"); v != `{"patterns":["x"]}` {
+		t.Fatalf("Pref after set = %q", v)
+	}
+
+	// Upsert overwrites; other keys are independent.
+	if err := s.SetPref("highlight", `{"patterns":["y"]}`); err != nil {
+		t.Fatalf("SetPref upsert: %v", err)
+	}
+	if err := s.SetPref("muted", `[{"network":"libera","buffer":"#go"}]`); err != nil {
+		t.Fatalf("SetPref muted: %v", err)
+	}
+	if v, _ := s.Pref("highlight"); v != `{"patterns":["y"]}` {
+		t.Errorf("Pref(highlight) after upsert = %q", v)
+	}
+	if v, _ := s.Pref("muted"); v != `[{"network":"libera","buffer":"#go"}]` {
+		t.Errorf("Pref(muted) = %q", v)
+	}
+}
+
 func TestPersistAndBacklog(t *testing.T) {
 	s := openTest(t)
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)

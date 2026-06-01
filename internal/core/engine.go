@@ -187,6 +187,27 @@ func (e *Engine) SetHost(h PluginHost) {
 	e.host = h
 }
 
+// SetHighlighter replaces the highlight ruleset at runtime (from the settings
+// UI). A nil highlighter restores nick-mentions-only matching. Safe to call
+// from a server goroutine: it takes the same lock the engine loop holds while
+// reading e.highlight in applyLocked.
+func (e *Engine) SetHighlighter(h *Highlighter) {
+	if h == nil {
+		h, _ = NewHighlighter(nil, nil)
+	}
+	e.mu.Lock()
+	e.highlight = h
+	e.mu.Unlock()
+}
+
+// HighlightRules returns the current highlight patterns and exceptions, for
+// seeding the settings form in the init snapshot.
+func (e *Engine) HighlightRules() (patterns, exceptions []string) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.highlight.Patterns(), e.highlight.Exceptions()
+}
+
 // Plugins lists the plugin scripts the host knows about, for the management
 // UI. Safe to call concurrently; the host is fixed after startup.
 func (e *Engine) Plugins() []PluginInfo { return e.host.Plugins() }
