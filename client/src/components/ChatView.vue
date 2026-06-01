@@ -52,8 +52,33 @@ const unreadCount = computed(() => {
 // (new unread, or switching to another buffer's divider) re-shows it.
 const barHidden = ref(false);
 watch(markerMsg, () => (barHidden.value = false));
+
+// markerOffscreen tracks whether the "new messages" divider is actually out of
+// view — i.e. the user would have to scroll to reach it. The bar is only a
+// useful affordance in that case; when the divider (and the unread lines below
+// it) already fit on screen there's nothing to jump to, so we suppress it even
+// for a single new message. Recomputed on scroll and after every layout change.
+const markerOffscreen = ref(false);
+function updateMarkerOffscreen() {
+  const el = listEl.value;
+  if (!el || !markerMsg.value) {
+    markerOffscreen.value = false;
+    return;
+  }
+  const sep = el.querySelector(".unread-sep") as HTMLElement | null;
+  if (!sep) {
+    // Divider not rendered (e.g. it sits above the loaded backlog) → off-screen.
+    markerOffscreen.value = true;
+    return;
+  }
+  const view = el.getBoundingClientRect();
+  const r = sep.getBoundingClientRect();
+  // Off-screen when the divider lies entirely above or below the viewport.
+  markerOffscreen.value = r.bottom <= view.top || r.top >= view.bottom;
+}
+
 const showUnreadBar = computed(
-  () => !!markerMsg.value && unreadCount.value > 0 && !barHidden.value,
+  () => !!markerMsg.value && unreadCount.value > 0 && !barHidden.value && markerOffscreen.value,
 );
 
 // jumpToMarker scrolls the divider into view and releases stick-to-bottom so
@@ -198,6 +223,7 @@ function onScroll() {
     stick = false;
   }
   lastScrollTop = st;
+  updateMarkerOffscreen();
 }
 function scrollToBottom() {
   const el = listEl.value;
@@ -236,6 +262,7 @@ watch(
     } else if (stick) {
       scrollToBottom();
     }
+    updateMarkerOffscreen();
   },
 );
 watch(
@@ -248,8 +275,15 @@ watch(
       return;
     }
     scrollToBottom();
+    updateMarkerOffscreen();
   },
 );
+// A fresh marker (or its removal) may appear without a scroll or length change
+// — recompute once the divider has rendered so the bar's visibility is right.
+watch(markerMsg, async () => {
+  await nextTick();
+  updateMarkerOffscreen();
+});
 
 // When a fresh jump is set up, the view/active/messages-length watchers
 // may not fire (e.g. clicking a mention for the buffer you're already
@@ -454,9 +488,11 @@ onMounted(() => {
   if ("ResizeObserver" in window) {
     contentRO = new ResizeObserver(() => {
       if (stick && !(store.jump && jumpMatchesActive())) scrollToBottom();
+      updateMarkerOffscreen();
     });
     if (contentEl.value) contentRO.observe(contentEl.value);
   }
+  updateMarkerOffscreen();
 });
 onUnmounted(() => {
   document.removeEventListener("keydown", onGlobalKeydown);
