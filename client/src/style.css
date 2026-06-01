@@ -740,6 +740,14 @@ body {
 .chat-input button:disabled {
   opacity: 0.5;
 }
+/* The upload (gem) button is secondary to Send: no accent fill, just the icon. */
+.chat-input button.upload-btn {
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: 16px;
+  line-height: 1;
+}
 .autocomplete {
   position: absolute;
   bottom: calc(100% + 4px);
@@ -808,12 +816,14 @@ body {
 
 /* "new messages" divider — like the day separator but in the highlight
    color so the boundary where you left off stands out. */
+/* Dedicated soft red for the "new messages" boundary so it reads as a distinct
+   unread marker regardless of the theme's accent/highlight color. */
 .unread-sep {
   display: flex;
   align-items: center;
   gap: 10px;
   margin: 8px 0 2px;
-  color: var(--hl);
+  color: #e06c6c;
   font-size: 0.78em;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -823,7 +833,7 @@ body {
   content: "";
   flex: 1;
   height: 1px;
-  background: color-mix(in srgb, var(--hl) 55%, transparent);
+  background: color-mix(in srgb, #e06c6c 70%, transparent);
 }
 
 /* Floating "jump to unread" bar — shown over the top of the message pane when

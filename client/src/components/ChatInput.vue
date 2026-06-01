@@ -183,6 +183,26 @@ async function onPaste(e: ClipboardEvent) {
   if (url) text.value = (text.value ? text.value + " " : "") + url;
 }
 
+// File-picker upload: the gem button opens a hidden <input type=file>; picked
+// files are uploaded the same way as paste/drag-drop, their URLs appended to
+// the message. Only available when the server negotiated the uploads cap.
+const fileEl = ref<HTMLInputElement | null>(null);
+const uploads = computed(() => connection.hasCap("uploads"));
+
+function pickFile() {
+  fileEl.value?.click();
+}
+
+async function onFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const files = input.files ? Array.from(input.files) : [];
+  input.value = ""; // reset so picking the same file again re-fires change
+  for (const f of files) {
+    const url = await connection.upload(f);
+    if (url) appendText(url);
+  }
+}
+
 function appendText(s: string) {
   text.value = (text.value ? text.value.trimEnd() + " " : "") + s + " ";
   inputEl.value?.focus();
@@ -241,6 +261,15 @@ defineExpose({ inputEl, appendText, focus, typeChar });
         @paste="onPaste"
       />
     </div>
+    <button
+      v-if="uploads"
+      type="button"
+      class="upload-btn"
+      title="Upload a file"
+      :disabled="!buffer"
+      @click="pickFile"
+    >💎</button>
+    <input ref="fileEl" type="file" multiple hidden @change="onFilePicked" />
     <button type="submit" :disabled="!buffer">Send</button>
   </form>
 </template>

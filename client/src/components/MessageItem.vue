@@ -36,7 +36,9 @@ const reactions = computed(() => {
 const interactive = computed(
   () => !props.showBuffer && !!props.msg.id && (props.msg.kind === "privmsg" || props.msg.kind === "notice" || props.msg.kind === "action"),
 );
-const canReact = computed(() => interactive.value && connection.hasNetCap(props.msg.network, "message-tags"));
+const canReact = computed(
+  () => settings.reactions && interactive.value && connection.hasNetCap(props.msg.network, "message-tags"),
+);
 const canRedact = computed(
   () => interactive.value && props.msg.self && connection.hasNetCap(props.msg.network, "draft/message-redaction"),
 );
@@ -183,7 +185,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
     </div>
 
     <!-- reactions -->
-    <div v-if="reactions.length" class="reactions">
+    <div v-if="settings.reactions && reactions.length" class="reactions">
       <button
         v-for="r in reactions"
         :key="r.emoji"

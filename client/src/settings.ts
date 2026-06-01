@@ -38,6 +38,7 @@ interface Settings {
   customThemes: CustomTheme[];
   foldEvents: boolean; // collapse runs of join/part/quit/nick lines
   coloredNicks: boolean; // colorize nicks by a hash of the name
+  reactions: boolean; // show emoji reactions (off by default; most servers don't support it)
 }
 
 const KEY = "stugan.settings";
@@ -50,6 +51,7 @@ function load(): Settings {
       customThemes: Array.isArray(s.customThemes) ? s.customThemes : [],
       foldEvents: typeof s.foldEvents === "boolean" ? s.foldEvents : true,
       coloredNicks: typeof s.coloredNicks === "boolean" ? s.coloredNicks : true,
+      reactions: typeof s.reactions === "boolean" ? s.reactions : false,
     };
   } catch {
     return {
@@ -57,6 +59,7 @@ function load(): Settings {
       customThemes: [],
       foldEvents: true,
       coloredNicks: true,
+      reactions: false,
     };
   }
 }

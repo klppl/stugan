@@ -143,6 +143,11 @@ async function enableNotifications() {
         <input v-model="settings.coloredNicks" type="checkbox" />
       </label>
 
+      <label class="row">
+        <span>Reactions</span>
+        <input v-model="settings.reactions" type="checkbox" />
+      </label>
+
       <div v-if="notifSupported" class="row">
         <span>Notifications</span>
         <button @click="enableNotifications">Enable</button>
