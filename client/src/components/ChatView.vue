@@ -181,10 +181,23 @@ const members = computed(() => {
 
 let stick = true;
 let prependHeight = 0;
+let lastScrollTop = 0;
 function onScroll() {
   const el = listEl.value;
   if (!el) return;
-  stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
+  const st = el.scrollTop;
+  if (st + el.clientHeight >= el.scrollHeight - 40) {
+    // At (or near) the bottom — follow the tail. Also re-engages when the user
+    // scrolls back down to it.
+    stick = true;
+  } else if (st < lastScrollTop - 2) {
+    // A genuine upward scroll (wheel, drag, touch, keys) — the user wants to
+    // read history, so stop following the bottom. Crucially, async content
+    // growth and our own scrollToBottom only ever *increase* scrollTop, so
+    // they never reach this branch and can't accidentally disengage stick.
+    stick = false;
+  }
+  lastScrollTop = st;
 }
 function scrollToBottom() {
   const el = listEl.value;
@@ -427,38 +440,34 @@ function onGlobalKeydown(e: KeyboardEvent) {
   e.preventDefault();
   inputRef.value?.typeChar(e.key);
 }
-onMounted(() => document.addEventListener("keydown", onGlobalKeydown));
+// Keep the view pinned to the bottom as late-loading content (link-preview
+// embeds, lazy images) expands *after* the initial scroll-to-bottom. Without
+// this, opening a buffer whose tail holds an embed lands a little short of the
+// bottom: the scroll fires at nextTick against the not-yet-laid-out content,
+// then the embed finishes loading and grows the log, leaving the viewport
+// above the new bottom. The observer re-pins on every such growth, but only
+// while sticking — a user scrolled up to read history, or mid-jump, is never
+// yanked down.
+let contentRO: ResizeObserver | null = null;
+onMounted(() => {
+  document.addEventListener("keydown", onGlobalKeydown);
+  if ("ResizeObserver" in window) {
+    contentRO = new ResizeObserver(() => {
+      if (stick && !(store.jump && jumpMatchesActive())) scrollToBottom();
+    });
+    if (contentEl.value) contentRO.observe(contentEl.value);
+  }
+});
 onUnmounted(() => {
   document.removeEventListener("keydown", onGlobalKeydown);
   contentRO?.disconnect();
 });
-
-// Keep the view pinned to the bottom as late-loading content (link-preview
-// embeds, images) expands *after* the initial scroll-to-bottom. Without this,
-// opening a buffer whose tail holds an embed lands a little short of the
-// bottom: the scroll fires at nextTick, then the embed finishes loading and
-// grows the log, leaving the viewport above the new bottom. The observer
-// re-pins only while sticking — a user scrolled up to read history, or
-// mid-jump, is never yanked down.
-//
-// contentEl mounts/unmounts with the chat view (it sits behind the v-else for
-// the search/mentions views), so (re)bind the observer whenever the element
-// appears or disappears rather than once at mount.
-let contentRO: ResizeObserver | null = null;
-watch(
-  contentEl,
-  (el, prev) => {
-    if (!("ResizeObserver" in window)) return;
-    if (!contentRO) {
-      contentRO = new ResizeObserver(() => {
-        if (stick && !(store.jump && jumpMatchesActive())) scrollToBottom();
-      });
-    }
-    if (prev) contentRO.unobserve(prev);
-    if (el) contentRO.observe(el);
-  },
-  { flush: "post", immediate: true },
-);
+// contentEl unmounts/remounts when switching to the search/mentions views (it
+// sits behind the chat-view v-else), so rebind the observer when it changes.
+watch(contentEl, (el, prev) => {
+  if (prev) contentRO?.unobserve(prev);
+  if (el) contentRO?.observe(el);
+});
 
 async function onDrop(e: DragEvent) {
   dragging.value = false;
