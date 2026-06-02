@@ -49,6 +49,19 @@ func TestMagicWordGate(t *testing.T) {
 		t.Fatal("WS connected without magic word")
 	}
 
+	// Stored uploads stay open even without the magic cookie: they carry
+	// unguessable random names, so a shared link must resolve for any
+	// recipient. The gate must not 401 the path (404 here is fine — the
+	// file doesn't exist; what matters is it isn't blocked).
+	if up, err := http.Get(hs.URL + "/uploads/whatever.png"); err != nil {
+		t.Fatal(err)
+	} else {
+		up.Body.Close()
+		if up.StatusCode == http.StatusUnauthorized {
+			t.Fatal("/uploads/ blocked by magic gate without cookie, want open")
+		}
+	}
+
 	// Wrong password: rejected with 401.
 	resp, _ := postMagic(t, hs.URL, "", "you-shall-not-pass")
 	if resp.StatusCode != http.StatusUnauthorized {

@@ -199,9 +199,10 @@ func (s *Server) Handler() http.Handler {
 }
 
 // magicGate wraps the mux so every request that touches user data — the
-// WebSocket, the /api/* endpoints, and per-user /uploads — requires a
-// granted magic-word cookie when $STUGAN_WEB_PASSWORD is set. Static
-// assets stay open so the SPA itself can load and render the prompt.
+// WebSocket and the /api/* endpoints — requires a granted magic-word
+// cookie when $STUGAN_WEB_PASSWORD is set. Static assets stay open so the
+// SPA itself can load and render the prompt, and stored /uploads stay open
+// so shared file links resolve for anyone who has the (unguessable) URL.
 //
 // Endpoints kept open: /api/me, /api/magicword{,/logout}, /healthz.
 func (s *Server) magicGate(next http.Handler) http.Handler {
@@ -216,14 +217,18 @@ func (s *Server) magicGate(next http.Handler) http.Handler {
 
 // magicWordOpen reports whether the path is reachable without a
 // granted magic-word cookie. Static SPA assets (anything that isn't
-// /api/*, /ws, or /uploads/*) stay open so the browser can fetch the
-// HTML/CSS/JS that renders the prompt.
+// /api/* or /ws) stay open so the browser can fetch the HTML/CSS/JS
+// that renders the prompt. Stored uploads stay open too: they carry
+// unguessable random names so a shared link works for any recipient.
 func (s *Server) magicWordOpen(path string) bool {
 	switch path {
 	case "/api/me", "/api/magicword", "/api/magicword/logout", "/healthz":
 		return true
 	}
-	if path == "/ws" || strings.HasPrefix(path, "/uploads/") {
+	if strings.HasPrefix(path, "/uploads/") {
+		return true
+	}
+	if path == "/ws" {
 		return false
 	}
 	return !strings.HasPrefix(path, "/api/")
@@ -741,6 +746,24 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			c.sendError(env.ID, "bad_request", err.Error())
 		}
 
+	case proto.TNetReorder:
+		var d proto.NetReorder
+		if err := decode(env, &d); err != nil {
+			c.sendError(env.ID, "bad_request", "net:reorder requires networks")
+			return
+		}
+		c.tenant.Engine.ReorderNetworks(d.Networks)
+
+	case proto.TBufReorder:
+		var d proto.BufReorder
+		if err := decode(env, &d); err != nil || d.Network == "" {
+			c.sendError(env.ID, "bad_request", "buf:reorder requires network and buffers")
+			return
+		}
+		if err := c.tenant.Engine.ReorderBuffers(d.Network, d.Buffers); err != nil {
+			c.sendError(env.ID, "bad_request", err.Error())
+		}
+
 	default:
 		s.log.Debug("ignoring unknown frame", "t", env.T)
 	}
@@ -898,6 +921,12 @@ func (u *userSink) NetworkChanged(n *core.Network) {
 
 func (u *userSink) NetworkRemoved(networkID string) {
 	if env, err := proto.Frame(proto.TNetRemove, proto.NetRemove{Network: networkID}); err == nil {
+		u.s.routeToUser(u.user, env)
+	}
+}
+
+func (u *userSink) NetworksReordered(networkIDs []string) {
+	if env, err := proto.Frame(proto.TNetReorder, proto.NetReorder{Networks: networkIDs}); err == nil {
 		u.s.routeToUser(u.user, env)
 	}
 }
