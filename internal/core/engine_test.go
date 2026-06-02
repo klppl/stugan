@@ -474,6 +474,38 @@ func TestApplyMessageRoutesBuffer(t *testing.T) {
 	}
 }
 
+// A message that arrives without an IRCv3 msgid tag must still be printed with
+// a stable, unique id. The same id reaches every sink (store + live), so the
+// client can dedup the backlog copy against the live tail and jump to the
+// line. A real msgid is left untouched. Regression for messages doubling when
+// a buffer was opened after accumulating live lines.
+func TestApplyMessageSynthesizesID(t *testing.T) {
+	e, sink := newTestEngine(t)
+
+	e.apply(Event{Type: EvMessageIn, Network: "net", Message: &Message{
+		Network: "net", Buffer: "#go", From: "alice", Kind: MsgPrivmsg, Text: "one",
+	}})
+	e.apply(Event{Type: EvMessageIn, Network: "net", Message: &Message{
+		Network: "net", Buffer: "#go", From: "bob", Kind: MsgPrivmsg, Text: "two",
+	}})
+	e.apply(Event{Type: EvMessageIn, Network: "net", Message: &Message{
+		ID: "server-given", Network: "net", Buffer: "#go", From: "carol", Kind: MsgPrivmsg, Text: "three",
+	}})
+
+	if len(sink.msgs) != 3 {
+		t.Fatalf("printed %d messages, want 3", len(sink.msgs))
+	}
+	if sink.msgs[0].ID == "" || sink.msgs[1].ID == "" {
+		t.Fatalf("msgid-less messages got empty ids: %q, %q", sink.msgs[0].ID, sink.msgs[1].ID)
+	}
+	if sink.msgs[0].ID == sink.msgs[1].ID {
+		t.Fatalf("synthesized ids collide: %q", sink.msgs[0].ID)
+	}
+	if sink.msgs[2].ID != "server-given" {
+		t.Fatalf("real msgid was overwritten: %q", sink.msgs[2].ID)
+	}
+}
+
 func TestCloseBuffer(t *testing.T) {
 	e, sink := newTestEngine(t)
 

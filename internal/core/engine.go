@@ -6,12 +6,16 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -121,6 +125,13 @@ type Engine struct {
 	// Guarded by mu.
 	pendingState map[string]map[string]map[string]string
 
+	// idBase + idSeq mint stable ids for lines the IRC server delivered
+	// without a msgid tag (see synthID). idBase is a per-run random prefix;
+	// idSeq is bumped atomically because broadcast runs on several goroutines
+	// (engine loop, send path, and the plugin goroutine via inject).
+	idBase string
+	idSeq  atomic.Uint64
+
 	running bool
 	runCtx  context.Context
 	runWG   sync.WaitGroup
@@ -169,9 +180,22 @@ func New(opts Options) *Engine {
 		pendingWhois: map[string]string{},
 		pendingState: map[string]map[string]map[string]string{},
 		pendingKeys:  map[string]string{},
+		idBase:       randHex(6),
 		events:       make(chan Event, 256),
 		done:         make(chan struct{}),
 	}
+}
+
+// randHex returns n random bytes hex-encoded, used to seed a per-run id base.
+// crypto/rand should never fail; if it does, the fixed fallback still yields
+// process-unique ids (the seq counter does the real work) — it only weakens
+// cross-restart uniqueness.
+func randHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "fixed"
+	}
+	return hex.EncodeToString(b)
 }
 
 // AddSink registers an additional committed-line sink (e.g. the WebSocket
@@ -1304,9 +1328,24 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 
 // broadcast fans a committed line out to every registered sink.
 func (e *Engine) broadcast(m Message) {
+	if m.ID == "" {
+		m.ID = e.synthID()
+	}
 	for _, s := range e.sinks {
 		s.Print(m)
 	}
+}
+
+// synthID mints a stable, process-unique id for a line the IRC server
+// delivered without a msgid tag (IRCv3 message-ids is widely unsupported, so
+// most PRIVMSGs and all our own status lines arrive with an empty ID). It is
+// assigned here at the single fan-out point so the live frame, the persisted
+// store row, and the later backlog copy all carry the *same* id. The client
+// dedups backlog against the live tail by id, so an empty id there made the
+// same message appear twice when a buffer was opened after accumulating live
+// lines; a stable id also lets jump-to-message and search target the line.
+func (e *Engine) synthID() string {
+	return "loc-" + e.idBase + "-" + strconv.FormatUint(e.idSeq.Add(1), 36)
 }
 
 // SnapshotNetwork returns a deep copy of one network's state, or nil if it
