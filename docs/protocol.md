@@ -38,6 +38,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `net:remove`    | `NetRemove`    | a network was removed |
 | `net:info`      | `NetConfig`    | answers a c2s `net:info` request (settings dialog) |
 | `backlog`       | `BacklogResp`  | a page of history (answers `backlog:fetch`) |
+| `context`       | `ContextResp`  | window of messages around an anchor, echoing its `id` (answers `context:fetch`) |
 | `search:result` | `SearchResp`   | search results (answers `search`) |
 | `list:result`   | `ListResp`     | channel-browser results (answers `list`) |
 | `plugin:list`   | `PluginListResp` | the plugin manager list (answers `plugin:list` and `plugin:action`) |
@@ -51,6 +52,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 |-----------------|----------------|---------|
 | `msg:send`      | `MsgSend`      | send text/command to a buffer |
 | `backlog:fetch` | `BacklogFetch` | request older/windowed history |
+| `context:fetch` | `ContextFetch` | request the window around one message, to expand a mention/search hit inline |
 | `search`        | `SearchReq`    | FTS5 search |
 | `net:add`       | `NetAdd`       | add + connect a network |
 | `net:edit`      | `NetConfig`    | apply settings changes to a network |

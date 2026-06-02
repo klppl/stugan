@@ -13,6 +13,7 @@ export const T = {
   NetReorder: "net:reorder",
   NetInfo: "net:info",
   Backlog: "backlog",
+  Context: "context",
   SearchResult: "search:result",
   ListResult: "list:result",
   Typing: "typing",
@@ -25,6 +26,7 @@ export const T = {
   MsgSend: "msg:send",
   CompleteReq: "complete:req",
   BacklogFetch: "backlog:fetch",
+  ContextFetch: "context:fetch",
   Search: "search",
   NetAdd: "net:add",
   NetEdit: "net:edit",
@@ -170,6 +172,26 @@ export interface BacklogResp {
   // so the client can tell a centered fetch apart from a paged-backward
   // reply (they're handled differently — see Connection.applyBacklog).
   around?: string;
+}
+
+// ContextFetch asks for the window of messages surrounding one anchor
+// message, so a mention/search result can be expanded inline. id is the
+// anchor's id (echoed back in ContextResp); around is the anchor's time.
+export interface ContextFetch {
+  network: string;
+  buffer: string;
+  id: string;
+  around: string;
+  limit?: number;
+}
+
+// ContextResp answers a ContextFetch with the surrounding window,
+// oldest-first. id echoes the anchor message id from the request.
+export interface ContextResp {
+  network: string;
+  buffer: string;
+  id: string;
+  messages: MessageDTO[];
 }
 
 export interface SearchReq {

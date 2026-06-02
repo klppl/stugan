@@ -529,6 +529,9 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	case proto.TBacklogFetch:
 		s.handleBacklog(ctx, c, env)
 
+	case proto.TContextFetch:
+		s.handleContext(ctx, c, env)
+
 	case proto.TRead:
 		var d proto.ReadMark
 		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" {
@@ -816,6 +819,36 @@ func (s *Server) handleBacklog(ctx context.Context, c *client, env proto.Envelop
 	}
 	s.reply(c, env.ID, proto.TBacklog, proto.BacklogResp{
 		Network: d.Network, Buffer: d.Buffer, Messages: toMessageDTOs(msgs), More: more,
+	})
+}
+
+// handleContext answers a context:fetch by returning the window of messages
+// surrounding one anchor (a mention or search hit), so the client can expand
+// it inline without navigating into the buffer. It reuses BacklogAround but
+// echoes the anchor id rather than the time, so the client attaches the window
+// to the exact row that asked for it.
+func (s *Server) handleContext(ctx context.Context, c *client, env proto.Envelope) {
+	var d proto.ContextFetch
+	if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" || d.ID == "" {
+		c.sendError(env.ID, "bad_request", "context:fetch requires network, buffer, id")
+		return
+	}
+	if c.tenant.History == nil {
+		c.sendError(env.ID, "unavailable", "history is not enabled")
+		return
+	}
+	var around time.Time
+	if t, err := time.Parse(time.RFC3339, d.Around); err == nil {
+		around = t
+	}
+	msgs, _, err := c.tenant.History.BacklogAround(ctx, d.Network, d.Buffer, around, clampLimit(d.Limit, 11))
+	if err != nil {
+		s.log.Error("context around query", "err", err)
+		c.sendError(env.ID, "internal", "context query failed")
+		return
+	}
+	s.reply(c, env.ID, proto.TContext, proto.ContextResp{
+		Network: d.Network, Buffer: d.Buffer, ID: d.ID, Messages: toMessageDTOs(msgs),
 	})
 }
 

@@ -24,6 +24,7 @@ const (
 	TNetReorder   = "net:reorder"   // s2c (and c2s) — manual network sidebar order
 	TNetInfo      = "net:info"      // s2c (answers c2s net:info)
 	TBacklog      = "backlog"       // s2c (answers backlog:fetch)
+	TContext      = "context"       // s2c (answers context:fetch)
 	TSearchResult = "search:result" // s2c (answers search)
 	TListResult   = "list:result"   // s2c (answers list)
 	TTyping       = "typing"        // s2c (and c2s)
@@ -37,6 +38,7 @@ const (
 	TMsgSend      = "msg:send"      // c2s
 	TCompleteReq  = "complete:req"  // c2s — ask plugins for tab-completion candidates
 	TBacklogFetch = "backlog:fetch" // c2s
+	TContextFetch = "context:fetch" // c2s
 	TSearch       = "search"        // c2s
 	TNetAdd       = "net:add"       // c2s
 	TNetEdit      = "net:edit"      // c2s
@@ -171,6 +173,30 @@ type BacklogResp struct {
 	Messages []MessageDTO `json:"messages"`
 	More     bool         `json:"more"`
 	Around   string       `json:"around,omitempty"`
+}
+
+// ContextFetch asks for a window of messages surrounding a single anchor
+// message, so a mention/search result can be expanded inline without leaving
+// the list. ID is the anchor message's id (echoed back in ContextResp so the
+// client attaches the window to the right row); Around is the anchor's time,
+// which the server centers the window on (see Store.BacklogAround). Carry an
+// Envelope.ID to correlate the reply.
+type ContextFetch struct {
+	Network string `json:"network"`
+	Buffer  string `json:"buffer"`
+	ID      string `json:"id"`
+	Around  string `json:"around"`
+	Limit   int    `json:"limit,omitempty"`
+}
+
+// ContextResp answers a ContextFetch with the surrounding window,
+// oldest-first. ID echoes the anchor message id from the request so the
+// client can match the window to the row that requested it.
+type ContextResp struct {
+	Network  string       `json:"network"`
+	Buffer   string       `json:"buffer"`
+	ID       string       `json:"id"`
+	Messages []MessageDTO `json:"messages"`
 }
 
 // SearchReq is a client→server full-text search. Network/Buffer scope it

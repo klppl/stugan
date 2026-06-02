@@ -195,6 +195,62 @@ func TestBacklogReplay(t *testing.T) {
 	}
 }
 
+func TestContextFetch(t *testing.T) {
+	hist := &fakeHistory{
+		msgs: []core.Message{
+			{ID: "m1", Network: "n", Buffer: "#c", From: "a", Kind: core.MsgPrivmsg, Text: "before", Time: time.Now()},
+			{ID: "m2", Network: "n", Buffer: "#c", From: "b", Kind: core.MsgPrivmsg, Text: "the mention", Time: time.Now()},
+			{ID: "m3", Network: "n", Buffer: "#c", From: "c", Kind: core.MsgPrivmsg, Text: "after", Time: time.Now()},
+		},
+	}
+	eng := core.New(core.Options{Sink: noopSink{}})
+	srv := New(SingleUser(&Tenant{Engine: eng, History: hist}), Options{})
+	eng.AddSink(srv.Sink(defaultUser))
+	eng.AddNetwork(core.NetworkParams{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = eng.Run(ctx) }()
+
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http") + "/ws"
+	ws, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer ws.CloseNow()
+	readFrame(t, ctx, ws) // hello
+	readFrame(t, ctx, ws) // init
+
+	req, _ := proto.Frame(proto.TContextFetch, proto.ContextFetch{
+		Network: "n", Buffer: "#c", ID: "m2", Around: time.Now().UTC().Format(time.RFC3339), Limit: 11,
+	})
+	req.ID = "req-ctx"
+	if err := wsjson.Write(ctx, ws, req); err != nil {
+		t.Fatal(err)
+	}
+	env := readFrame(t, ctx, ws)
+	if env.T != proto.TContext {
+		t.Fatalf("frame = %q, want context", env.T)
+	}
+	var resp proto.ContextResp
+	if err := decode(env, &resp); err != nil {
+		t.Fatalf("decode context: %v", err)
+	}
+	// The anchor id must be echoed so the client attaches the window to the
+	// right row, and the surrounding window must come back in order.
+	if resp.ID != "m2" {
+		t.Errorf("echoed id = %q, want m2", resp.ID)
+	}
+	if resp.Buffer != "#c" || len(resp.Messages) != 3 {
+		t.Fatalf("context resp = %+v", resp)
+	}
+	if resp.Messages[0].Text != "before" || resp.Messages[2].Text != "after" {
+		t.Errorf("context window order = %q..%q", resp.Messages[0].Text, resp.Messages[2].Text)
+	}
+}
+
 func TestBacklogWithoutHistory(t *testing.T) {
 	eng := core.New(core.Options{Sink: noopSink{}})
 	srv := New(SingleUser(&Tenant{Engine: eng}), Options{}) // no History

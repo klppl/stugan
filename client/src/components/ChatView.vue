@@ -7,6 +7,7 @@ import { useContextMenu } from "../contextMenu";
 import { ui, closeDrawers } from "../ui";
 import type { MemberDTO, MessageDTO } from "../proto/events";
 import MessageItem from "./MessageItem.vue";
+import MentionRow from "./MentionRow.vue";
 import ChatInput from "./ChatInput.vue";
 
 const store = connection.store;
@@ -524,15 +525,7 @@ async function onDrop(e: DragEvent) {
       <div class="messages">
         <div v-if="store.search.busy" class="empty">searching…</div>
         <div v-else-if="!store.search.results.length" class="empty">no matches</div>
-        <div
-          v-for="(m, i) in store.search.results"
-          :key="i"
-          class="jump-row"
-          :title="`Open ${m.buffer} at this message`"
-          @click="connection.jumpToMessage(m)"
-        >
-          <MessageItem :msg="m" :show-buffer="true" />
-        </div>
+        <MentionRow v-for="(m, i) in store.search.results" :key="i" :msg="m" />
       </div>
     </template>
 
@@ -541,15 +534,7 @@ async function onDrop(e: DragEvent) {
       <header class="chat-header"><span class="buffer-name">Mentions</span></header>
       <div class="messages">
         <div v-if="!store.mentions.length" class="empty">no mentions yet</div>
-        <div
-          v-for="(m, i) in store.mentions"
-          :key="i"
-          class="jump-row"
-          :title="`Open ${m.buffer} at this message`"
-          @click="connection.jumpToMessage(m)"
-        >
-          <MessageItem :msg="m" :show-buffer="true" />
-        </div>
+        <MentionRow v-for="(m, i) in store.mentions" :key="i" :msg="m" />
       </div>
     </template>
 
