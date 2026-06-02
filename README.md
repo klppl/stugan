@@ -8,6 +8,8 @@ WebSocket — think [TheLounge](https://thelounge.chat/), rewritten in Go, with
 the IRCv3 discipline of [Halloy](https://github.com/squidowl/halloy) and a
 **weechat/irssi-style Lua plugin system** as the headline feature.
 
+![stugan screenshot](screenshot.png)
+
 ## Features
 
 - Persistent connections that survive browser disconnects; SQLite history with
