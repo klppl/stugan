@@ -36,6 +36,9 @@ func (s logSink) NetworkChanged(*Network) {}
 // NetworkRemoved is a no-op for the terminal sink.
 func (s logSink) NetworkRemoved(string) {}
 
+// NetworksReordered is a no-op for the terminal sink (it has no sidebar).
+func (s logSink) NetworksReordered([]string) {}
+
 // ChannelList is a no-op for the terminal sink.
 func (s logSink) ChannelList(string, []ChannelListItem) {}
 

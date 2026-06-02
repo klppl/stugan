@@ -32,6 +32,7 @@ type noopSink struct{}
 func (noopSink) Print(core.Message)                            {}
 func (noopSink) NetworkChanged(*core.Network)                  {}
 func (noopSink) NetworkRemoved(string)                         {}
+func (noopSink) NetworksReordered([]string)                    {}
 func (noopSink) ChannelList(string, []core.ChannelListItem)    {}
 func (noopSink) Typing(string, string, string, string)         {}
 func (noopSink) React(string, string, string, string, string)  {}

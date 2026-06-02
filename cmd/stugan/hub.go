@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/klippelism/stugan/internal/auth"
@@ -196,6 +197,12 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 				nets = append(nets, p)
 			}
 		}
+		// Restore the user's manual sidebar order: networks load lowest Pos
+		// first. Store.Networks() returns them id-ordered, a stable tiebreaker
+		// for legacy rows that predate ordering (Pos == 0).
+		slices.SortStableFunc(nets, func(a, b core.NetworkParams) int {
+			return a.Pos - b.Pos
+		})
 		for _, p := range nets {
 			conn, err := connector.Dial(p, eng)
 			if err != nil {

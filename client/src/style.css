@@ -188,6 +188,32 @@ body {
 .buffers li.muted {
   opacity: 0.45;
 }
+/* Drag-to-reorder: a glowing edge marks where the dragged row will land. */
+.network-name,
+.buffers li {
+  position: relative;
+}
+.network-name.drop-before::before,
+.network-name.drop-after::after,
+.buffers li.drop-before::before,
+.buffers li.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+.network-name.drop-before::before,
+.buffers li.drop-before::before {
+  top: -1px;
+}
+.network-name.drop-after::after,
+.buffers li.drop-after::after {
+  bottom: -1px;
+}
 .buf-name {
   flex: 1 1 auto;
   overflow: hidden;

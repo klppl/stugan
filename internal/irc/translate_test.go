@@ -1,6 +1,7 @@
 package irc
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/klippelism/stugan/internal/core"
@@ -173,6 +174,75 @@ func TestToEventAway(t *testing.T) {
 	ev, ok = toEvent("n", girc.ParseEvent(":alice!u@h AWAY"), "me")
 	if !ok || ev.Type != core.EvAway || ev.Away {
 		t.Fatalf("back event = %+v ok=%v", ev, ok)
+	}
+}
+
+func TestChannelModeEvent(t *testing.T) {
+	const prefix = "(qaohv)~&@%+"
+	const chanmodes = "eIbq,k,flj,CFLMPQScgimnprstuz" // Libera-ish
+
+	tests := []struct {
+		name string
+		raw  string
+		want []core.MemberMode
+		ok   bool
+	}{
+		{
+			name: "op",
+			raw:  ":Chan!u@h MODE #c +o alice",
+			want: []core.MemberMode{{Nick: "alice", Symbol: "@", Add: true}},
+			ok:   true,
+		},
+		{
+			name: "deop",
+			raw:  ":Chan!u@h MODE #c -o alice",
+			want: []core.MemberMode{{Nick: "alice", Symbol: "@", Add: false}},
+			ok:   true,
+		},
+		{
+			name: "mixed op and voice with a toggle",
+			raw:  ":Chan!u@h MODE #c +o-v alice bob",
+			want: []core.MemberMode{
+				{Nick: "alice", Symbol: "@", Add: true},
+				{Nick: "bob", Symbol: "+", Add: false},
+			},
+			ok: true,
+		},
+		{
+			// A setting mode with an arg (+k key) must not steal the nick arg
+			// that belongs to +o.
+			name: "setting arg interleaved with op",
+			raw:  ":Chan!u@h MODE #c +ko secret alice",
+			want: []core.MemberMode{{Nick: "alice", Symbol: "@", Add: true}},
+			ok:   true,
+		},
+		{
+			name: "only channel settings → no membership change",
+			raw:  ":Chan!u@h MODE #c +mt",
+			ok:   false,
+		},
+		{
+			name: "user mode (not a channel) ignored",
+			raw:  ":me MODE me +i",
+			ok:   false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ev, ok := channelModeEvent("n", girc.ParseEvent(tt.raw), prefix, chanmodes)
+			if ok != tt.ok {
+				t.Fatalf("ok = %v, want %v (ev=%+v)", ok, tt.ok, ev)
+			}
+			if !tt.ok {
+				return
+			}
+			if ev.Type != core.EvMode || ev.Channel != "#c" || ev.Nick != "Chan" {
+				t.Fatalf("ev = %+v", ev)
+			}
+			if !slices.Equal(ev.MemberModes, tt.want) {
+				t.Fatalf("MemberModes = %+v, want %+v", ev.MemberModes, tt.want)
+			}
+		})
 	}
 }
 

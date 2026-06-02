@@ -72,6 +72,108 @@ function closeFromMenu() {
   connection.closeBuffer(p.network, p.buffer);
   ctx.close();
 }
+
+// --- Drag-and-drop reordering (desktop) -----------------------------------
+// Networks reorder among each other; buffers reorder only within their own
+// network. Order is applied optimistically here, then sent to the server,
+// which persists it and echoes back (net:reorder / net:update). Touch is not
+// wired up — long-press already owns touch for the context menu.
+type DragState =
+  | { kind: "net"; id: string }
+  | { kind: "buf"; network: string; name: string };
+
+const drag = ref<DragState | null>(null);
+// dropHint highlights the insertion edge of the row under the cursor.
+const dropHint = ref<{ key: string; pos: "before" | "after" } | null>(null);
+
+function netKey(net: Network): string {
+  return `net:${net.id}`;
+}
+function bufDropKey(net: Network, buf: Buffer): string {
+  return `buf:${net.id}:${buf.name}`;
+}
+function hintFor(key: string): "before" | "after" | null {
+  return dropHint.value?.key === key ? dropHint.value.pos : null;
+}
+
+// dropPos reports whether the cursor is over the top or bottom half of the row.
+function dropPos(e: DragEvent): "before" | "after" {
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  return e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+}
+
+function clearDrag() {
+  drag.value = null;
+  dropHint.value = null;
+}
+
+// moveBefore returns arr with the item at `from` reinserted relative to the
+// item at the target index (recomputed after removal so before/after is exact).
+function moveRelative<T>(arr: T[], from: number, targetIdx: number, pos: "before" | "after"): T[] {
+  const copy = arr.slice();
+  const [item] = copy.splice(from, 1);
+  // targetIdx referred to the pre-removal array; if we removed an earlier
+  // element the target shifted left by one.
+  let t = targetIdx;
+  if (from < targetIdx) t -= 1;
+  copy.splice(pos === "before" ? t : t + 1, 0, item);
+  return copy;
+}
+
+function onNetDragStart(net: Network, e: DragEvent) {
+  drag.value = { kind: "net", id: net.id };
+  e.dataTransfer?.setData("text/plain", net.id); // Firefox needs payload to drag
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+}
+
+function onNetDragOver(net: Network, e: DragEvent) {
+  if (drag.value?.kind !== "net" || drag.value.id === net.id) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  dropHint.value = { key: netKey(net), pos: dropPos(e) };
+}
+
+function onNetDrop(net: Network, e: DragEvent) {
+  const d = drag.value;
+  if (d?.kind !== "net" || d.id === net.id) return clearDrag();
+  e.preventDefault();
+  const nets = store.networks;
+  const from = nets.findIndex((n) => n.id === d.id);
+  const to = nets.findIndex((n) => n.id === net.id);
+  if (from < 0 || to < 0) return clearDrag();
+  const reordered = moveRelative(nets, from, to, dropPos(e));
+  store.networks = reordered;
+  connection.reorderNetworks(reordered.map((n) => n.id));
+  clearDrag();
+}
+
+function onBufDragStart(net: Network, buf: Buffer, e: DragEvent) {
+  drag.value = { kind: "buf", network: net.id, name: buf.name };
+  e.dataTransfer?.setData("text/plain", buf.name);
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+}
+
+function onBufDragOver(net: Network, buf: Buffer, e: DragEvent) {
+  const d = drag.value;
+  if (d?.kind !== "buf" || d.network !== net.id || d.name === buf.name) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  dropHint.value = { key: bufDropKey(net, buf), pos: dropPos(e) };
+}
+
+function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
+  const d = drag.value;
+  if (d?.kind !== "buf" || d.network !== net.id || d.name === buf.name) return clearDrag();
+  e.preventDefault();
+  // Reorder net.buffers directly (status buffer is neither draggable nor a drop
+  // target, so it stays put). Send the channel order back, status excluded.
+  const from = net.buffers.findIndex((b) => b.name === d.name);
+  const to = net.buffers.findIndex((b) => b.name === buf.name);
+  if (from < 0 || to < 0) return clearDrag();
+  net.buffers = moveRelative(net.buffers, from, to, dropPos(e));
+  connection.reorderBuffers(net.id, channelBuffers(net).map((b) => b.name));
+  clearDrag();
+}
 </script>
 
 <template>
@@ -81,9 +183,18 @@ function closeFromMenu() {
     <div v-for="net in store.networks" :key="net.id" class="network">
       <div
         class="network-name"
-        :class="{ active: isActive(net.id, STATUS) }"
+        :class="{
+          active: isActive(net.id, STATUS),
+          'drop-before': hintFor(netKey(net)) === 'before',
+          'drop-after': hintFor(netKey(net)) === 'after',
+        }"
+        draggable="true"
         @click="selectBuffer(net.id, STATUS)"
-        title="server status — click to open; ⚙ for network settings"
+        @dragstart="onNetDragStart(net, $event)"
+        @dragover="onNetDragOver(net, $event)"
+        @drop="onNetDrop(net, $event)"
+        @dragend="clearDrag"
+        title="server status — click to open; drag to reorder; ⚙ for network settings"
       >
         <span class="net-label">{{ net.name }} <span class="nick">({{ net.nick }})</span></span>
         <span class="net-right">
@@ -100,14 +211,25 @@ function closeFromMenu() {
         <li
           v-for="buf in channelBuffers(net)"
           :key="buf.name"
-          :class="{ active: isActive(net.id, buf.name), [buf.kind]: true, muted: connection.isMuted(bufKey(net.id, buf.name)) }"
+          :class="{
+            active: isActive(net.id, buf.name),
+            [buf.kind]: true,
+            muted: connection.isMuted(bufKey(net.id, buf.name)),
+            'drop-before': hintFor(bufDropKey(net, buf)) === 'before',
+            'drop-after': hintFor(bufDropKey(net, buf)) === 'after',
+          }"
+          draggable="true"
           @click="selectBuffer(net.id, buf.name)"
           @contextmenu="ctx.onContext({ network: net.id, buffer: buf.name, kind: buf.kind }, $event)"
+          @dragstart="onBufDragStart(net, buf, $event)"
+          @dragover="onBufDragOver(net, buf, $event)"
+          @drop="onBufDrop(net, buf, $event)"
+          @dragend="clearDrag"
           @touchstart.passive="ctx.onTouchStart({ network: net.id, buffer: buf.name, kind: buf.kind }, $event)"
           @touchmove.passive="ctx.onTouchMove($event)"
           @touchend="ctx.cancelLp"
           @touchcancel="ctx.cancelLp"
-          title="right-click (or long-press) for buffer options"
+          title="right-click (or long-press) for buffer options; drag to reorder"
         >
           <span v-if="isEncrypted(buf)" class="lock-icon" :title="`encrypted (${buf.state.encrypted})`">🔒</span>
           <span class="buf-name">{{ buf.name }}</span>

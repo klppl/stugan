@@ -152,6 +152,23 @@ func (c *Conn) registerHandlers() {
 		})
 	}
 
+	// Channel MODE needs the server's PREFIX/CHANMODES to map mode letters to
+	// membership prefixes and consume arguments, so it gets a dedicated handler
+	// (the generic toEvent path above has no access to those server options).
+	h.Add(girc.MODE, func(gc *girc.Client, e girc.Event) {
+		prefix, ok := gc.GetServerOption("PREFIX")
+		if !ok {
+			prefix = girc.DefaultPrefixes
+		}
+		chanmodes, ok := gc.GetServerOption("CHANMODES")
+		if !ok {
+			chanmodes = girc.ModeDefaults
+		}
+		if ev, ok := channelModeEvent(c.opts.Network, &e, prefix, chanmodes); ok {
+			c.emit(ev)
+		}
+	})
+
 	// echo-message events are NOT delivered to command-specific handlers by
 	// girc (only to ALLEVENTS), so handle our own echoed PRIVMSG/NOTICE here.
 	// Gating on e.Echo avoids double-processing the normal events above.

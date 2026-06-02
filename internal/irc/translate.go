@@ -25,6 +25,103 @@ func splitPrefixes(tok string) (modes, rest string) {
 	return tok[:i], tok[i:]
 }
 
+// channelModeEvent translates a channel MODE line into an EvMode carrying the
+// membership-prefix changes (op/voice/half-op/...) it makes. prefix and
+// chanmodes are the server's ISUPPORT PREFIX and CHANMODES, used only to
+// consume mode arguments correctly so prefix-mode nicks pair to the right
+// argument. ok is false for a user-mode MODE (target is our nick, not a
+// channel) or a line that makes no membership change.
+func channelModeEvent(network string, e *girc.Event, prefix, chanmodes string) (core.Event, bool) {
+	if len(e.Params) < 2 || !isChannel(e.Params[0]) {
+		return core.Event{}, false
+	}
+	when := e.Timestamp
+	if when.IsZero() {
+		when = time.Now()
+	}
+	from := ""
+	if e.Source != nil {
+		from = e.Source.Name
+	}
+	flags := e.Params[1]
+	args := e.Params[2:]
+	mods := membershipModeChanges(prefix, chanmodes, flags, args)
+	if len(mods) == 0 {
+		return core.Event{}, false
+	}
+	return core.Event{
+		Type: core.EvMode, Network: network, Time: when,
+		Channel: e.Params[0], Nick: from,
+		Text:        strings.TrimSpace(flags + " " + strings.Join(args, " ")),
+		MemberModes: mods,
+	}, true
+}
+
+// membershipModeChanges parses a channel MODE flags/args pair and returns the
+// membership-prefix changes it makes, ignoring list/setting modes (+b, +m, …).
+// Argument consumption follows the CHANMODES argument classes so a prefix-mode
+// nick pairs to the correct argument even when the line mixes in other
+// arg-taking modes. Unknown modes are assumed argument-less (the common
+// client convention).
+func membershipModeChanges(prefix, chanmodes, flags string, args []string) []core.MemberMode {
+	letters, symbols := splitPrefixSpec(prefix)
+	listArgs, alwaysArgs, setArgs, _ := splitChanmodes(chanmodes)
+	var out []core.MemberMode
+	add := true
+	ai := 0
+	for i := 0; i < len(flags); i++ {
+		switch c := flags[i]; c {
+		case '+':
+			add = true
+		case '-':
+			add = false
+		default:
+			takesArg := strings.IndexByte(letters, c) >= 0 ||
+				strings.IndexByte(listArgs, c) >= 0 ||
+				strings.IndexByte(alwaysArgs, c) >= 0 ||
+				(add && strings.IndexByte(setArgs, c) >= 0)
+			arg := ""
+			if takesArg && ai < len(args) {
+				arg = args[ai]
+				ai++
+			}
+			if pi := strings.IndexByte(letters, c); pi >= 0 && pi < len(symbols) && arg != "" {
+				out = append(out, core.MemberMode{Nick: arg, Symbol: string(symbols[pi]), Add: add})
+			}
+		}
+	}
+	return out
+}
+
+// splitPrefixSpec splits an ISUPPORT PREFIX value "(modes)symbols" into its
+// positionally-aligned mode letters and prefix symbols, e.g. "(qaohv)~&@%+" →
+// ("qaohv", "~&@%+"). Falls back to the RFC default on a malformed value.
+func splitPrefixSpec(prefix string) (letters, symbols string) {
+	if strings.HasPrefix(prefix, "(") {
+		if i := strings.IndexByte(prefix, ')'); i > 1 {
+			letters, symbols = prefix[1:i], prefix[i+1:]
+			if len(letters) == len(symbols) {
+				return letters, symbols
+			}
+		}
+	}
+	return "ov", "@+"
+}
+
+// splitChanmodes splits an ISUPPORT CHANMODES value into its four
+// comma-separated argument classes (A: list, B: always-arg, C: arg-on-set,
+// D: never-arg). Missing trailing classes come back empty.
+func splitChanmodes(chanmodes string) (list, always, set, never string) {
+	parts := strings.SplitN(chanmodes, ",", 4)
+	get := func(i int) string {
+		if i < len(parts) {
+			return parts[i]
+		}
+		return ""
+	}
+	return get(0), get(1), get(2), get(3)
+}
+
 // toEvent maps a parsed girc wire event into a normalized core.Event for
 // the given network. self is our current nick, used to route direct
 // messages into a query buffer. ok is false for commands stugan does not

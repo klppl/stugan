@@ -27,6 +27,9 @@ type Sink interface {
 	// NetworkRemoved signals that a network was removed at runtime so
 	// observers can drop it.
 	NetworkRemoved(networkID string)
+	// NetworksReordered signals that the user manually reordered their
+	// networks; networkIDs is the full network list in the new display order.
+	NetworksReordered(networkIDs []string)
 	// ChannelList delivers the result of a channel-browser LIST request.
 	ChannelList(network string, items []ChannelListItem)
 	// Typing delivers an inbound typing notification (state is
@@ -507,6 +510,74 @@ func (e *Engine) persistAndNotify(p NetworkParams) {
 	e.notifyNetwork(p.ID)
 }
 
+// ReorderBuffers records the user's manual buffer order for a network (names
+// in display form; the status buffer may be omitted). It only persists the
+// order — applied to snapshots by orderChannels — and re-pushes the network so
+// every tab re-renders. Safe from any goroutine.
+func (e *Engine) ReorderBuffers(network string, names []string) error {
+	e.mu.Lock()
+	n := e.user.Network(network)
+	if n == nil {
+		e.mu.Unlock()
+		return errors.New("unknown network")
+	}
+	order := make([]string, len(names))
+	for i, name := range names {
+		order[i] = lower(name)
+	}
+	n.Params.BufferOrder = order
+	p := n.Params.clone()
+	e.mu.Unlock()
+	e.persistAndNotify(p)
+	return nil
+}
+
+// ReorderNetworks applies the user's manual network order. ids is the desired
+// order; networks present in the engine but missing from ids keep their
+// relative order after the listed ones, and unknown ids are ignored. It
+// rewrites each network's Pos, persists them, and fans the new full order out
+// to sinks. Safe from any goroutine.
+func (e *Engine) ReorderNetworks(ids []string) {
+	e.mu.Lock()
+	cur := e.user.Networks
+	seen := make(map[string]bool, len(ids))
+	reordered := make([]*Network, 0, len(cur))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		if n := e.user.Network(id); n != nil {
+			seen[id] = true
+			reordered = append(reordered, n)
+		}
+	}
+	for _, n := range cur { // append networks not named in ids, order preserved
+		if !seen[n.ID] {
+			reordered = append(reordered, n)
+		}
+	}
+	e.user.Networks = reordered
+	order := make([]string, len(reordered))
+	params := make([]NetworkParams, len(reordered))
+	for i, n := range reordered {
+		n.Params.Pos = i
+		order[i] = n.ID
+		params[i] = n.Params.clone()
+	}
+	e.mu.Unlock()
+
+	if e.netStore != nil {
+		for _, p := range params {
+			if err := e.netStore.SaveNetwork(p); err != nil {
+				e.log.Warn("persist network order", "network", p.ID, "err", err)
+			}
+		}
+	}
+	for _, s := range e.sinks {
+		s.NetworksReordered(order)
+	}
+}
+
 // NetworkConfig returns the stored connection params for a network.
 func (e *Engine) NetworkConfig(id string) (NetworkParams, bool) {
 	e.mu.RLock()
@@ -624,6 +695,7 @@ func (e *Engine) Snapshot() *User {
 		if conn := e.conns[n.ID]; conn != nil {
 			n.Caps = conn.Caps()
 		}
+		orderChannels(n)
 	}
 	return u
 }
@@ -1188,6 +1260,35 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 			}
 		}
 
+	case EvMode:
+		// A channel MODE change: update the membership prefixes it touches and
+		// note it in the buffer. The fresh snapshot pushed on netChanged is what
+		// re-ranks the nicklist (and re-enables op-only actions in the client).
+		c := n.Channel(ev.Channel)
+		if c == nil {
+			return emit, false, false
+		}
+		for _, mm := range ev.MemberModes {
+			m, ok := c.Members[lower(mm.Nick)]
+			if !ok {
+				continue
+			}
+			if mm.Add {
+				m.Modes = addPrefix(m.Modes, mm.Symbol)
+			} else {
+				m.Modes = strings.ReplaceAll(m.Modes, mm.Symbol, "")
+			}
+			netChanged = true
+		}
+		if ev.Text != "" {
+			who := ev.Nick
+			if who == "" {
+				who = "mode"
+			}
+			sys(ev.Channel, fmt.Sprintf("%s sets mode %s", who, ev.Text))
+			netChanged = true
+		}
+
 	case EvTopic:
 		c, _ := n.getOrCreate(ev.Channel, KindChannel)
 		c.Topic = ev.Text
@@ -1218,9 +1319,37 @@ func (e *Engine) SnapshotNetwork(id string) *Network {
 		if conn := e.conns[id]; conn != nil {
 			nc.Caps = conn.Caps()
 		}
+		orderChannels(nc)
 		return nc
 	}
 	return nil
+}
+
+// orderChannels stable-sorts a (cloned) network's channels into the user's
+// manual buffer order (n.Params.BufferOrder), matched case-insensitively by
+// name. Buffers not listed — freshly joined channels, the status buffer —
+// keep their relative order after the listed ones. Mutates nc in place; only
+// ever called on snapshot copies, never the live engine slice.
+func orderChannels(nc *Network) {
+	order := nc.Params.BufferOrder
+	if len(order) == 0 || len(nc.Channels) < 2 {
+		return
+	}
+	rank := make(map[string]int, len(order))
+	for i, name := range order {
+		if _, dup := rank[name]; !dup {
+			rank[name] = i
+		}
+	}
+	pos := func(c *Channel) int {
+		if i, ok := rank[lower(c.Name)]; ok {
+			return i
+		}
+		return len(order) // unlisted → after everything listed
+	}
+	slices.SortStableFunc(nc.Channels, func(a, b *Channel) int {
+		return pos(a) - pos(b)
+	})
 }
 
 // bufferKind classifies a buffer name into channel vs query.
@@ -1251,3 +1380,29 @@ func isChannelName(name string) bool {
 }
 
 func lower(s string) string { return toLowerASCII(s) }
+
+// membershipPrefixOrder ranks channel prefix symbols highest-first
+// (owner, admin, op, half-op, voice) — matching the client's nicklist sort.
+const membershipPrefixOrder = "~&@%+"
+
+// addPrefix inserts a membership prefix symbol into a member's mode string,
+// keeping symbols ordered highest-first and avoiding duplicates, so the
+// client reads Modes[0] as the effective rank.
+func addPrefix(modes, sym string) string {
+	if sym == "" || strings.Contains(modes, sym) {
+		return modes
+	}
+	rank := func(b byte) int {
+		if i := strings.IndexByte(membershipPrefixOrder, b); i >= 0 {
+			return i
+		}
+		return len(membershipPrefixOrder)
+	}
+	sr := rank(sym[0])
+	for i := 0; i < len(modes); i++ {
+		if rank(modes[i]) > sr {
+			return modes[:i] + sym + modes[i:]
+		}
+	}
+	return modes + sym
+}

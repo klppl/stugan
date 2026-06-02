@@ -10,6 +10,7 @@ export const T = {
   Msg: "msg",
   NetUpdate: "net:update",
   NetRemove: "net:remove",
+  NetReorder: "net:reorder",
   NetInfo: "net:info",
   Backlog: "backlog",
   SearchResult: "search:result",
@@ -34,6 +35,7 @@ export const T = {
   HighlightSet: "highlight:set",
   Mute: "mute",
   BufClose: "buf:close",
+  BufReorder: "buf:reorder",
 } as const;
 
 export interface Envelope<D = unknown> {
@@ -82,6 +84,17 @@ export interface MuteSet {
 export interface BufClose {
   network: string;
   buffer: string;
+}
+
+// NetReorder: the full network id list in display order (c2s request, s2c echo).
+export interface NetReorder {
+  networks: string[];
+}
+
+// BufReorder: buffer display names in order within a network (c2s).
+export interface BufReorder {
+  network: string;
+  buffers: string[];
 }
 
 export interface UserDTO {

@@ -21,6 +21,7 @@ const (
 	TMsg          = "msg"           // s2c
 	TNetUpdate    = "net:update"    // s2c
 	TNetRemove    = "net:remove"    // s2c (and c2s)
+	TNetReorder   = "net:reorder"   // s2c (and c2s) — manual network sidebar order
 	TNetInfo      = "net:info"      // s2c (answers c2s net:info)
 	TBacklog      = "backlog"       // s2c (answers backlog:fetch)
 	TSearchResult = "search:result" // s2c (answers search)
@@ -46,6 +47,7 @@ const (
 	THighlightSet = "highlight:set" // c2s — replace the highlight ruleset
 	TMute         = "mute"          // c2s set intent; s2c absolute state broadcast to the user's tabs
 	TBufClose     = "buf:close"     // c2s — close/remove a query buffer from state
+	TBufReorder   = "buf:reorder"   // c2s — manual buffer order within a network
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -207,6 +209,21 @@ type NetAdd struct {
 // server→client notification that one was removed.
 type NetRemove struct {
 	Network string `json:"network"`
+}
+
+// NetReorder is a client→server request to set the manual network order, and
+// the server→client notification of it: Networks is the full network id list
+// in display order.
+type NetReorder struct {
+	Networks []string `json:"networks"`
+}
+
+// BufReorder is a client→server request to set the manual buffer order within
+// a network: Buffers is the buffer display names in order (the status buffer
+// may be omitted).
+type BufReorder struct {
+	Network string   `json:"network"`
+	Buffers []string `json:"buffers"`
 }
 
 // ListReq is a client→server channel-browser request. Query is passed to

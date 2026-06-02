@@ -26,6 +26,10 @@ const (
 	EvNames EventType = "names"
 	// EvAway is an away-notify update: Nick changed away state to Away.
 	EvAway EventType = "away"
+	// EvMode is a channel MODE change. MemberModes carries the membership
+	// prefix changes (op/voice/...) it makes; Channel is the target, Nick the
+	// setter, Text the raw mode string (flags + args) for the system line.
+	EvMode EventType = "mode"
 	// EvListItem / EvListEnd carry the server's LIST reply (channel browser):
 	// one item per channel, then end. EvListItem uses Channel, Count, Text.
 	EvListItem EventType = "list_item"
@@ -86,11 +90,20 @@ type Event struct {
 	// Target is a message id the event refers to (EvReact / EvRedact).
 	Target string
 
-	Command string   // EvCommand: the command name (without leading slash)
-	Args    []string // EvCommand: whitespace-split arguments
-	Members []Member // EvNames: the listed channel members
-	Away    bool     // EvAway: whether Nick is now away
-	Count   int      // EvListItem: user count
+	Command     string       // EvCommand: the command name (without leading slash)
+	Args        []string     // EvCommand: whitespace-split arguments
+	Members     []Member     // EvNames: the listed channel members
+	MemberModes []MemberMode // EvMode: the membership prefix changes
+	Away        bool         // EvAway: whether Nick is now away
+	Count       int          // EvListItem: user count
+}
+
+// MemberMode is one membership-prefix change carried by EvMode: Nick gains
+// (Add) or loses the channel prefix Symbol, e.g. "@" for op, "+" for voice.
+type MemberMode struct {
+	Nick   string
+	Symbol string
+	Add    bool
 }
 
 // eqFold is a small ASCII case-insensitive compare used for channel/nick

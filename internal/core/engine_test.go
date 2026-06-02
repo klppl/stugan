@@ -11,17 +11,19 @@ import (
 
 // captureSink records printed lines and network snapshots for assertions.
 type captureSink struct {
-	msgs    []Message
-	nets    []*Network
-	removed []string
-	lists   [][]ChannelListItem
-	reacts  [][5]string // network, buffer, target, nick, reaction
-	redacts [][5]string // network, buffer, target, nick, reason
+	msgs      []Message
+	nets      []*Network
+	removed   []string
+	reordered [][]string
+	lists     [][]ChannelListItem
+	reacts    [][5]string // network, buffer, target, nick, reaction
+	redacts   [][5]string // network, buffer, target, nick, reason
 }
 
-func (c *captureSink) Print(m Message)           { c.msgs = append(c.msgs, m) }
-func (c *captureSink) NetworkChanged(n *Network) { c.nets = append(c.nets, n) }
-func (c *captureSink) NetworkRemoved(id string)  { c.removed = append(c.removed, id) }
+func (c *captureSink) Print(m Message)                { c.msgs = append(c.msgs, m) }
+func (c *captureSink) NetworkChanged(n *Network)      { c.nets = append(c.nets, n) }
+func (c *captureSink) NetworkRemoved(id string)       { c.removed = append(c.removed, id) }
+func (c *captureSink) NetworksReordered(ids []string) { c.reordered = append(c.reordered, ids) }
 func (c *captureSink) ChannelList(_ string, items []ChannelListItem) {
 	c.lists = append(c.lists, items)
 }
@@ -179,6 +181,124 @@ func TestApplyNames(t *testing.T) {
 		if m.Kind == MsgSystem {
 			t.Errorf("NAMES emitted a system line: %q", m.Text)
 		}
+	}
+}
+
+func TestApplyMode(t *testing.T) {
+	e, sink := newTestEngine(t)
+	e.apply(Event{Type: EvNames, Network: "net", Channel: "#go", Members: []Member{
+		{Nick: "me"}, {Nick: "alice", Modes: "+"},
+	}})
+
+	// Gain op: "@" is inserted ahead of the existing voice "+".
+	e.apply(Event{Type: EvMode, Network: "net", Channel: "#go", Nick: "alice",
+		Text: "+o me", MemberModes: []MemberMode{{Nick: "me", Symbol: "@", Add: true}}})
+	if got := net0(e).Channel("#go").Members["me"].Modes; got != "@" {
+		t.Errorf("me modes after +o = %q, want @", got)
+	}
+	e.apply(Event{Type: EvMode, Network: "net", Channel: "#go", Nick: "x",
+		Text: "+o alice", MemberModes: []MemberMode{{Nick: "alice", Symbol: "@", Add: true}}})
+	if got := net0(e).Channel("#go").Members["alice"].Modes; got != "@+" {
+		t.Errorf("alice modes after +o = %q, want @+ (op before voice)", got)
+	}
+
+	// Lose op: "@" is removed, voice survives.
+	e.apply(Event{Type: EvMode, Network: "net", Channel: "#go", Nick: "x",
+		Text: "-o alice", MemberModes: []MemberMode{{Nick: "alice", Symbol: "@", Add: false}}})
+	if got := net0(e).Channel("#go").Members["alice"].Modes; got != "+" {
+		t.Errorf("alice modes after -o = %q, want +", got)
+	}
+
+	// Each mode change leaves a system line in the channel buffer.
+	var sysLines int
+	for _, m := range sink.msgs {
+		if m.Kind == MsgSystem && m.Buffer == "#go" {
+			sysLines++
+		}
+	}
+	if sysLines != 3 {
+		t.Errorf("mode system lines = %d, want 3", sysLines)
+	}
+}
+
+func chanNames(n *Network) []string {
+	out := make([]string, len(n.Channels))
+	for i, c := range n.Channels {
+		out[i] = c.Name
+	}
+	return out
+}
+
+func TestReorderBuffers(t *testing.T) {
+	e, _ := newTestEngine(t)
+	for _, ch := range []string{"#a", "#b", "#c"} {
+		e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Channel: ch})
+	}
+
+	if err := e.ReorderBuffers("net", []string{"#c", "#a", "#b"}); err != nil {
+		t.Fatalf("ReorderBuffers: %v", err)
+	}
+	// BufferOrder is stored lowercased on the live params...
+	if got := net0(e).Params.BufferOrder; !slices.Equal(got, []string{"#c", "#a", "#b"}) {
+		t.Errorf("BufferOrder = %v, want [#c #a #b]", got)
+	}
+	// ...and the snapshot reflects it (the live slice is left untouched).
+	if got := chanNames(e.SnapshotNetwork("net")); !slices.Equal(got, []string{"#c", "#a", "#b"}) {
+		t.Errorf("snapshot order = %v, want [#c #a #b]", got)
+	}
+
+	// A buffer absent from the order (here #a, #c) sorts after the listed one,
+	// keeping its live relative order. Case-insensitive match too.
+	if err := e.ReorderBuffers("net", []string{"#B"}); err != nil {
+		t.Fatalf("ReorderBuffers: %v", err)
+	}
+	if got := chanNames(e.SnapshotNetwork("net")); !slices.Equal(got, []string{"#b", "#a", "#c"}) {
+		t.Errorf("snapshot order = %v, want [#b #a #c]", got)
+	}
+
+	if e.ReorderBuffers("nope", nil) == nil {
+		t.Error("ReorderBuffers on unknown network: want error")
+	}
+}
+
+func TestReorderNetworks(t *testing.T) {
+	sink := &captureSink{}
+	e := New(Options{Sink: sink})
+	for _, id := range []string{"a", "b", "c"} {
+		e.AddNetwork(NetworkParams{ID: id, Name: id, Nick: "me"}, nil)
+	}
+
+	e.ReorderNetworks([]string{"c", "a", "b"})
+
+	var ids []string
+	for _, n := range e.Snapshot().Networks {
+		ids = append(ids, n.ID)
+	}
+	if !slices.Equal(ids, []string{"c", "a", "b"}) {
+		t.Fatalf("network order = %v, want [c a b]", ids)
+	}
+	// Pos is rewritten to the new index so the order survives a restart.
+	for i, id := range []string{"c", "a", "b"} {
+		if p, _ := e.NetworkConfig(id); p.Pos != i {
+			t.Errorf("network %q Pos = %d, want %d", id, p.Pos, i)
+		}
+	}
+	// The full new order is fanned out to sinks.
+	if n := len(sink.reordered); n == 0 {
+		t.Fatal("no NetworksReordered emitted")
+	} else if got := sink.reordered[n-1]; !slices.Equal(got, []string{"c", "a", "b"}) {
+		t.Errorf("NetworksReordered = %v, want [c a b]", got)
+	}
+
+	// Networks omitted from the request keep their relative order at the end;
+	// unknown ids are ignored.
+	e.ReorderNetworks([]string{"b", "zzz"})
+	ids = nil
+	for _, n := range e.Snapshot().Networks {
+		ids = append(ids, n.ID)
+	}
+	if !slices.Equal(ids, []string{"b", "c", "a"}) {
+		t.Fatalf("network order = %v, want [b c a]", ids)
 	}
 }
 

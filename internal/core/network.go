@@ -36,6 +36,14 @@ type NetworkParams struct {
 	// PEM form) presented during the TLS handshake. Enables CertFP and is
 	// required for SASLExternal. Empty disables the client certificate.
 	CertPEM string `json:"cert_pem,omitempty"`
+	// Pos is the network's manual sort position in the sidebar (lower first).
+	// Set by drag-and-drop reordering; networks load ordered by it on boot.
+	Pos int `json:"pos,omitempty"`
+	// BufferOrder is the user's manual buffer order within this network, as
+	// lowercased display names (channels and queries). Buffers absent from the
+	// list — freshly joined channels, the status buffer — sort to the end.
+	// Applied to snapshots; see Engine.orderChannels.
+	BufferOrder []string `json:"buffer_order,omitempty"`
 }
 
 // clone returns a deep copy of p, duplicating its slice fields so the copy can
@@ -50,6 +58,9 @@ func (p NetworkParams) clone() NetworkParams {
 	}
 	if p.ChannelKeys != nil {
 		c.ChannelKeys = maps.Clone(p.ChannelKeys)
+	}
+	if p.BufferOrder != nil {
+		c.BufferOrder = append([]string(nil), p.BufferOrder...)
 	}
 	return c
 }

@@ -147,6 +147,10 @@ func (s *Store) NetworkChanged(*core.Network) {}
 // DeleteNetwork.
 func (s *Store) NetworkRemoved(string) {}
 
+// NetworksReordered is a no-op for the store; the new order is persisted via
+// SaveNetwork (each network's Pos) by the engine.
+func (s *Store) NetworksReordered([]string) {}
+
 // ChannelList is a no-op for the store (transient browser data).
 func (s *Store) ChannelList(string, []core.ChannelListItem) {}
 
