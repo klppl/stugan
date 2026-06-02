@@ -1,6 +1,9 @@
-// Deterministic per-nick coloring. A nick hashes to a hue; saturation and
-// lightness are fixed in a range that stays legible on both the dark and
-// light themes (mid lightness, moderate saturation). Case- and
+// Deterministic per-nick coloring. A nick hashes into three independent
+// dimensions — hue, saturation and lightness — each kept in a range that
+// stays legible on both the dark and light themes (mid lightness, moderate
+// saturation). Varying all three (rather than hue alone) spreads nicks across
+// far more perceptually-distinct colors: HSL hue is not perceptually uniform,
+// so neighbouring hues alone collide easily. Case- and
 // trailing-underscore-insensitive so "alice", "Alice" and "alice_" share a
 // color, matching the irssi/weechat habit where those are the same person.
 
@@ -27,8 +30,13 @@ export function nickColor(nick: string): string {
   const key = canonical(nick);
   const hit = cache.get(key);
   if (hit) return hit;
+  // Decorrelate the three dimensions by hashing salted variants of the key,
+  // so two nicks that happen to share a hue still differ in saturation or
+  // lightness. Ranges are chosen to stay readable on both themes.
   const hue = fnv1a(key) % 360;
-  const color = `hsl(${hue}, 58%, 62%)`;
+  const sat = 50 + (fnv1a(key + "\x01") % 35); // 50–84%
+  const light = 55 + (fnv1a(key + "\x02") % 20); // 55–74%
+  const color = `hsl(${hue}, ${sat}%, ${light}%)`;
   cache.set(key, color);
   return color;
 }
