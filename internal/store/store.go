@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -320,7 +321,7 @@ func (s *Store) Backlog(ctx context.Context, network, buffer string, before time
 	// Order by id (insertion order) for a stable sequence; filter by ts so
 	// the wire-visible message time can serve as the paging cursor.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags
+		`SELECT `+msgCols+`
 		 FROM messages
 		 WHERE network = ? AND buffer = ? AND ts < ?
 		 ORDER BY id DESC LIMIT ?`,
@@ -346,12 +347,8 @@ func (s *Store) Backlog(ctx context.Context, network, buffer string, before time
 		more = true
 		desc = desc[:limit]
 	}
-	// Reverse to oldest-first.
-	msgs = make([]core.Message, len(desc))
-	for i, m := range desc {
-		msgs[len(desc)-1-i] = m
-	}
-	return msgs, more, nil
+	slices.Reverse(desc) // oldest-first
+	return desc, more, nil
 }
 
 // BacklogAround returns a window of messages centered on the around time,
@@ -378,7 +375,7 @@ func (s *Store) BacklogAround(ctx context.Context, network, buffer string, aroun
 	// Older half (and the anchor row), newest-first. Fetch beforeHalf+1 so
 	// the (limit/2 + 1)-th row tells us whether older history still exists.
 	rowsA, err := s.db.QueryContext(ctx,
-		`SELECT id, msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags
+		`SELECT `+msgCols+`
 		 FROM messages
 		 WHERE network = ? AND buffer = ? AND ts <= ?
 		 ORDER BY id DESC LIMIT ?`,
@@ -406,13 +403,11 @@ func (s *Store) BacklogAround(ctx context.Context, network, buffer string, aroun
 	}
 	// Reverse to oldest-first so it concatenates naturally with the newer
 	// half (which we already query in ascending order).
-	for i, j := 0, len(older)-1; i < j; i, j = i+1, j-1 {
-		older[i], older[j] = older[j], older[i]
-	}
+	slices.Reverse(older)
 
 	// Newer half, oldest-first.
 	rowsB, err := s.db.QueryContext(ctx,
-		`SELECT id, msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags
+		`SELECT `+msgCols+`
 		 FROM messages
 		 WHERE network = ? AND buffer = ? AND ts > ?
 		 ORDER BY id ASC LIMIT ?`,
@@ -441,7 +436,7 @@ func (s *Store) Search(ctx context.Context, query, network, buffer string, limit
 	if limit <= 0 {
 		limit = 50
 	}
-	q := `SELECT m.id, m.msgid, m.network, m.buffer, m.ts, m.from_nick, m.account, m.kind, m.text, m.self, m.highlight, m.tags
+	q := `SELECT ` + msgColsM + `
 	      FROM messages_fts f JOIN messages m ON m.id = f.rowid
 	      WHERE messages_fts MATCH ?`
 	args := []any{query}
@@ -472,6 +467,14 @@ func (s *Store) Search(ctx context.Context, query, network, buffer string, limit
 	}
 	return out, rows.Err()
 }
+
+// msgCols is the messages-table column list every SELECT that feeds
+// scanMessage must request, in scanMessage's exact scan order. msgColsM is the
+// same list aliased to m, for the search query that joins messages AS m.
+const (
+	msgCols  = "id, msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags"
+	msgColsM = "m.id, m.msgid, m.network, m.buffer, m.ts, m.from_nick, m.account, m.kind, m.text, m.self, m.highlight, m.tags"
+)
 
 // scanMessage scans one row into a core.Message and its row id.
 func scanMessage(rows *sql.Rows) (core.Message, int64, error) {

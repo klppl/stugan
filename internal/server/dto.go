@@ -62,6 +62,42 @@ func toMessageDTOs(ms []core.Message) []proto.MessageDTO {
 	return out
 }
 
+// netAddParams converts a net:add request into runtime params; the network's
+// name doubles as its id.
+func netAddParams(d proto.NetAdd) core.NetworkParams {
+	return core.NetworkParams{
+		ID: d.Name, Name: d.Name, Addr: d.Addr, TLS: d.TLS,
+		Nick: d.Nick, User: d.User, Realname: d.Realname,
+		SASLUser: d.SASLUser, SASLPass: d.SASLPass, Channels: d.Channels,
+		ServerPass: d.ServerPass, Perform: d.Perform,
+		SASLExternal: d.SASLExternal, CertPEM: d.CertPEM,
+	}
+}
+
+// netConfigParams converts a net:edit/net:info config into runtime params; the
+// Network field identifies the existing network being edited.
+func netConfigParams(d proto.NetConfig) core.NetworkParams {
+	return core.NetworkParams{
+		ID: d.Network, Name: d.Network, Addr: d.Addr, TLS: d.TLS,
+		Nick: d.Nick, User: d.User, Realname: d.Realname,
+		SASLUser: d.SASLUser, SASLPass: d.SASLPass, Channels: d.Channels,
+		ServerPass: d.ServerPass, Perform: d.Perform,
+		SASLExternal: d.SASLExternal, CertPEM: d.CertPEM,
+	}
+}
+
+// netConfigDTO projects runtime params onto the editable NetConfig wire form
+// (the net:info reply).
+func netConfigDTO(p core.NetworkParams) proto.NetConfig {
+	return proto.NetConfig{
+		Network: p.ID, Name: p.Name, Addr: p.Addr, TLS: p.TLS,
+		Nick: p.Nick, User: p.User, Realname: p.Realname,
+		SASLUser: p.SASLUser, SASLPass: p.SASLPass, Channels: p.Channels,
+		ServerPass: p.ServerPass, Perform: p.Perform,
+		SASLExternal: p.SASLExternal, CertPEM: p.CertPEM,
+	}
+}
+
 // toInitState projects a user-state snapshot onto the init payload.
 func toInitState(u *core.User) proto.InitState {
 	nets := make([]proto.NetworkDTO, 0, len(u.Networks))

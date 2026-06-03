@@ -322,19 +322,16 @@ func (s *Server) handleMagicWord(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "magic word not configured", http.StatusNotFound)
 		return
 	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requirePost(w, r) {
 		return
 	}
-	noStore(w)
 	ip := clientIP(r)
 	if !s.authLimit.allow(ip) {
 		http.Error(w, "too many attempts; try again later", http.StatusTooManyRequests)
 		return
 	}
 	var body struct{ Word, Email, Website string }
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	if !decodePost(w, r, &body) {
 		return
 	}
 	if body.Email != "" || body.Website != "" {
@@ -369,11 +366,9 @@ func (s *Server) handleMagicWordLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requirePost(w, r) {
 		return
 	}
-	noStore(w)
 	ip := clientIP(r)
 	if !s.authLimit.allow(ip) {
 		http.Error(w, "too many attempts; try again later", http.StatusTooManyRequests)
@@ -382,8 +377,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// The honeypot fields (Email, Website) don't exist on the real form;
 	// they're hidden inputs the SPA renders only to trap auto-fillers.
 	var body struct{ Username, Password, Email, Website string }
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	if !decodePost(w, r, &body) {
 		return
 	}
 	if body.Email != "" || body.Website != "" {
@@ -409,6 +403,27 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 // noStore tells caches and clients not to keep auth endpoint responses.
 func noStore(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
+}
+
+// requirePost rejects non-POST requests (writing 405) and marks the response
+// no-store. It returns false when the caller should stop.
+func requirePost(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return false
+	}
+	noStore(w)
+	return true
+}
+
+// decodePost decodes a JSON request body (bounded to 4 KiB) into v, writing a
+// 400 on failure. It returns false when the caller should stop.
+func decodePost(w http.ResponseWriter, r *http.Request, v any) bool {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(v); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return false
+	}
+	return true
 }
 
 // secureCookie reports whether session cookies should carry the Secure
@@ -515,16 +530,9 @@ func (s *Server) readPump(ctx context.Context, c *client) {
 func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	switch env.T {
 	case proto.TMsgSend:
-		var d proto.MsgSend
-		if err := decode(env, &d); err != nil {
-			c.sendError(env.ID, "bad_request", "invalid msg:send payload")
-			return
-		}
-		if d.Network == "" || d.Buffer == "" || d.Text == "" {
-			c.sendError(env.ID, "bad_request", "msg:send requires network, buffer, text")
-			return
-		}
-		c.tenant.Engine.SendInput(d.Network, d.Buffer, d.Text)
+		reqHandle(c, env, "msg:send requires network, buffer, text",
+			func(d proto.MsgSend) bool { return d.Network != "" && d.Buffer != "" && d.Text != "" },
+			func(d proto.MsgSend) error { c.tenant.Engine.SendInput(d.Network, d.Buffer, d.Text); return nil })
 
 	case proto.TBacklogFetch:
 		s.handleBacklog(ctx, c, env)
@@ -533,95 +541,63 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		s.handleContext(ctx, c, env)
 
 	case proto.TRead:
-		var d proto.ReadMark
-		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" {
-			return // read marks are best-effort; ignore malformed
-		}
-		if c.tenant.History == nil {
-			return
-		}
-		if err := c.tenant.History.MarkRead(ctx, d.Network, d.Buffer, time.Time{}); err != nil {
-			s.log.Error("mark read", "network", d.Network, "buffer", d.Buffer, "err", err)
-		}
+		bestHandle(env,
+			func(d proto.ReadMark) bool { return d.Network != "" && d.Buffer != "" },
+			func(d proto.ReadMark) {
+				if c.tenant.History == nil {
+					return
+				}
+				if err := c.tenant.History.MarkRead(ctx, d.Network, d.Buffer, time.Time{}); err != nil {
+					s.log.Error("mark read", "network", d.Network, "buffer", d.Buffer, "err", err)
+				}
+			})
 
 	case proto.TCompleteReq:
-		var d proto.CompleteReq
-		if err := decode(env, &d); err != nil {
-			return // completion is best-effort; ignore malformed
-		}
-		items := c.tenant.Engine.Complete(d.Network, d.Buffer, d.Word)
-		s.reply(c, env.ID, proto.TCompleteRes, proto.CompleteRes{Seq: d.Seq, Items: items})
+		bestHandle(env, nil, func(d proto.CompleteReq) {
+			items := c.tenant.Engine.Complete(d.Network, d.Buffer, d.Word)
+			s.reply(c, env.ID, proto.TCompleteRes, proto.CompleteRes{Seq: d.Seq, Items: items})
+		})
 
 	case proto.TSearch:
 		s.handleSearch(ctx, c, env)
 
 	case proto.TNetAdd:
-		var d proto.NetAdd
-		if err := decode(env, &d); err != nil || d.Name == "" || d.Addr == "" {
-			c.sendError(env.ID, "bad_request", "net:add requires name and addr")
-			return
-		}
-		if err := c.tenant.Engine.AddNetworkLive(core.NetworkParams{
-			ID: d.Name, Name: d.Name, Addr: d.Addr, TLS: d.TLS,
-			Nick: d.Nick, User: d.User, Realname: d.Realname,
-			SASLUser: d.SASLUser, SASLPass: d.SASLPass, Channels: d.Channels,
-			ServerPass: d.ServerPass, Perform: d.Perform,
-			SASLExternal: d.SASLExternal, CertPEM: d.CertPEM,
-		}); err != nil {
-			c.sendError(env.ID, "bad_request", err.Error())
-		}
+		reqHandle(c, env, "net:add requires name and addr",
+			func(d proto.NetAdd) bool { return d.Name != "" && d.Addr != "" },
+			func(d proto.NetAdd) error { return c.tenant.Engine.AddNetworkLive(netAddParams(d)) })
 
 	case proto.TNetRemove:
-		var d proto.NetRemove
-		if err := decode(env, &d); err != nil || d.Network == "" {
-			c.sendError(env.ID, "bad_request", "net:remove requires network")
-			return
-		}
-		if err := c.tenant.Engine.RemoveNetwork(d.Network); err != nil {
-			c.sendError(env.ID, "bad_request", err.Error())
-		}
+		reqHandle(c, env, "net:remove requires network",
+			func(d proto.NetRemove) bool { return d.Network != "" },
+			func(d proto.NetRemove) error { return c.tenant.Engine.RemoveNetwork(d.Network) })
 
 	case proto.TTyping:
-		var d proto.Typing
-		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" {
-			return // typing is best-effort; ignore malformed
-		}
-		c.tenant.Engine.SendTyping(d.Network, d.Buffer, d.State)
+		bestHandle(env,
+			func(d proto.Typing) bool { return d.Network != "" && d.Buffer != "" },
+			func(d proto.Typing) { c.tenant.Engine.SendTyping(d.Network, d.Buffer, d.State) })
 
 	case proto.TReact:
-		var d proto.React
-		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" {
-			return // reactions are best-effort
-		}
-		c.tenant.Engine.SendReaction(d.Network, d.Buffer, d.Target, d.Reaction)
+		bestHandle(env,
+			func(d proto.React) bool { return d.Network != "" && d.Buffer != "" },
+			func(d proto.React) { c.tenant.Engine.SendReaction(d.Network, d.Buffer, d.Target, d.Reaction) })
 
 	case proto.TRedact:
-		var d proto.Redact
-		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" || d.Target == "" {
-			c.sendError(env.ID, "bad_request", "redact requires network, buffer, target")
-			return
-		}
-		c.tenant.Engine.SendRedact(d.Network, d.Buffer, d.Target, d.Reason)
+		reqHandle(c, env, "redact requires network, buffer, target",
+			func(d proto.Redact) bool { return d.Network != "" && d.Buffer != "" && d.Target != "" },
+			func(d proto.Redact) error {
+				c.tenant.Engine.SendRedact(d.Network, d.Buffer, d.Target, d.Reason)
+				return nil
+			})
 
 	case proto.TList:
-		var d proto.ListReq
-		if err := decode(env, &d); err != nil || d.Network == "" {
-			c.sendError(env.ID, "bad_request", "list requires network")
-			return
-		}
-		if err := c.tenant.Engine.ListChannels(d.Network, d.Query); err != nil {
-			c.sendError(env.ID, "bad_request", err.Error())
-		}
+		reqHandle(c, env, "list requires network",
+			func(d proto.ListReq) bool { return d.Network != "" },
+			func(d proto.ListReq) error { return c.tenant.Engine.ListChannels(d.Network, d.Query) })
 
 	case proto.TNetConnect:
-		var d proto.NetConnect
-		if err := decode(env, &d); err != nil || d.Network == "" {
-			c.sendError(env.ID, "bad_request", "net:connect requires network")
-			return
-		}
-		if err := c.tenant.Engine.SetConnected(d.Network, d.Connect); err != nil {
-			c.sendError(env.ID, "bad_request", err.Error())
-		}
+		reqHandle(c, env, "net:connect requires network",
+			func(d proto.NetConnect) bool { return d.Network != "" },
+			func(d proto.NetConnect) error { return c.tenant.Engine.SetConnected(d.Network, d.Connect) })
 
 	case proto.TNetInfo:
 		var d proto.NetInfoReq
@@ -634,29 +610,12 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			c.sendError(env.ID, "not_found", "unknown network")
 			return
 		}
-		s.reply(c, env.ID, proto.TNetInfo, proto.NetConfig{
-			Network: p.ID, Name: p.Name, Addr: p.Addr, TLS: p.TLS,
-			Nick: p.Nick, User: p.User, Realname: p.Realname,
-			SASLUser: p.SASLUser, SASLPass: p.SASLPass, Channels: p.Channels,
-			ServerPass: p.ServerPass, Perform: p.Perform,
-			SASLExternal: p.SASLExternal, CertPEM: p.CertPEM,
-		})
+		s.reply(c, env.ID, proto.TNetInfo, netConfigDTO(p))
 
 	case proto.TNetEdit:
-		var d proto.NetConfig
-		if err := decode(env, &d); err != nil || d.Network == "" || d.Addr == "" {
-			c.sendError(env.ID, "bad_request", "net:edit requires network and addr")
-			return
-		}
-		if err := c.tenant.Engine.UpdateNetwork(core.NetworkParams{
-			ID: d.Network, Name: d.Network, Addr: d.Addr, TLS: d.TLS,
-			Nick: d.Nick, User: d.User, Realname: d.Realname,
-			SASLUser: d.SASLUser, SASLPass: d.SASLPass, Channels: d.Channels,
-			ServerPass: d.ServerPass, Perform: d.Perform,
-			SASLExternal: d.SASLExternal, CertPEM: d.CertPEM,
-		}); err != nil {
-			c.sendError(env.ID, "bad_request", err.Error())
-		}
+		reqHandle(c, env, "net:edit requires network and addr",
+			func(d proto.NetConfig) bool { return d.Network != "" && d.Addr != "" },
+			func(d proto.NetConfig) error { return c.tenant.Engine.UpdateNetwork(netConfigParams(d)) })
 
 	case proto.TPluginList:
 		s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
@@ -712,64 +671,74 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		// the user's clients — the requester to confirm the save, other tabs to
 		// stay in sync without a reload. The frame is uncorrelated; only the
 		// requesting tab flashes "saved" (it tracks that locally).
-		if frame, err := proto.Frame(proto.THighlight, proto.HighlightRules{
+		s.broadcast(c.user, proto.THighlight, proto.HighlightRules{
 			Patterns: hl.Patterns(), Exceptions: hl.Exceptions(),
-		}); err == nil {
-			s.routeToUser(c.user, frame)
-		}
+		})
 
 	case proto.TMute:
-		var d proto.MuteSet
-		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" {
-			return // mute is best-effort; ignore malformed
-		}
-		if c.tenant.Prefs == nil {
-			return
-		}
-		refs := setMuted(loadMuted(c.tenant), d.Network, d.Buffer, d.Muted)
-		if b, err := json.Marshal(refs); err == nil {
-			if err := c.tenant.Prefs.SetPref(prefMuted, string(b)); err != nil {
-				s.log.Error("save mute", "user", c.user, "err", err)
-			}
-		}
-		// Broadcast the absolute new state to every tab so they converge. The
-		// client handler sets (not toggles), so the originating tab's optimistic
-		// update is a no-op and other tabs catch up.
-		if frame, err := proto.Frame(proto.TMute, d); err == nil {
-			s.routeToUser(c.user, frame)
-		}
+		bestHandle(env,
+			func(d proto.MuteSet) bool { return d.Network != "" && d.Buffer != "" },
+			func(d proto.MuteSet) {
+				if c.tenant.Prefs == nil {
+					return
+				}
+				refs := setMuted(loadMuted(c.tenant), d.Network, d.Buffer, d.Muted)
+				if b, err := json.Marshal(refs); err == nil {
+					if err := c.tenant.Prefs.SetPref(prefMuted, string(b)); err != nil {
+						s.log.Error("save mute", "user", c.user, "err", err)
+					}
+				}
+				// Broadcast the absolute new state to every tab so they converge.
+				// The client handler sets (not toggles), so the originating tab's
+				// optimistic update is a no-op and other tabs catch up.
+				s.broadcast(c.user, proto.TMute, d)
+			})
 
 	case proto.TBufClose:
-		var d proto.BufClose
-		if err := decode(env, &d); err != nil || d.Network == "" || d.Buffer == "" {
-			c.sendError(env.ID, "bad_request", "buf:close requires network and buffer")
-			return
-		}
-		if err := c.tenant.Engine.CloseBuffer(d.Network, d.Buffer); err != nil {
-			c.sendError(env.ID, "bad_request", err.Error())
-		}
+		reqHandle(c, env, "buf:close requires network and buffer",
+			func(d proto.BufClose) bool { return d.Network != "" && d.Buffer != "" },
+			func(d proto.BufClose) error { return c.tenant.Engine.CloseBuffer(d.Network, d.Buffer) })
 
 	case proto.TNetReorder:
-		var d proto.NetReorder
-		if err := decode(env, &d); err != nil {
-			c.sendError(env.ID, "bad_request", "net:reorder requires networks")
-			return
-		}
-		c.tenant.Engine.ReorderNetworks(d.Networks)
+		reqHandle(c, env, "net:reorder requires networks",
+			nil,
+			func(d proto.NetReorder) error { c.tenant.Engine.ReorderNetworks(d.Networks); return nil })
 
 	case proto.TBufReorder:
-		var d proto.BufReorder
-		if err := decode(env, &d); err != nil || d.Network == "" {
-			c.sendError(env.ID, "bad_request", "buf:reorder requires network and buffers")
-			return
-		}
-		if err := c.tenant.Engine.ReorderBuffers(d.Network, d.Buffers); err != nil {
-			c.sendError(env.ID, "bad_request", err.Error())
-		}
+		reqHandle(c, env, "buf:reorder requires network and buffers",
+			func(d proto.BufReorder) bool { return d.Network != "" },
+			func(d proto.BufReorder) error { return c.tenant.Engine.ReorderBuffers(d.Network, d.Buffers) })
 
 	default:
 		s.log.Debug("ignoring unknown frame", "t", env.T)
 	}
+}
+
+// reqHandle decodes env's payload into a T, validates it, and runs fn — the
+// shape every acknowledging c2s arm shares. A decode failure or ok returning
+// false (ok nil = accept any decoded payload) replies bad_request with badMsg;
+// an fn error replies bad_request with its message. fn returns nil for engine
+// calls that don't fail.
+func reqHandle[T any](c *client, env proto.Envelope, badMsg string, ok func(T) bool, fn func(T) error) {
+	var d T
+	if err := decode(env, &d); err != nil || (ok != nil && !ok(d)) {
+		c.sendError(env.ID, "bad_request", badMsg)
+		return
+	}
+	if err := fn(d); err != nil {
+		c.sendError(env.ID, "bad_request", err.Error())
+	}
+}
+
+// bestHandle is the best-effort counterpart to reqHandle: a malformed or
+// invalid payload is dropped silently (no error frame), matching the c2s arms
+// for typing, reactions, read marks, completion, and mute.
+func bestHandle[T any](env proto.Envelope, ok func(T) bool, fn func(T)) {
+	var d T
+	if err := decode(env, &d); err != nil || (ok != nil && !ok(d)) {
+		return
+	}
+	fn(d)
 }
 
 func (s *Server) handleBacklog(ctx context.Context, c *client, env proto.Envelope) {
@@ -907,6 +876,15 @@ func (s *Server) routeToUser(user string, env proto.Envelope) {
 	s.mu.Unlock()
 }
 
+// broadcast marshals d into a t-frame and fans it (uncorrelated) out to all of
+// user's clients. proto.Frame only fails on a non-marshalable payload, which
+// these wire DTOs never are, so a marshal error simply drops the frame.
+func (s *Server) broadcast(user, t string, d any) {
+	if env, err := proto.Frame(t, d); err == nil {
+		s.routeToUser(user, env)
+	}
+}
+
 func (s *Server) connectedCount(user string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -939,53 +917,41 @@ type userSink struct {
 
 var _ core.Sink = (*userSink)(nil)
 
+// emit marshals d into a t-frame and fans it out to the user's clients,
+// folding the Frame/err-check/routeToUser idiom every sink method shares.
+func (u *userSink) emit(t string, d any) { u.s.broadcast(u.user, t, d) }
+
 func (u *userSink) Print(m core.Message) {
-	if env, err := proto.Frame(proto.TMsg, toMessageDTO(m)); err == nil {
-		u.s.routeToUser(u.user, env)
-	}
+	u.emit(proto.TMsg, toMessageDTO(m))
 	u.s.maybePush(u.user, m)
 }
 
 func (u *userSink) NetworkChanged(n *core.Network) {
-	if env, err := proto.Frame(proto.TNetUpdate, toNetworkDTO(n)); err == nil {
-		u.s.routeToUser(u.user, env)
-	}
+	u.emit(proto.TNetUpdate, toNetworkDTO(n))
 }
 
 func (u *userSink) NetworkRemoved(networkID string) {
-	if env, err := proto.Frame(proto.TNetRemove, proto.NetRemove{Network: networkID}); err == nil {
-		u.s.routeToUser(u.user, env)
-	}
+	u.emit(proto.TNetRemove, proto.NetRemove{Network: networkID})
 }
 
 func (u *userSink) NetworksReordered(networkIDs []string) {
-	if env, err := proto.Frame(proto.TNetReorder, proto.NetReorder{Networks: networkIDs}); err == nil {
-		u.s.routeToUser(u.user, env)
-	}
+	u.emit(proto.TNetReorder, proto.NetReorder{Networks: networkIDs})
 }
 
 func (u *userSink) Typing(network, buffer, nick, state string) {
-	if env, err := proto.Frame(proto.TTyping, proto.Typing{
-		Network: network, Buffer: buffer, Nick: nick, State: state,
-	}); err == nil {
-		u.s.routeToUser(u.user, env)
-	}
+	u.emit(proto.TTyping, proto.Typing{Network: network, Buffer: buffer, Nick: nick, State: state})
 }
 
 func (u *userSink) React(network, buffer, target, nick, reaction string) {
-	if env, err := proto.Frame(proto.TReact, proto.React{
+	u.emit(proto.TReact, proto.React{
 		Network: network, Buffer: buffer, Target: target, Nick: nick, Reaction: reaction,
-	}); err == nil {
-		u.s.routeToUser(u.user, env)
-	}
+	})
 }
 
 func (u *userSink) Redact(network, buffer, target, nick, reason string) {
-	if env, err := proto.Frame(proto.TRedact, proto.Redact{
+	u.emit(proto.TRedact, proto.Redact{
 		Network: network, Buffer: buffer, Target: target, By: nick, Reason: reason,
-	}); err == nil {
-		u.s.routeToUser(u.user, env)
-	}
+	})
 }
 
 func (u *userSink) ChannelList(network string, items []core.ChannelListItem) {
@@ -993,7 +959,5 @@ func (u *userSink) ChannelList(network string, items []core.ChannelListItem) {
 	for i, it := range items {
 		chans[i] = proto.ListChannel{Name: it.Name, Users: it.Users, Topic: it.Topic}
 	}
-	if env, err := proto.Frame(proto.TListResult, proto.ListResp{Network: network, Channels: chans}); err == nil {
-		u.s.routeToUser(u.user, env)
-	}
+	u.emit(proto.TListResult, proto.ListResp{Network: network, Channels: chans})
 }

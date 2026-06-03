@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -91,7 +92,7 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 			target = ev.Args[0]
 		}
 		if target != "" {
-			e.pendingWhois[ev.Network+"\t"+strings.ToLower(target)] = ev.Channel
+			e.pendingWhois[whoisKey(ev.Network, target)] = ev.Channel
 			conn.SendRaw("NAMES " + target)
 		}
 
@@ -188,7 +189,7 @@ func (e *Engine) startNumeric(ev Event, raw string) {
 		return
 	}
 	target := ev.Args[0]
-	e.pendingWhois[ev.Network+"\t"+strings.ToLower(target)] = ev.Channel
+	e.pendingWhois[whoisKey(ev.Network, target)] = ev.Channel
 	conn.SendRaw(raw + " " + target)
 }
 
@@ -301,55 +302,43 @@ func (a engineAPI) Send(network, raw string) error {
 	return c.SendRaw(raw)
 }
 
-func (a engineAPI) Message(network, target, text string) error {
+// sendSelf sends an outbound line via send and, unless the network echoes our
+// own messages back (echo-message negotiated), injects a local self-copy into
+// buffer so the sender still sees their line; kind tags that injected copy.
+// A nil connection for network is an error and nothing is sent.
+func (a engineAPI) sendSelf(network, target, text string, kind MsgKind, send func(IRCConn) error) error {
 	c := a.conn(network)
 	if c == nil {
 		return fmt.Errorf("unknown network %q", network)
 	}
-	if err := c.Message(target, text); err != nil {
+	if err := send(c); err != nil {
 		return err
 	}
 	if !a.e.echoMessage(network) {
 		a.e.inject(Message{
 			Network: network, Buffer: target, Time: time.Now(),
-			From: a.Nick(network), Kind: MsgPrivmsg, Text: text, Self: true,
+			From: a.Nick(network), Kind: kind, Text: text, Self: true,
 		})
 	}
 	return nil
+}
+
+func (a engineAPI) Message(network, target, text string) error {
+	return a.sendSelf(network, target, text, MsgPrivmsg, func(c IRCConn) error {
+		return c.Message(target, text)
+	})
 }
 
 func (a engineAPI) Notice(network, target, text string) error {
-	c := a.conn(network)
-	if c == nil {
-		return fmt.Errorf("unknown network %q", network)
-	}
-	if err := c.SendRaw(fmt.Sprintf("NOTICE %s :%s", target, text)); err != nil {
-		return err
-	}
-	if !a.e.echoMessage(network) {
-		a.e.inject(Message{
-			Network: network, Buffer: target, Time: time.Now(),
-			From: a.Nick(network), Kind: MsgNotice, Text: text, Self: true,
-		})
-	}
-	return nil
+	return a.sendSelf(network, target, text, MsgNotice, func(c IRCConn) error {
+		return c.SendRaw(fmt.Sprintf("NOTICE %s :%s", target, text))
+	})
 }
 
 func (a engineAPI) Action(network, target, text string) error {
-	c := a.conn(network)
-	if c == nil {
-		return fmt.Errorf("unknown network %q", network)
-	}
-	if err := c.SendRaw(fmt.Sprintf("PRIVMSG %s :\x01ACTION %s\x01", target, text)); err != nil {
-		return err
-	}
-	if !a.e.echoMessage(network) {
-		a.e.inject(Message{
-			Network: network, Buffer: target, Time: time.Now(),
-			From: a.Nick(network), Kind: MsgAction, Text: text, Self: true,
-		})
-	}
-	return nil
+	return a.sendSelf(network, target, text, MsgAction, func(c IRCConn) error {
+		return c.SendRaw(fmt.Sprintf("PRIVMSG %s :\x01ACTION %s\x01", target, text))
+	})
 }
 
 func (a engineAPI) Join(network, channel string) error {
@@ -398,11 +387,7 @@ func (a engineAPI) SetBufferState(network, buffer string, state map[string]strin
 	if len(state) == 0 {
 		c.State = nil
 	} else {
-		next := make(map[string]string, len(state))
-		for k, v := range state {
-			next[k] = v
-		}
-		c.State = next
+		c.State = maps.Clone(state)
 	}
 	a.e.mu.Unlock()
 	a.e.notifyNetwork(network)
@@ -428,11 +413,7 @@ func (e *Engine) setPendingStateLocked(network, buffer string, state map[string]
 		m = map[string]map[string]string{}
 		e.pendingState[network] = m
 	}
-	cp := make(map[string]string, len(state))
-	for k, v := range state {
-		cp[k] = v
-	}
-	m[bk] = cp
+	m[bk] = maps.Clone(state)
 }
 
 // applyPendingStateLocked copies any remembered state onto a freshly created
@@ -445,11 +426,7 @@ func (e *Engine) applyPendingStateLocked(network string, c *Channel) {
 	if len(st) == 0 {
 		return
 	}
-	next := make(map[string]string, len(st))
-	for k, v := range st {
-		next[k] = v
-	}
-	c.State = next
+	c.State = maps.Clone(st)
 }
 
 func (a engineAPI) Networks() []NetworkInfo {
