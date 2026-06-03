@@ -984,13 +984,20 @@ func (e *Engine) takePendingKey(network, channel string) (key string, ok bool) {
 	return key, ok
 }
 
+// whoisKey builds the pendingWhois map key for a network+nick pair. The nick
+// is folded with lower (ASCII, matching the member-map keys) so a reply pairs
+// to its request regardless of the casing the server echoes back.
+func whoisKey(network, nick string) string {
+	return network + "\t" + lower(nick)
+}
+
 // applyNumeric routes a server numeric (WHOIS/WHO/WHOWAS reply, an error
 // code, …) into the buffer that issued the request when we can pair them,
 // else into the per-network status buffer. pendingWhois is keyed by
 // "<network>\t<lowercase-nick>" and cleared on the matching end-of marker
 // so a long-lived plugin doesn't leak entries.
 func (e *Engine) applyNumeric(ev Event) {
-	key := ev.Network + "\t" + strings.ToLower(ev.Nick)
+	key := whoisKey(ev.Network, ev.Nick)
 	buf := StatusBuffer
 	if b, ok := e.pendingWhois[key]; ok && b != "" {
 		buf = b
@@ -1044,11 +1051,11 @@ func (e *Engine) applyMessageOut(ev Event) {
 // SendTyping sends a typing notification (state active/paused/done) to a
 // buffer as a +typing TAGMSG, if the network negotiated message-tags.
 func (e *Engine) SendTyping(network, buffer, state string) {
-	conn := e.connFor(network)
-	if conn == nil || !slices.Contains(conn.Caps(), "message-tags") {
+	if state != "active" && state != "paused" && state != "done" {
 		return
 	}
-	if state != "active" && state != "paused" && state != "done" {
+	conn := e.connWithCap(network, "message-tags")
+	if conn == nil {
 		return
 	}
 	_ = conn.SendRaw("@+typing=" + state + " TAGMSG " + buffer)
@@ -1059,11 +1066,11 @@ func (e *Engine) SendTyping(network, buffer, state string) {
 // negotiated message-tags. The server echoes it back (if it broadcasts to
 // the reactor), which is how the sender's own reaction appears.
 func (e *Engine) SendReaction(network, buffer, target, reaction string) {
-	conn := e.connFor(network)
-	if conn == nil || target == "" || reaction == "" {
+	if target == "" || reaction == "" {
 		return
 	}
-	if !slices.Contains(conn.Caps(), "message-tags") {
+	conn := e.connWithCap(network, "message-tags")
+	if conn == nil {
 		return
 	}
 	_ = conn.SendRaw("@+draft/react=" + reaction + ";+draft/reply=" + target + " TAGMSG " + buffer)
@@ -1072,11 +1079,11 @@ func (e *Engine) SendReaction(network, buffer, target, reaction string) {
 // SendRedact redacts a message (target msgid) in a buffer via the
 // draft/message-redaction REDACT command, when the network negotiated it.
 func (e *Engine) SendRedact(network, buffer, target, reason string) {
-	conn := e.connFor(network)
-	if conn == nil || target == "" {
+	if target == "" {
 		return
 	}
-	if !slices.Contains(conn.Caps(), "draft/message-redaction") {
+	conn := e.connWithCap(network, "draft/message-redaction")
+	if conn == nil {
 		return
 	}
 	line := "REDACT " + buffer + " " + target
@@ -1089,11 +1096,23 @@ func (e *Engine) SendRedact(network, buffer, target, reason string) {
 // echoMessage reports whether the network's connection negotiated the
 // echo-message capability (so the server will echo our sent lines back).
 func (e *Engine) echoMessage(network string) bool {
+	return e.hasCap(network, "echo-message")
+}
+
+// connWithCap returns the network's connection if it negotiated capability
+// cap, else nil. It folds the connFor-nil-check and the Caps() membership
+// test that the typing/reaction/redaction send paths all share.
+func (e *Engine) connWithCap(network, cap string) IRCConn {
 	conn := e.connFor(network)
-	if conn == nil {
-		return false
+	if conn == nil || !slices.Contains(conn.Caps(), cap) {
+		return nil
 	}
-	return slices.Contains(conn.Caps(), "echo-message")
+	return conn
+}
+
+// hasCap reports whether the network's connection negotiated capability cap.
+func (e *Engine) hasCap(network, cap string) bool {
+	return e.connWithCap(network, cap) != nil
 }
 
 // notifyNetwork pushes a fresh snapshot of one network to all sinks.
