@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { connection, bufKey, type Buffer, type Network } from "../connection";
 import { useContextMenu } from "../contextMenu";
 import { ui, closeDrawers } from "../ui";
+import { toggleMircTheme } from "../settings";
 import AddNetwork from "./AddNetwork.vue";
 import EncryptionKey from "./EncryptionKey.vue";
 import NetworkSettings from "./NetworkSettings.vue";
@@ -13,6 +14,21 @@ const settingsFor = ref<string | null>(null);
 const keyDialogFor = ref<{ network: string; buffer: string } | null>(null);
 
 const ctx = useContextMenu<{ network: string; buffer: string; kind: string }>({ height: 180 });
+
+// Easter egg: tap the brand 5 times in quick succession to flip into (and
+// back out of) the hidden mIRC theme. The streak resets if you pause too
+// long, so accidental double-clicks never trip it.
+let brandTaps = 0;
+let brandTapTimer: ReturnType<typeof setTimeout> | undefined;
+function tapBrand() {
+  brandTaps++;
+  clearTimeout(brandTapTimer);
+  brandTapTimer = setTimeout(() => (brandTaps = 0), 600);
+  if (brandTaps >= 5) {
+    brandTaps = 0;
+    toggleMircTheme();
+  }
+}
 
 // Map the raw WebSocket state to a friendly label, shown in the footer pill.
 const statusLabel = computed(
@@ -178,7 +194,7 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
 
 <template>
   <nav class="sidebar" :class="{ open: ui.sidebarOpen }">
-    <div class="brand">stugan</div>
+    <div class="brand" @click="tapBrand" title="stugan">stugan</div>
 
     <div v-for="net in store.networks" :key="net.id" class="network">
       <div

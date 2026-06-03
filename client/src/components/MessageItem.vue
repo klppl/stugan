@@ -124,7 +124,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
     <span v-if="showBuffer" class="loc">{{ msg.buffer }}</span>
 
     <template v-if="isSystemLine">
-      <span class="sys" :class="msg.kind">— {{ msg.text }}</span>
+      <span class="sys" :class="msg.kind"><span class="sys-pre">—</span> {{ msg.text }}</span>
     </template>
     <template v-else-if="msg.kind === 'action'">
       <span class="body">*

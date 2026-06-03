@@ -130,3 +130,22 @@ export function uninstallTheme(name: string) {
   settings.customThemes = settings.customThemes.filter((t) => t.name !== name);
   if (settings.theme === name) settings.theme = "dark";
 }
+
+// --- Easter egg -----------------------------------------------------------
+// "mirc" is a hidden built-in theme: it has a CSS rule in style.css but is
+// deliberately left out of BUILTIN_THEMES/themeNames(), so it never shows in
+// the theme dropdown. The only way to reach it is the secret handshake in the
+// sidebar (tap the "stugan" brand a few times — see Sidebar.vue), which calls
+// toggleMircTheme(). Toggling off restores whatever theme was active before.
+export const MIRC_THEME = "mirc";
+let preMircTheme = "dark";
+
+export function toggleMircTheme(): boolean {
+  if (settings.theme === MIRC_THEME) {
+    settings.theme = preMircTheme;
+    return false;
+  }
+  preMircTheme = settings.theme;
+  settings.theme = MIRC_THEME;
+  return true;
+}
