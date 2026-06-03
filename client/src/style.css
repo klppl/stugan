@@ -33,6 +33,326 @@
   --border: #d0d3d7;
 }
 
+/* Hidden "mIRC" easter-egg theme. Not listed in the theme picker — unlocked
+   by tapping the sidebar brand five times (see Sidebar.vue / settings.ts).
+   Colours come straight from mIRC's classic 16-colour palette: white channel
+   window, navy nicks, maroon-red highlights, on Win9x silver chrome. */
+:root[data-theme="mirc"] {
+  --bg: #ffffff;
+  --bg-alt: #d2d2d2;
+  --bg-sidebar: #c0c0c0;
+  --fg: #000000;
+  --fg-dim: #7f7f7f;
+  --accent: #00007f;
+  --self: #009300;
+  --hl: #ff0000;
+  --border: #808080;
+}
+/* Period flourishes that go beyond the colour variables: a fixed-width
+   terminal font, hard square corners (mIRC never met a rounded edge), and a
+   navy title bar for the brand. Scoped entirely to the egg theme. */
+:root[data-theme="mirc"] body {
+  font-family: "Fixedsys Excelsior", "Lucida Console", "Courier New", monospace;
+}
+:root[data-theme="mirc"] * {
+  border-radius: 0 !important;
+}
+/* Replace the "stugan" wordmark with a beveled navy "mIRC®" titlebar logo.
+   The real text node is hidden (font-size:0) and the logo drawn in ::before,
+   so the DOM/click target is untouched — five taps still flips the egg. */
+:root[data-theme="mirc"] .brand {
+  margin: 0 8px 10px;
+  padding: 4px 0;
+  text-align: center;
+  cursor: pointer;
+  font-size: 0;
+  background: linear-gradient(#0000a8, #000050);
+  border: 1px solid #000;
+  box-shadow: inset 1px 1px 0 #4040c0, inset -1px -1px 0 #000030;
+}
+:root[data-theme="mirc"] .brand::before {
+  content: "mIRC";
+  font: italic 800 22px/1 "Arial Black", Arial, sans-serif;
+  letter-spacing: 1px;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000;
+}
+:root[data-theme="mirc"] .brand::after {
+  content: "®";
+  font: 700 9px/1 Arial, sans-serif;
+  vertical-align: top;
+  color: #fff;
+  margin-left: 1px;
+}
+
+/* Win9x chrome: buttons look raised (white top-left, grey bottom-right),
+   text fields look sunken. Drawn with inset box-shadow so nothing shifts. */
+:root[data-theme="mirc"] .ghost,
+:root[data-theme="mirc"] .chat-input button,
+:root[data-theme="mirc"] .settings button {
+  background: #c0c0c0;
+  color: #000;
+  border: 1px solid #000;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+}
+:root[data-theme="mirc"] .ghost:active,
+:root[data-theme="mirc"] .chat-input button:active,
+:root[data-theme="mirc"] .settings button:active {
+  box-shadow: inset -1px -1px 0 #fff, inset 1px 1px 0 #808080;
+}
+:root[data-theme="mirc"] .ghost.active {
+  background: #000080;
+  color: #fff;
+}
+:root[data-theme="mirc"] .chat-input input,
+:root[data-theme="mirc"] .topbar .search {
+  background: #fff;
+  color: #000;
+  border: 1px solid #808080;
+  box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #fff;
+}
+
+/* The hashed nick colours are tuned for bright legibility on dark themes,
+   which leaves them washed out on mIRC's white/grey. Darken and deepen them
+   so every nick still reads as a distinct colour against the silver nicklist
+   and white channel window. Self (green) and op/voice modes keep their own
+   colours. The nick span is the only inline-styled span in each row. */
+:root[data-theme="mirc"] .members li span[style],
+:root[data-theme="mirc"] .from:not(.self) {
+  filter: brightness(0.5) saturate(1.4);
+}
+
+/* The topbar becomes an active-window titlebar: navy gradient, white channel
+   name, the toolbar buttons reading as a docked toolstrip on top of it. */
+:root[data-theme="mirc"] .topbar {
+  background: linear-gradient(#0000b0, #000060);
+  border-bottom: 1px solid #000;
+}
+:root[data-theme="mirc"] .topbar .buffer-name {
+  color: #fff;
+  font-weight: 700;
+  text-shadow: 1px 1px 0 #000030;
+}
+:root[data-theme="mirc"] .topbar .topic {
+  color: #aab4e8;
+}
+
+/* Window-control cluster (— ☐ ✕): hidden outside the egg, a raised Win9x
+   button trio inside it. The close box (red on hover) exits the theme. */
+.mirc-winctl {
+  display: none;
+}
+:root[data-theme="mirc"] .mirc-winctl {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 4px;
+}
+:root[data-theme="mirc"] .mirc-wb {
+  width: 18px;
+  height: 16px;
+  padding: 0;
+  font: 700 11px/1 Arial, sans-serif;
+  color: #000;
+  background: #c0c0c0;
+  border: 1px solid #000;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+:root[data-theme="mirc"] .mirc-wb:active {
+  box-shadow: inset -1px -1px 0 #fff, inset 1px 1px 0 #808080;
+}
+:root[data-theme="mirc"] .mirc-close:hover {
+  background: #c11b1b;
+  color: #fff;
+}
+
+/* mIRC line format: bracketed [HH:MM] timestamps and <nick>-style senders.
+   Brackets are drawn in the default text colour; the nick keeps its own.
+   Only the top-level sender gets angle brackets — action lines (* nick …)
+   nest their .from inside .body, so the child combinator leaves them alone. */
+:root[data-theme="mirc"] .message .ts {
+  color: #000080;
+}
+:root[data-theme="mirc"] .message .ts:not(:empty)::before {
+  content: "[";
+}
+:root[data-theme="mirc"] .message .ts:not(:empty)::after {
+  content: "]";
+}
+:root[data-theme="mirc"] .message > .from::before {
+  content: "<";
+  color: var(--fg);
+}
+:root[data-theme="mirc"] .message > .from::after {
+  content: ">";
+  color: var(--fg);
+}
+
+/* Event lines (* joins/parts/quits/nick changes) drop the italic and pick up
+   mIRC's classic colours; the "—" prefix becomes mIRC's "***". */
+:root[data-theme="mirc"] .message .sys {
+  font-style: normal;
+  color: #00007f;
+}
+:root[data-theme="mirc"] .message .sys.join {
+  color: #009300;
+}
+:root[data-theme="mirc"] .message .sys.part,
+:root[data-theme="mirc"] .message .sys.quit {
+  color: #7f0000;
+}
+:root[data-theme="mirc"] .message .sys.nick {
+  color: #9c009c;
+}
+:root[data-theme="mirc"] .sys-pre {
+  font-size: 0;
+}
+:root[data-theme="mirc"] .sys-pre::before {
+  content: "***";
+  font-size: 14px;
+}
+
+/* Win9x scrollbars: a raised silver thumb with a sunken track, square. */
+:root[data-theme="mirc"] * {
+  scrollbar-color: #c0c0c0 #dfdfdf;
+}
+:root[data-theme="mirc"] ::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+:root[data-theme="mirc"] ::-webkit-scrollbar-track {
+  background: #dfdfdf;
+}
+:root[data-theme="mirc"] ::-webkit-scrollbar-thumb {
+  background: #c0c0c0;
+  border: 1px solid #000;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #808080;
+  border-radius: 0;
+}
+
+/* --- mIRC menu bar + status bar (the wrapper around .app) ---------------- */
+/* The wrapper exists in every theme; the bars themselves are hidden unless
+   the egg is active. Stacking .app between them as a flex child (instead of
+   the old height:100%) lets the bars claim their rows without overflow. */
+.approot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.approot > .app {
+  height: auto;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.mirc-menubar,
+.mirc-statusbar {
+  display: none;
+}
+:root[data-theme="mirc"] .mirc-menubar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 2px 4px;
+  background: #c0c0c0;
+  border-bottom: 1px solid #808080;
+  box-shadow: inset 0 1px 0 #fff;
+  font-size: 13px;
+  color: #000;
+  -webkit-user-select: none;
+  user-select: none;
+}
+:root[data-theme="mirc"] .mirc-menu {
+  padding: 2px 8px;
+  cursor: default;
+}
+:root[data-theme="mirc"] .mirc-menu:hover {
+  background: #000080;
+  color: #fff;
+}
+:root[data-theme="mirc"] .mirc-menu-ul {
+  text-decoration: underline;
+}
+
+:root[data-theme="mirc"] .mirc-statusbar {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 2px;
+  background: #c0c0c0;
+  border-top: 1px solid #fff;
+  font-size: 12px;
+  color: #000;
+}
+:root[data-theme="mirc"] .sb-cell {
+  display: flex;
+  align-items: center;
+  padding: 1px 8px;
+  background: #c0c0c0;
+  border: 1px solid #fff;
+  border-color: #808080 #fff #fff #808080;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+:root[data-theme="mirc"] .sb-grow {
+  flex: 1 1 0;
+  min-width: 0;
+}
+:root[data-theme="mirc"] .sb-nick {
+  font-weight: 700;
+  color: #00007f;
+}
+
+/* --- Treebar: a Windows TreeView, not a flat list ----------------------- */
+/* The server is a root node with a [-] expander; its channels hang off a
+   dotted guide line with little connector ticks, the way mIRC's switchbar
+   (and every Win9x tree control) draws them. Compact rows to match. */
+:root[data-theme="mirc"] .network-name {
+  padding: 3px 16px 3px 8px;
+}
+:root[data-theme="mirc"] .network-name .net-label::before {
+  content: "\229F"; /* ⊟ — a boxed minus, i.e. an expanded tree node */
+  margin-right: 5px;
+  font-weight: 400;
+  color: #000;
+}
+:root[data-theme="mirc"] .network-name.active {
+  color: #fff;
+  background: #000080;
+}
+:root[data-theme="mirc"] .buffers {
+  margin-left: 18px;
+  border-left: 1px dotted #808080;
+}
+:root[data-theme="mirc"] .buffers li {
+  position: relative;
+  padding: 2px 12px 2px 20px;
+}
+/* horizontal dotted tick from the guide line to each node */
+:root[data-theme="mirc"] .buffers li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 12px;
+  border-top: 1px dotted #808080;
+}
+/* a small window glyph as the channel/query node icon */
+:root[data-theme="mirc"] .buffers li .buf-name::before {
+  content: "\25A4"; /* ▤ — a tiny window/document icon */
+  margin-right: 4px;
+  color: #00007f;
+}
+:root[data-theme="mirc"] .buffers li.query .buf-name::before {
+  content: "\25A3"; /* ▣ — distinguishes a query (DM) node */
+}
+
 * {
   box-sizing: border-box;
 }

@@ -2,6 +2,7 @@
 import { computed, nextTick, ref } from "vue";
 import { connection } from "../connection";
 import { ui, toggleSidebar, toggleMembers } from "../ui";
+import { toggleMircTheme } from "../settings";
 import ChannelBrowser from "./ChannelBrowser.vue";
 
 const emit = defineEmits<{ settings: [] }>();
@@ -131,6 +132,15 @@ function saveTopic() {
       @click="toggleMembers"
     >👥</button>
     <button class="ghost icon-btn" aria-label="Settings" title="Settings" @click="emit('settings')">⚙</button>
+
+    <!-- mIRC easter-egg window controls. Hidden unless the mIRC theme is
+         active (see style.css); the close box flips the theme back off. -->
+    <span class="mirc-winctl" aria-hidden="true">
+      <button class="mirc-wb" tabindex="-1">_</button>
+      <button class="mirc-wb" tabindex="-1">☐</button>
+      <button class="mirc-wb mirc-close" tabindex="-1" title="Close" @click="toggleMircTheme()">✕</button>
+    </span>
+
     <ChannelBrowser v-if="browseNet" :network="browseNet" @close="browseNet = null" />
   </header>
 </template>
