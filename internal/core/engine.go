@@ -687,7 +687,7 @@ func (e *Engine) sendInput(network, buffer, text string, depth int) {
 				return
 			}
 			e.HandleEvent(Event{
-				Type: EvCommand, Network: network, Channel: buffer, Time: time.Now(),
+				Type: EvCommand, Network: network, Buffer: buffer, Time: time.Now(),
 				Command: name, Args: strings.Fields(argstr), Text: argstr,
 			})
 			return
@@ -889,7 +889,7 @@ func (e *Engine) apply(ev Event) {
 		e.mu.Lock()
 		if len(e.listAccum[ev.Network]) < maxListItems {
 			e.listAccum[ev.Network] = append(e.listAccum[ev.Network], ChannelListItem{
-				Name: ev.Channel, Users: ev.Count, Topic: ev.Text,
+				Name: ev.Buffer, Users: ev.Count, Topic: ev.Text,
 			})
 		}
 		e.mu.Unlock()
@@ -908,17 +908,17 @@ func (e *Engine) apply(ev Event) {
 		return
 	case EvTyping:
 		for _, s := range e.sinks {
-			s.Typing(ev.Network, ev.Channel, ev.Nick, ev.Text)
+			s.Typing(ev.Network, ev.Buffer, ev.Nick, ev.Text)
 		}
 		return
 	case EvReact:
 		for _, s := range e.sinks {
-			s.React(ev.Network, ev.Channel, ev.Target, ev.Nick, ev.Text)
+			s.React(ev.Network, ev.Buffer, ev.Target, ev.Nick, ev.Text)
 		}
 		return
 	case EvRedact:
 		for _, s := range e.sinks {
-			s.Redact(ev.Network, ev.Channel, ev.Target, ev.Nick, ev.Text)
+			s.Redact(ev.Network, ev.Buffer, ev.Target, ev.Nick, ev.Text)
 		}
 		return
 	case EvNumeric:
@@ -1181,9 +1181,9 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		netChanged = true
 
 	case evPrint:
-		_, created := n.getOrCreate(ev.Channel, bufferKind(ev.Channel))
+		_, created := n.getOrCreate(ev.Buffer, bufferKind(ev.Buffer))
 		emit = append(emit, Message{
-			Network: n.ID, Buffer: ev.Channel, Time: time.Now(),
+			Network: n.ID, Buffer: ev.Buffer, Time: time.Now(),
 			Kind: MsgSystem, Text: ev.Text,
 		})
 		netChanged = created
@@ -1223,7 +1223,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 	case EvNames:
 		// The server's NAMES reply on join: merge the listed members
 		// without emitting join lines.
-		c, _ := n.getOrCreate(ev.Channel, KindChannel)
+		c, _ := n.getOrCreate(ev.Buffer, KindChannel)
 		for _, m := range ev.Members {
 			mc := m
 			c.Members[lower(m.Nick)] = &mc
@@ -1241,18 +1241,18 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		}
 
 	case EvJoin:
-		c, created := n.getOrCreate(ev.Channel, KindChannel)
+		c, created := n.getOrCreate(ev.Buffer, KindChannel)
 		if created {
 			e.applyPendingStateLocked(ev.Network, c)
 		}
 		c.Members[lower(ev.Nick)] = &Member{Nick: ev.Nick, Account: ev.Account}
-		line(MsgJoin, ev.Channel, ev.Nick, fmt.Sprintf("%s has joined %s", ev.Nick, ev.Channel))
+		line(MsgJoin, ev.Buffer, ev.Nick, fmt.Sprintf("%s has joined %s", ev.Nick, ev.Buffer))
 		netChanged = true
 		// When we join a channel ourselves, remember it (and the join key, if
 		// the /join carried one) so it is rejoined on the next (re)connect.
 		if eqFold(ev.Nick, n.Nick) {
-			key, hasKey := e.takePendingKey(ev.Network, ev.Channel)
-			if n.addAutojoin(ev.Channel, key, hasKey) {
+			key, hasKey := e.takePendingKey(ev.Network, ev.Buffer)
+			if n.addAutojoin(ev.Buffer, key, hasKey) {
 				persist = true
 			}
 		}
@@ -1261,18 +1261,18 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		// If we are the one parting, drop the buffer entirely and forget its
 		// auto-join entry; otherwise just remove the member.
 		if eqFold(ev.Nick, n.Nick) {
-			n.remove(ev.Channel)
-			if n.removeAutojoin(ev.Channel) {
+			n.remove(ev.Buffer)
+			if n.removeAutojoin(ev.Buffer) {
 				persist = true
 			}
-		} else if c := n.Channel(ev.Channel); c != nil {
+		} else if c := n.Channel(ev.Buffer); c != nil {
 			delete(c.Members, lower(ev.Nick))
 		}
-		text := fmt.Sprintf("%s has left %s", ev.Nick, ev.Channel)
+		text := fmt.Sprintf("%s has left %s", ev.Nick, ev.Buffer)
 		if ev.Text != "" {
 			text += " (" + ev.Text + ")"
 		}
-		line(MsgPart, ev.Channel, ev.Nick, text)
+		line(MsgPart, ev.Buffer, ev.Nick, text)
 		netChanged = true
 
 	case EvQuit:
@@ -1307,7 +1307,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		// A channel MODE change: update the membership prefixes it touches and
 		// note it in the buffer. The fresh snapshot pushed on netChanged is what
 		// re-ranks the nicklist (and re-enables op-only actions in the client).
-		c := n.Channel(ev.Channel)
+		c := n.Channel(ev.Buffer)
 		if c == nil {
 			return emit, false, false
 		}
@@ -1328,18 +1328,18 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 			if who == "" {
 				who = "mode"
 			}
-			sys(ev.Channel, fmt.Sprintf("%s sets mode %s", who, ev.Text))
+			sys(ev.Buffer, fmt.Sprintf("%s sets mode %s", who, ev.Text))
 			netChanged = true
 		}
 
 	case EvTopic:
-		c, _ := n.getOrCreate(ev.Channel, KindChannel)
+		c, _ := n.getOrCreate(ev.Buffer, KindChannel)
 		c.Topic = ev.Text
 		who := ev.Nick
 		if who == "" {
 			who = "topic"
 		}
-		sys(ev.Channel, fmt.Sprintf("%s set topic: %s", who, ev.Text))
+		sys(ev.Buffer, fmt.Sprintf("%s set topic: %s", who, ev.Text))
 		netChanged = true
 	}
 	return emit, netChanged, persist

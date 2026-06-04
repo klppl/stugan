@@ -450,7 +450,7 @@ func (h *Host) runCommand(ev core.Event) (core.Event, bool) {
 	nick := h.api.Nick(ev.Network)
 	h.call(hk.script, hk.fn, func(L *lua.LState) {
 		L.Push(stringArray(L, args))
-		L.Push(ctxTable(L, ev.Network, ev.Channel, nick))
+		L.Push(ctxTable(L, ev.Network, ev.Buffer, nick))
 	}, 0)
 	return ev, false // consumed
 }

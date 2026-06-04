@@ -210,7 +210,7 @@ func TestHookCommand(t *testing.T) {
 		t.Fatalf("Commands() = %v, want [greet]", cmds)
 	}
 
-	ev := core.Event{Type: core.EvCommand, Network: "n", Channel: "#c", Command: "greet", Args: []string{"bob"}}
+	ev := core.Event{Type: core.EvCommand, Network: "n", Buffer: "#c", Command: "greet", Args: []string{"bob"}}
 	if _, keep := h.Dispatch(context.Background(), ev); keep {
 		t.Error("registered command was not consumed (keep=true)")
 	}
@@ -220,7 +220,7 @@ func TestHookCommand(t *testing.T) {
 	}
 
 	// Unregistered command is not consumed.
-	other := core.Event{Type: core.EvCommand, Network: "n", Channel: "#c", Command: "nope"}
+	other := core.Event{Type: core.EvCommand, Network: "n", Buffer: "#c", Command: "nope"}
 	if _, keep := h.Dispatch(context.Background(), other); !keep {
 		t.Error("unknown command was wrongly consumed")
 	}
@@ -235,7 +235,7 @@ func TestHookSignal(t *testing.T) {
 			end)`,
 	}, nil)
 
-	ev := core.Event{Type: core.EvJoin, Network: "n", Nick: "carol", Channel: "#c"}
+	ev := core.Event{Type: core.EvJoin, Network: "n", Nick: "carol", Buffer: "#c"}
 	h.Dispatch(context.Background(), ev)
 	if len(api.prints) != 1 || api.prints[0][2] != "carol arrived" {
 		t.Fatalf("signal prints = %v", api.prints)
@@ -451,7 +451,7 @@ func TestPluginKVPersistsAcrossHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	hA.Dispatch(context.Background(), core.Event{
-		Type: core.EvCommand, Network: "n", Channel: "#c",
+		Type: core.EvCommand, Network: "n", Buffer: "#c",
 		Command: "save", Args: []string{"hello"},
 	})
 	hA.Close()
@@ -470,7 +470,7 @@ func TestPluginKVPersistsAcrossHosts(t *testing.T) {
 	}
 	t.Cleanup(func() { hB.Close() })
 	hB.Dispatch(context.Background(), core.Event{
-		Type: core.EvCommand, Network: "n", Channel: "#c", Command: "load",
+		Type: core.EvCommand, Network: "n", Buffer: "#c", Command: "load",
 	})
 	prints := api2.prints
 	if len(prints) != 1 || prints[0][2] != "hello" {

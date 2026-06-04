@@ -27,22 +27,22 @@ const (
 	// EvAway is an away-notify update: Nick changed away state to Away.
 	EvAway EventType = "away"
 	// EvMode is a channel MODE change. MemberModes carries the membership
-	// prefix changes (op/voice/...) it makes; Channel is the target, Nick the
+	// prefix changes (op/voice/...) it makes; Buffer is the target, Nick the
 	// setter, Text the raw mode string (flags + args) for the system line.
 	EvMode EventType = "mode"
 	// EvListItem / EvListEnd carry the server's LIST reply (channel browser):
-	// one item per channel, then end. EvListItem uses Channel, Count, Text.
+	// one item per channel, then end. EvListItem uses Buffer, Count, Text.
 	EvListItem EventType = "list_item"
 	EvListEnd  EventType = "list_end"
-	// EvTyping is an inbound +typing TAGMSG: Nick is typing in Channel
-	// (buffer), with Text the state (active/paused/done).
+	// EvTyping is an inbound +typing TAGMSG: Nick is typing in Buffer, with
+	// Text the state (active/paused/done).
 	EvTyping EventType = "typing"
 	// EvReact is an inbound +draft/react TAGMSG: Nick reacted to the message
-	// Target (a msgid) in Channel (buffer) with Text (the reaction, usually
-	// an emoji). Ephemeral — fanned to sinks, not stored.
+	// Target (a msgid) in Buffer with Text (the reaction, usually an emoji).
+	// Ephemeral — fanned to sinks, not stored.
 	EvReact EventType = "react"
 	// EvRedact is an inbound REDACT (draft/message-redaction): Nick removed
-	// the message Target (a msgid) in Channel (buffer); Text is the reason.
+	// the message Target (a msgid) in Buffer; Text is the reason.
 	EvRedact EventType = "redact"
 	// EvNumeric carries a server numeric reply (WHOIS, WHO, WHOWAS, error
 	// codes, etc.). Text is the human-readable formatted line; Nick is
@@ -66,13 +66,13 @@ const (
 // depends on Type:
 //
 //	EvMessageIn/Out      → Message
-//	EvJoin/EvPart        → Nick, Channel, Account, Text(reason)
+//	EvJoin/EvPart        → Nick, Buffer, Account, Text(reason)
 //	EvQuit               → Nick, Text(reason)
 //	EvNick               → Nick(old), NewNick
-//	EvTopic              → Channel, Text(topic), Nick(setter)
+//	EvTopic              → Buffer, Text(topic), Nick(setter)
 //	EvConnect            → Nick(our nick)
 //	EvDisconnect         → Text(reason)
-//	EvCommand            → Channel(buffer), Command, Args, Text(arg string)
+//	EvCommand            → Buffer, Command, Args, Text(arg string)
 //	evSetState           → State
 type Event struct {
 	Type    EventType
@@ -83,7 +83,8 @@ type Event struct {
 
 	Nick    string
 	NewNick string
-	Channel string
+	// Buffer is the channel or query the event applies to (the s2c "buffer").
+	Buffer  string
 	Account string
 	Text    string
 	State   ConnState

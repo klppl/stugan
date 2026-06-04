@@ -47,7 +47,7 @@ func setKey(t *testing.T, h *Host, network, target, key, mode string) {
 		cmd = "setkey-ecb"
 	}
 	ev := core.Event{
-		Type: core.EvCommand, Network: network, Channel: target,
+		Type: core.EvCommand, Network: network, Buffer: target,
 		Command: cmd, Args: []string{target, key},
 	}
 	if _, keep := h.Dispatch(context.Background(), ev); keep {
@@ -71,7 +71,7 @@ func TestFishPublishesBufferState(t *testing.T) {
 
 	// /delkey clears state entirely.
 	h.Dispatch(context.Background(), core.Event{
-		Type: core.EvCommand, Network: "n", Channel: "#chan",
+		Type: core.EvCommand, Network: "n", Buffer: "#chan",
 		Command: "delkey", Args: []string{"#chan"},
 	})
 	if got := api.bufferState("n", "#chan"); got != nil {
@@ -287,7 +287,7 @@ func TestFishDelkeyClearsKey(t *testing.T) {
 
 	// Now drop the key and confirm passthrough resumes.
 	h.Dispatch(context.Background(), core.Event{
-		Type: core.EvCommand, Network: "n", Channel: "#chan",
+		Type: core.EvCommand, Network: "n", Buffer: "#chan",
 		Command: "delkey", Args: []string{"#chan"},
 	})
 	out, _ = h.Dispatch(context.Background(), core.Event{
@@ -373,7 +373,7 @@ func TestFishMeCommand(t *testing.T) {
 	api.sends = nil
 	api.mu.Unlock()
 	h.Dispatch(context.Background(), core.Event{
-		Type: core.EvCommand, Network: "n", Channel: "#chan",
+		Type: core.EvCommand, Network: "n", Buffer: "#chan",
 		Command: "me", Args: []string{"waves"},
 	})
 	msgs := api.sentMsgs()
@@ -389,7 +389,7 @@ func TestFishMeCommand(t *testing.T) {
 	api.sends = nil
 	api.mu.Unlock()
 	h.Dispatch(context.Background(), core.Event{
-		Type: core.EvCommand, Network: "n", Channel: "#chan",
+		Type: core.EvCommand, Network: "n", Buffer: "#chan",
 		Command: "me", Args: []string{"waves"},
 	})
 	if len(api.sentMsgs()) != 0 {
@@ -415,7 +415,7 @@ func TestFishNoticeCommand(t *testing.T) {
 	api.sends = nil
 	api.mu.Unlock()
 	h.Dispatch(context.Background(), core.Event{
-		Type: core.EvCommand, Network: "n", Channel: "#chan",
+		Type: core.EvCommand, Network: "n", Buffer: "#chan",
 		Command: "notice", Args: []string{"#chan", "hello"},
 	})
 	raw := api.sentRaw()
@@ -432,7 +432,7 @@ func TestFishNoticeCommand(t *testing.T) {
 	api.sends = nil
 	api.mu.Unlock()
 	h.Dispatch(context.Background(), core.Event{
-		Type: core.EvCommand, Network: "n", Channel: "#chan",
+		Type: core.EvCommand, Network: "n", Buffer: "#chan",
 		Command: "notice", Args: []string{"nobody", "hi"},
 	})
 	if got := api.sentMsgs(); len(got) != 1 || got[0] != [3]string{"n", "nobody", "hi"} {
@@ -459,7 +459,7 @@ func TestFishDH1080FullHandshake(t *testing.T) {
 	aAPI.sends = nil
 	aAPI.mu.Unlock()
 	alice.Dispatch(context.Background(), core.Event{
-		Type: core.EvCommand, Network: "n", Channel: "bob",
+		Type: core.EvCommand, Network: "n", Buffer: "bob",
 		Command: "keyx", Args: []string{"bob"},
 	})
 	initNotice := findSend(aAPI, "NOTICE bob :DH1080_INIT ")
@@ -578,7 +578,7 @@ func TestFishTopicCommand(t *testing.T) {
 	api.sends = nil
 	api.mu.Unlock()
 	h.Dispatch(context.Background(), core.Event{
-		Type: core.EvCommand, Network: "n", Channel: "#chan", Command: "topic",
+		Type: core.EvCommand, Network: "n", Buffer: "#chan", Command: "topic",
 	})
 	if raw := api.sentRaw(); len(raw) != 1 || raw[0][1] != "TOPIC #chan" {
 		t.Errorf("topic query: got %v", raw)
@@ -590,7 +590,7 @@ func TestFishTopicCommand(t *testing.T) {
 	api.sends = nil
 	api.mu.Unlock()
 	h.Dispatch(context.Background(), core.Event{
-		Type: core.EvCommand, Network: "n", Channel: "#chan",
+		Type: core.EvCommand, Network: "n", Buffer: "#chan",
 		Command: "topic", Args: []string{"new", "topic"},
 	})
 	raw := api.sentRaw()

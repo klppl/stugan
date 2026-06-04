@@ -136,7 +136,8 @@ type MessageDTO struct {
 }
 
 // MsgSend is a client→server request to send text to a buffer. Text may be
-// a slash-command (parsed server-side; command handling lands in Phase 5).
+// a slash-command, parsed server-side (see core.runBuiltinCommand and the
+// plugin command hooks).
 type MsgSend struct {
 	Network string `json:"network"`
 	Buffer  string `json:"buffer"`
