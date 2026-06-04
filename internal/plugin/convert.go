@@ -58,7 +58,7 @@ func signalTable(L *lua.LState, ev core.Event) *lua.LTable {
 	t.RawSetString("network", lua.LString(ev.Network))
 	t.RawSetString("nick", lua.LString(ev.Nick))
 	t.RawSetString("new_nick", lua.LString(ev.NewNick))
-	t.RawSetString("channel", lua.LString(ev.Channel))
+	t.RawSetString("channel", lua.LString(ev.Buffer))
 	t.RawSetString("account", lua.LString(ev.Account))
 	t.RawSetString("text", lua.LString(ev.Text))
 	return t

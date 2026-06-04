@@ -51,7 +51,7 @@ func channelModeEvent(network string, e *girc.Event, prefix, chanmodes string) (
 	}
 	return core.Event{
 		Type: core.EvMode, Network: network, Time: when,
-		Channel: e.Params[0], Nick: from,
+		Buffer: e.Params[0], Nick: from,
 		Text:        strings.TrimSpace(flags + " " + strings.Join(args, " ")),
 		MemberModes: mods,
 	}, true
@@ -199,7 +199,7 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		}
 		return core.Event{
 			Type: core.EvJoin, Network: network, Time: when,
-			Nick: from, Channel: ch, Account: account,
+			Nick: from, Buffer: ch, Account: account,
 		}, true
 
 	case girc.PART:
@@ -213,7 +213,7 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		}
 		return core.Event{
 			Type: core.EvPart, Network: network, Time: when,
-			Nick: from, Channel: ch, Text: reason,
+			Nick: from, Buffer: ch, Text: reason,
 		}, true
 
 	case girc.QUIT:
@@ -243,7 +243,7 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		users, _ := strconv.Atoi(e.Params[2])
 		return core.Event{
 			Type: core.EvListItem, Network: network, Time: when,
-			Channel: e.Params[1], Count: users, Text: e.Last(),
+			Buffer: e.Params[1], Count: users, Text: e.Last(),
 		}, true
 
 	case girc.RPL_LISTEND:
@@ -269,7 +269,7 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			}
 			return core.Event{
 				Type: core.EvReact, Network: network, Time: when,
-				Nick: from, Channel: buffer, Target: msgid, Text: react,
+				Nick: from, Buffer: buffer, Target: msgid, Text: react,
 			}, true
 		}
 		state, ok := e.Tags.Get("+typing")
@@ -278,7 +278,7 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		}
 		return core.Event{
 			Type: core.EvTyping, Network: network, Time: when,
-			Nick: from, Channel: buffer, Text: state,
+			Nick: from, Buffer: buffer, Text: state,
 		}, true
 
 	case "REDACT":
@@ -303,7 +303,7 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		}
 		return core.Event{
 			Type: core.EvRedact, Network: network, Time: when,
-			Nick: from, Channel: buffer, Target: e.Params[1], Text: reason,
+			Nick: from, Buffer: buffer, Target: e.Params[1], Text: reason,
 		}, true
 
 	case "FAIL", "WARN", "NOTE":
@@ -334,7 +334,7 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		if len(members) == 0 {
 			return core.Event{}, false
 		}
-		return core.Event{Type: core.EvNames, Network: network, Time: when, Channel: channel, Members: members}, true
+		return core.Event{Type: core.EvNames, Network: network, Time: when, Buffer: channel, Members: members}, true
 
 	case girc.TOPIC:
 		ch := ""
@@ -343,7 +343,7 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		}
 		return core.Event{
 			Type: core.EvTopic, Network: network, Time: when,
-			Channel: ch, Text: e.Last(), Nick: from,
+			Buffer: ch, Text: e.Last(), Nick: from,
 		}, true
 	}
 

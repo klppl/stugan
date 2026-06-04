@@ -132,7 +132,7 @@ func TestApplyConnectDisconnect(t *testing.T) {
 func TestApplyJoinPartQuit(t *testing.T) {
 	e, _ := newTestEngine(t)
 
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Channel: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Buffer: "#go"})
 	c := net0(e).Channel("#go")
 	if c == nil {
 		t.Fatal("channel #go not created on join")
@@ -145,7 +145,7 @@ func TestApplyJoinPartQuit(t *testing.T) {
 	}
 
 	// Case-insensitive: joining with different case must not duplicate.
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Channel: "#GO"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Buffer: "#GO"})
 	if len(net0(e).Channels) != 1 {
 		t.Fatalf("channel duplicated by case: %d channels", len(net0(e).Channels))
 	}
@@ -153,7 +153,7 @@ func TestApplyJoinPartQuit(t *testing.T) {
 		t.Fatalf("members = %d, want 2", len(net0(e).Channel("#go").Members))
 	}
 
-	e.apply(Event{Type: EvPart, Network: "net", Nick: "alice", Channel: "#go", Text: "later"})
+	e.apply(Event{Type: EvPart, Network: "net", Nick: "alice", Buffer: "#go", Text: "later"})
 	if _, ok := net0(e).Channel("#go").Members["alice"]; ok {
 		t.Error("alice still present after part")
 	}
@@ -166,7 +166,7 @@ func TestApplyJoinPartQuit(t *testing.T) {
 
 func TestApplyNames(t *testing.T) {
 	e, sink := newTestEngine(t)
-	e.apply(Event{Type: EvNames, Network: "net", Channel: "#go", Members: []Member{
+	e.apply(Event{Type: EvNames, Network: "net", Buffer: "#go", Members: []Member{
 		{Nick: "alice"}, {Nick: "bob", Modes: "@"}, {Nick: "carol", Modes: "+"},
 	}})
 	c := net0(e).Channel("#go")
@@ -186,24 +186,24 @@ func TestApplyNames(t *testing.T) {
 
 func TestApplyMode(t *testing.T) {
 	e, sink := newTestEngine(t)
-	e.apply(Event{Type: EvNames, Network: "net", Channel: "#go", Members: []Member{
+	e.apply(Event{Type: EvNames, Network: "net", Buffer: "#go", Members: []Member{
 		{Nick: "me"}, {Nick: "alice", Modes: "+"},
 	}})
 
 	// Gain op: "@" is inserted ahead of the existing voice "+".
-	e.apply(Event{Type: EvMode, Network: "net", Channel: "#go", Nick: "alice",
+	e.apply(Event{Type: EvMode, Network: "net", Buffer: "#go", Nick: "alice",
 		Text: "+o me", MemberModes: []MemberMode{{Nick: "me", Symbol: "@", Add: true}}})
 	if got := net0(e).Channel("#go").Members["me"].Modes; got != "@" {
 		t.Errorf("me modes after +o = %q, want @", got)
 	}
-	e.apply(Event{Type: EvMode, Network: "net", Channel: "#go", Nick: "x",
+	e.apply(Event{Type: EvMode, Network: "net", Buffer: "#go", Nick: "x",
 		Text: "+o alice", MemberModes: []MemberMode{{Nick: "alice", Symbol: "@", Add: true}}})
 	if got := net0(e).Channel("#go").Members["alice"].Modes; got != "@+" {
 		t.Errorf("alice modes after +o = %q, want @+ (op before voice)", got)
 	}
 
 	// Lose op: "@" is removed, voice survives.
-	e.apply(Event{Type: EvMode, Network: "net", Channel: "#go", Nick: "x",
+	e.apply(Event{Type: EvMode, Network: "net", Buffer: "#go", Nick: "x",
 		Text: "-o alice", MemberModes: []MemberMode{{Nick: "alice", Symbol: "@", Add: false}}})
 	if got := net0(e).Channel("#go").Members["alice"].Modes; got != "+" {
 		t.Errorf("alice modes after -o = %q, want +", got)
@@ -232,7 +232,7 @@ func chanNames(n *Network) []string {
 func TestReorderBuffers(t *testing.T) {
 	e, _ := newTestEngine(t)
 	for _, ch := range []string{"#a", "#b", "#c"} {
-		e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Channel: ch})
+		e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Buffer: ch})
 	}
 
 	if err := e.ReorderBuffers("net", []string{"#c", "#a", "#b"}); err != nil {
@@ -306,11 +306,11 @@ func TestReorderNetworks(t *testing.T) {
 // MsgKind (not MsgSystem), so the client can recognize and fold it.
 func TestEventKindsDistinct(t *testing.T) {
 	e, sink := newTestEngine(t)
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Channel: "#go"})
-	e.apply(Event{Type: EvPart, Network: "net", Nick: "alice", Channel: "#go"})
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Channel: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Buffer: "#go"})
+	e.apply(Event{Type: EvPart, Network: "net", Nick: "alice", Buffer: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Buffer: "#go"})
 	e.apply(Event{Type: EvQuit, Network: "net", Nick: "bob", Text: "bye"})
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "carol", Channel: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "carol", Buffer: "#go"})
 	e.apply(Event{Type: EvNick, Network: "net", Nick: "carol", NewNick: "carol2"})
 
 	want := []MsgKind{MsgJoin, MsgPart, MsgJoin, MsgQuit, MsgJoin, MsgNick}
@@ -326,8 +326,8 @@ func TestEventKindsDistinct(t *testing.T) {
 
 func TestApplyReactRedact(t *testing.T) {
 	e, sink := newTestEngine(t)
-	e.apply(Event{Type: EvReact, Network: "net", Channel: "#go", Target: "m1", Nick: "alice", Text: "👍"})
-	e.apply(Event{Type: EvRedact, Network: "net", Channel: "#go", Target: "m2", Nick: "bob", Text: "spam"})
+	e.apply(Event{Type: EvReact, Network: "net", Buffer: "#go", Target: "m1", Nick: "alice", Text: "👍"})
+	e.apply(Event{Type: EvRedact, Network: "net", Buffer: "#go", Target: "m2", Nick: "bob", Text: "spam"})
 	if len(sink.reacts) != 1 || sink.reacts[0] != [5]string{"net", "#go", "m1", "alice", "👍"} {
 		t.Fatalf("reacts = %+v", sink.reacts)
 	}
@@ -423,7 +423,7 @@ func TestRunPerformOnConnect(t *testing.T) {
 
 func TestApplyNickRename(t *testing.T) {
 	e, _ := newTestEngine(t)
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Channel: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Buffer: "#go"})
 
 	e.apply(Event{Type: EvNick, Network: "net", Nick: "alice", NewNick: "alice2"})
 	c := net0(e).Channel("#go")
@@ -444,7 +444,7 @@ func TestApplyNickRename(t *testing.T) {
 
 func TestApplyTopic(t *testing.T) {
 	e, _ := newTestEngine(t)
-	e.apply(Event{Type: EvTopic, Network: "net", Channel: "#go", Text: "hello world", Nick: "op"})
+	e.apply(Event{Type: EvTopic, Network: "net", Buffer: "#go", Text: "hello world", Nick: "op"})
 	if got := net0(e).Channel("#go").Topic; got != "hello world" {
 		t.Errorf("topic = %q", got)
 	}
@@ -551,7 +551,7 @@ func TestNetworkChangedEmitted(t *testing.T) {
 
 	// A join is a structural change: a network snapshot is emitted carrying
 	// the new channel and member.
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Channel: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Buffer: "#go"})
 	if len(sink.nets) != 1 {
 		t.Fatalf("got %d network snapshots, want 1", len(sink.nets))
 	}
@@ -562,7 +562,7 @@ func TestNetworkChangedEmitted(t *testing.T) {
 	}
 
 	// The snapshot is a copy: later mutation must not leak into it.
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Channel: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Buffer: "#go"})
 	if _, leaked := snap.Channel("#go").Members["bob"]; leaked {
 		t.Error("earlier snapshot was mutated by a later event")
 	}
@@ -587,11 +587,11 @@ func TestNetworkChangedEmitted(t *testing.T) {
 
 func TestPartSelfRemovesBuffer(t *testing.T) {
 	e, _ := newTestEngine(t)
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Channel: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Buffer: "#go"})
 	if net0(e).Channel("#go") == nil {
 		t.Fatal("we did not join #go")
 	}
-	e.apply(Event{Type: EvPart, Network: "net", Nick: "me", Channel: "#go"})
+	e.apply(Event{Type: EvPart, Network: "net", Nick: "me", Buffer: "#go"})
 	if net0(e).Channel("#go") != nil {
 		t.Error("our own part did not remove the buffer")
 	}
@@ -604,7 +604,7 @@ func TestJoinPartPersistsAutojoin(t *testing.T) {
 	baseSaves := len(netStore.saved) // AddNetwork persists once
 
 	// We join a channel ourselves → it lands in the persisted auto-join list.
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Channel: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Buffer: "#go"})
 	if got := net0(e).Params.Channels; len(got) != 1 || got[0] != "#go" {
 		t.Fatalf("autojoin = %v, want [#go]", got)
 	}
@@ -617,7 +617,7 @@ func TestJoinPartPersistsAutojoin(t *testing.T) {
 
 	// Re-joining the same channel (e.g. the server echo of the initial
 	// auto-join) must not duplicate it or write again.
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Channel: "#GO"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Buffer: "#GO"})
 	if got := net0(e).Params.Channels; len(got) != 1 {
 		t.Errorf("autojoin after re-join = %v, want one entry", got)
 	}
@@ -626,13 +626,13 @@ func TestJoinPartPersistsAutojoin(t *testing.T) {
 	}
 
 	// Someone else joining must not touch the auto-join list or persist.
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Channel: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Buffer: "#go"})
 	if len(netStore.saved) != baseSaves+1 {
 		t.Errorf("other join wrote to store; saves = %d", len(netStore.saved))
 	}
 
 	// We part → the channel is dropped from the persisted list.
-	e.apply(Event{Type: EvPart, Network: "net", Nick: "me", Channel: "#go"})
+	e.apply(Event{Type: EvPart, Network: "net", Nick: "me", Buffer: "#go"})
 	if got := net0(e).Params.Channels; len(got) != 0 {
 		t.Errorf("autojoin after part = %v, want empty", got)
 	}
@@ -649,7 +649,7 @@ func TestJoinKeyPersists(t *testing.T) {
 
 	// /join #secret hunter2 records the key; the self-JOIN commits it.
 	e.runBuiltinCommand(Event{Type: EvCommand, Network: "net", Command: "join", Text: "#secret hunter2"})
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Channel: "#secret"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Buffer: "#secret"})
 
 	if got := net0(e).Params.ChannelKeys["#secret"]; got != "hunter2" {
 		t.Fatalf("stored key = %q, want hunter2", got)
@@ -660,13 +660,13 @@ func TestJoinKeyPersists(t *testing.T) {
 	}
 
 	// A plain (keyless) re-join must not wipe the stored key.
-	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Channel: "#secret"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Buffer: "#secret"})
 	if got := net0(e).Params.ChannelKeys["#secret"]; got != "hunter2" {
 		t.Errorf("keyless re-join wiped key: %q", got)
 	}
 
 	// Parting drops both the channel and its key.
-	e.apply(Event{Type: EvPart, Network: "net", Nick: "me", Channel: "#secret"})
+	e.apply(Event{Type: EvPart, Network: "net", Nick: "me", Buffer: "#secret"})
 	if _, ok := net0(e).Params.ChannelKeys["#secret"]; ok {
 		t.Error("part did not drop the join key")
 	}
@@ -808,8 +808,8 @@ func TestUpdateNetworkChannelsNoReconnect(t *testing.T) {
 
 func TestChannelListAccumulation(t *testing.T) {
 	e, sink := newTestEngine(t)
-	e.apply(Event{Type: EvListItem, Network: "net", Channel: "#a", Count: 10, Text: "topic a"})
-	e.apply(Event{Type: EvListItem, Network: "net", Channel: "#b", Count: 5, Text: "topic b"})
+	e.apply(Event{Type: EvListItem, Network: "net", Buffer: "#a", Count: 10, Text: "topic a"})
+	e.apply(Event{Type: EvListItem, Network: "net", Buffer: "#b", Count: 5, Text: "topic b"})
 	if len(sink.lists) != 0 {
 		t.Fatal("list emitted before end")
 	}
@@ -829,7 +829,7 @@ func TestChatHistoryCommand(t *testing.T) {
 	if err := e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"}); err != nil {
 		t.Fatal(err)
 	}
-	e.runBuiltinCommand(Event{Type: EvCommand, Network: "n", Channel: "#c", Command: "chathistory", Args: []string{"10"}})
+	e.runBuiltinCommand(Event{Type: EvCommand, Network: "n", Buffer: "#c", Command: "chathistory", Args: []string{"10"}})
 	if !slices.Contains(conn.conns[0].raws, "CHATHISTORY LATEST #c * 10") {
 		t.Errorf("raws = %v", conn.conns[0].raws)
 	}
@@ -839,7 +839,7 @@ func TestChatHistoryCommand(t *testing.T) {
 	sink := &captureSink{}
 	e2 := New(Options{Sink: sink, Connector: conn2})
 	_ = e2.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"})
-	e2.runBuiltinCommand(Event{Type: EvCommand, Network: "n", Channel: "#c", Command: "chathistory"})
+	e2.runBuiltinCommand(Event{Type: EvCommand, Network: "n", Buffer: "#c", Command: "chathistory"})
 	if len(conn2.conns[0].raws) != 0 {
 		t.Errorf("sent a raw without the cap: %v", conn2.conns[0].raws)
 	}
@@ -865,7 +865,7 @@ func TestWhoisCommandAndReplyRouting(t *testing.T) {
 	}
 
 	e.runBuiltinCommand(Event{
-		Type: EvCommand, Network: "n", Channel: "#c",
+		Type: EvCommand, Network: "n", Buffer: "#c",
 		Command: "whois", Args: []string{"alice"}, Text: "alice",
 	})
 	if !slices.Contains(conn.conns[0].raws, "WHOIS alice") {
@@ -926,17 +926,17 @@ func TestModeShorthandCommands(t *testing.T) {
 
 	// /op alice — one op on the current channel.
 	e.runBuiltinCommand(Event{
-		Type: EvCommand, Network: "n", Channel: "#c",
+		Type: EvCommand, Network: "n", Buffer: "#c",
 		Command: "op", Args: []string{"alice"}, Text: "alice",
 	})
 	// /deop alice bob carol — three deops, all in one MODE line.
 	e.runBuiltinCommand(Event{
-		Type: EvCommand, Network: "n", Channel: "#c",
+		Type: EvCommand, Network: "n", Buffer: "#c",
 		Command: "deop", Args: []string{"alice", "bob", "carol"}, Text: "alice bob carol",
 	})
 	// /voice alice
 	e.runBuiltinCommand(Event{
-		Type: EvCommand, Network: "n", Channel: "#c",
+		Type: EvCommand, Network: "n", Buffer: "#c",
 		Command: "voice", Args: []string{"alice"}, Text: "alice",
 	})
 
@@ -959,22 +959,22 @@ func TestKickAndBanCommands(t *testing.T) {
 
 	// /kick alice (current channel).
 	e.runBuiltinCommand(Event{
-		Type: EvCommand, Network: "n", Channel: "#c",
+		Type: EvCommand, Network: "n", Buffer: "#c",
 		Command: "kick", Args: []string{"alice"}, Text: "alice",
 	})
 	// /kick alice spam (with reason).
 	e.runBuiltinCommand(Event{
-		Type: EvCommand, Network: "n", Channel: "#c",
+		Type: EvCommand, Network: "n", Buffer: "#c",
 		Command: "kick", Args: []string{"alice", "spam"}, Text: "alice spam",
 	})
 	// /kick #other alice (explicit channel).
 	e.runBuiltinCommand(Event{
-		Type: EvCommand, Network: "n", Channel: "#c",
+		Type: EvCommand, Network: "n", Buffer: "#c",
 		Command: "kick", Args: []string{"#other", "alice"}, Text: "#other alice",
 	})
 	// /ban alice!*@*
 	e.runBuiltinCommand(Event{
-		Type: EvCommand, Network: "n", Channel: "#c",
+		Type: EvCommand, Network: "n", Buffer: "#c",
 		Command: "ban", Args: []string{"alice!*@*"}, Text: "alice!*@*",
 	})
 
@@ -999,7 +999,7 @@ func TestUnknownCommandPassesThroughAsRaw(t *testing.T) {
 	e := New(Options{Sink: &captureSink{}, Connector: conn})
 	_ = e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"})
 	e.runBuiltinCommand(Event{
-		Type: EvCommand, Network: "n", Channel: "#c",
+		Type: EvCommand, Network: "n", Buffer: "#c",
 		Command: "knock", Args: []string{"#secret"}, Text: "#secret",
 	})
 	if !slices.Contains(conn.conns[0].raws, "KNOCK #secret") {
@@ -1041,7 +1041,7 @@ func TestAddNetworkLiveNoConnector(t *testing.T) {
 
 func TestUnknownNetworkIgnored(t *testing.T) {
 	e, sink := newTestEngine(t)
-	e.apply(Event{Type: EvJoin, Network: "ghost", Nick: "x", Channel: "#y"})
+	e.apply(Event{Type: EvJoin, Network: "ghost", Nick: "x", Buffer: "#y"})
 	if len(sink.msgs) != 0 {
 		t.Errorf("event for unknown network produced output: %+v", sink.msgs)
 	}
@@ -1089,7 +1089,7 @@ func TestHandleEventAfterShutdown(t *testing.T) {
 	// Must not block or panic once done is closed.
 	doneCh := make(chan struct{})
 	go func() {
-		e.HandleEvent(Event{Type: EvJoin, Network: "net", Nick: "x", Channel: "#y"})
+		e.HandleEvent(Event{Type: EvJoin, Network: "net", Nick: "x", Buffer: "#y"})
 		close(doneCh)
 	}()
 	select {

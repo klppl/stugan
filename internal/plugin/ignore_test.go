@@ -38,7 +38,7 @@ func loadIgnore(t *testing.T) (*Host, *fakeAPI) {
 func ignoreCmd(t *testing.T, h *Host, network, cmd string, args ...string) {
 	t.Helper()
 	if _, keep := h.Dispatch(context.Background(), core.Event{
-		Type: core.EvCommand, Network: network, Channel: "#c",
+		Type: core.EvCommand, Network: network, Buffer: "#c",
 		Command: cmd, Args: args,
 	}); keep {
 		t.Fatalf("/%s was not consumed by ignore.lua", cmd)

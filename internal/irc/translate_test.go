@@ -49,7 +49,7 @@ func TestToEvent(t *testing.T) {
 			name: "join",
 			raw:  ":bob!u@h JOIN #go",
 			ok:   true,
-			want: core.Event{Type: core.EvJoin, Network: "n", Nick: "bob", Channel: "#go"},
+			want: core.Event{Type: core.EvJoin, Network: "n", Nick: "bob", Buffer: "#go"},
 		},
 		{
 			// extended-join: [channel, account, realname] — channel must be
@@ -57,13 +57,13 @@ func TestToEvent(t *testing.T) {
 			name: "extended join",
 			raw:  ":bob!u@h JOIN #go bobacct :Bob Real",
 			ok:   true,
-			want: core.Event{Type: core.EvJoin, Network: "n", Nick: "bob", Channel: "#go", Account: "bobacct"},
+			want: core.Event{Type: core.EvJoin, Network: "n", Nick: "bob", Buffer: "#go", Account: "bobacct"},
 		},
 		{
 			name: "part with reason",
 			raw:  ":bob!u@h PART #go :bye",
 			ok:   true,
-			want: core.Event{Type: core.EvPart, Network: "n", Nick: "bob", Channel: "#go", Text: "bye"},
+			want: core.Event{Type: core.EvPart, Network: "n", Nick: "bob", Buffer: "#go", Text: "bye"},
 		},
 		{
 			name: "quit",
@@ -81,7 +81,7 @@ func TestToEvent(t *testing.T) {
 			name: "topic",
 			raw:  ":op!u@h TOPIC #go :the new topic",
 			ok:   true,
-			want: core.Event{Type: core.EvTopic, Network: "n", Channel: "#go", Text: "the new topic", Nick: "op"},
+			want: core.Event{Type: core.EvTopic, Network: "n", Buffer: "#go", Text: "the new topic", Nick: "op"},
 		},
 		{
 			name: "unmodeled numeric ignored",
@@ -112,8 +112,8 @@ func TestToEvent(t *testing.T) {
 			if got.NewNick != tt.want.NewNick {
 				t.Errorf("NewNick = %q, want %q", got.NewNick, tt.want.NewNick)
 			}
-			if got.Channel != tt.want.Channel {
-				t.Errorf("Channel = %q, want %q", got.Channel, tt.want.Channel)
+			if got.Buffer != tt.want.Buffer {
+				t.Errorf("Channel = %q, want %q", got.Buffer, tt.want.Buffer)
 			}
 			if got.Account != tt.want.Account {
 				t.Errorf("Account = %q, want %q", got.Account, tt.want.Account)
@@ -236,7 +236,7 @@ func TestChannelModeEvent(t *testing.T) {
 			if !tt.ok {
 				return
 			}
-			if ev.Type != core.EvMode || ev.Channel != "#c" || ev.Nick != "Chan" {
+			if ev.Type != core.EvMode || ev.Buffer != "#c" || ev.Nick != "Chan" {
 				t.Fatalf("ev = %+v", ev)
 			}
 			if !slices.Equal(ev.MemberModes, tt.want) {
@@ -327,7 +327,7 @@ func TestToEventTyping(t *testing.T) {
 	// Inbound +typing TAGMSG from someone else → EvTyping.
 	e := girc.ParseEvent("@+typing=active :alice!u@h TAGMSG #go")
 	ev, ok := toEvent("n", e, "me")
-	if !ok || ev.Type != core.EvTyping || ev.Nick != "alice" || ev.Channel != "#go" || ev.Text != "active" {
+	if !ok || ev.Type != core.EvTyping || ev.Nick != "alice" || ev.Buffer != "#go" || ev.Text != "active" {
 		t.Fatalf("typing event = %+v ok=%v", ev, ok)
 	}
 	// Our own typing echo is ignored.
@@ -347,7 +347,7 @@ func TestToEventReact(t *testing.T) {
 	if !ok || ev.Type != core.EvReact {
 		t.Fatalf("react event = %+v ok=%v", ev, ok)
 	}
-	if ev.Nick != "alice" || ev.Channel != "#go" || ev.Target != "abc123" || ev.Text != "👍" {
+	if ev.Nick != "alice" || ev.Buffer != "#go" || ev.Target != "abc123" || ev.Text != "👍" {
 		t.Errorf("react fields = %+v", ev)
 	}
 	// A react without a +draft/reply target is dropped.
@@ -356,8 +356,8 @@ func TestToEventReact(t *testing.T) {
 	}
 	// A direct react routes to the sender's query buffer.
 	dm := girc.ParseEvent("@+draft/react=❤;+draft/reply=m1 :bob!u@h TAGMSG me")
-	if ev, ok := toEvent("n", dm, "me"); !ok || ev.Channel != "bob" {
-		t.Errorf("direct react buffer = %q ok=%v", ev.Channel, ok)
+	if ev, ok := toEvent("n", dm, "me"); !ok || ev.Buffer != "bob" {
+		t.Errorf("direct react buffer = %q ok=%v", ev.Buffer, ok)
 	}
 }
 
@@ -367,7 +367,7 @@ func TestToEventRedact(t *testing.T) {
 	if !ok || ev.Type != core.EvRedact {
 		t.Fatalf("redact event = %+v ok=%v", ev, ok)
 	}
-	if ev.Channel != "#go" || ev.Target != "badmsgid" || ev.Nick != "alice" || ev.Text != "spam" {
+	if ev.Buffer != "#go" || ev.Target != "badmsgid" || ev.Nick != "alice" || ev.Text != "spam" {
 		t.Errorf("redact fields = %+v", ev)
 	}
 	// Reason is optional.
@@ -402,8 +402,8 @@ func TestToEventNames(t *testing.T) {
 	if !ok || ev.Type != core.EvNames {
 		t.Fatalf("type = %q ok=%v, want names", ev.Type, ok)
 	}
-	if ev.Channel != "#go" {
-		t.Errorf("channel = %q", ev.Channel)
+	if ev.Buffer != "#go" {
+		t.Errorf("channel = %q", ev.Buffer)
 	}
 	want := map[string]string{"alice": "", "bob": "@", "carol": "+", "dave": "@+", "owner": "~"}
 	if len(ev.Members) != len(want) {

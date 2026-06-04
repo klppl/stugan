@@ -20,7 +20,7 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 	name := strings.ToLower(ev.Command)
 	switch name {
 	case "me":
-		e.API().Action(ev.Network, ev.Channel, ev.Text)
+		e.API().Action(ev.Network, ev.Buffer, ev.Text)
 	case "msg":
 		target, text, _ := strings.Cut(ev.Text, " ")
 		if target != "" && text != "" {
@@ -39,7 +39,7 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 			conn.SendRaw("JOIN " + ev.Text)
 		}
 	case "part":
-		ch := ev.Channel
+		ch := ev.Buffer
 		if len(ev.Args) > 0 {
 			ch = ev.Args[0]
 		}
@@ -48,9 +48,9 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 		// /topic <text> sets the current channel's topic; /topic alone
 		// queries it.
 		if ev.Text == "" {
-			conn.SendRaw("TOPIC " + ev.Channel)
+			conn.SendRaw("TOPIC " + ev.Buffer)
 		} else {
-			conn.SendRaw("TOPIC " + ev.Channel + " :" + ev.Text)
+			conn.SendRaw("TOPIC " + ev.Buffer + " :" + ev.Text)
 		}
 	case "nick":
 		if len(ev.Args) > 0 {
@@ -63,7 +63,7 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 		// our SQLite backlog already covers history.
 		if !slices.Contains(conn.Caps(), "draft/chathistory") && !slices.Contains(conn.Caps(), "chathistory") {
 			e.inject(Message{
-				Network: ev.Network, Buffer: ev.Channel, Time: time.Now(),
+				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
 				Kind: MsgSystem, Text: "this server does not support chathistory",
 			})
 			return
@@ -74,11 +74,11 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 				n = v
 			}
 		}
-		conn.SendRaw(fmt.Sprintf("CHATHISTORY LATEST %s * %d", ev.Channel, n))
+		conn.SendRaw(fmt.Sprintf("CHATHISTORY LATEST %s * %d", ev.Buffer, n))
 	case "raw", "quote":
 		conn.SendRaw(ev.Text)
 
-	// --- Lookups (replies surface via EvNumeric routed back to ev.Channel)
+	// --- Lookups (replies surface via EvNumeric routed back to ev.Buffer)
 	case "whois":
 		e.startNumeric(ev, "WHOIS")
 	case "whowas":
@@ -87,12 +87,12 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 		e.startNumeric(ev, "WHO")
 	case "names":
 		// /names defaults to the current channel; with an arg, that channel.
-		target := ev.Channel
+		target := ev.Buffer
 		if len(ev.Args) > 0 {
 			target = ev.Args[0]
 		}
 		if target != "" {
-			e.pendingWhois[whoisKey(ev.Network, target)] = ev.Channel
+			e.pendingWhois[whoisKey(ev.Network, target)] = ev.Buffer
 			conn.SendRaw("NAMES " + target)
 		}
 
@@ -100,7 +100,7 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 	case "mode":
 		// /mode <target> [modes] [args…]; on a channel buffer with no args,
 		// /mode alone queries the current modes.
-		target := ev.Channel
+		target := ev.Buffer
 		rest := ev.Text
 		if len(ev.Args) > 0 {
 			target = ev.Args[0]
@@ -113,15 +113,15 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 		}
 	case "op", "deop", "voice", "devoice", "halfop", "dehalfop":
 		// Channel-mode shorthand: /op nick [nick…] → MODE #chan +ooo nick nick nick.
-		// Built from ev.Channel so it only makes sense in a channel buffer.
+		// Built from ev.Buffer so it only makes sense in a channel buffer.
 		applyModeShorthand(conn, ev, name)
 	case "ban":
-		if ev.Channel != "" && len(ev.Args) > 0 {
-			conn.SendRaw("MODE " + ev.Channel + " +b " + strings.Join(ev.Args, " "))
+		if ev.Buffer != "" && len(ev.Args) > 0 {
+			conn.SendRaw("MODE " + ev.Buffer + " +b " + strings.Join(ev.Args, " "))
 		}
 	case "unban":
-		if ev.Channel != "" && len(ev.Args) > 0 {
-			conn.SendRaw("MODE " + ev.Channel + " -b " + strings.Join(ev.Args, " "))
+		if ev.Buffer != "" && len(ev.Args) > 0 {
+			conn.SendRaw("MODE " + ev.Buffer + " -b " + strings.Join(ev.Args, " "))
 		}
 	case "kick":
 		kickCmd(conn, ev)
@@ -131,7 +131,7 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 			return
 		}
 		nick := ev.Args[0]
-		ch := ev.Channel
+		ch := ev.Buffer
 		if len(ev.Args) > 1 {
 			ch = ev.Args[1]
 		}
@@ -189,7 +189,7 @@ func (e *Engine) startNumeric(ev Event, raw string) {
 		return
 	}
 	target := ev.Args[0]
-	e.pendingWhois[whoisKey(ev.Network, target)] = ev.Channel
+	e.pendingWhois[whoisKey(ev.Network, target)] = ev.Buffer
 	conn.SendRaw(raw + " " + target)
 }
 
@@ -198,7 +198,7 @@ func (e *Engine) startNumeric(ev Event, raw string) {
 // mode args per line; we don't chunk here (callers giving 10 ops at once
 // is rare, and the server will reject neatly).
 func applyModeShorthand(conn IRCConn, ev Event, name string) {
-	if ev.Channel == "" || len(ev.Args) == 0 {
+	if ev.Buffer == "" || len(ev.Args) == 0 {
 		return
 	}
 	var flag byte
@@ -218,7 +218,7 @@ func applyModeShorthand(conn IRCConn, ev Event, name string) {
 		flag, sign = 'h', "-"
 	}
 	modes := sign + strings.Repeat(string(flag), len(ev.Args))
-	conn.SendRaw("MODE " + ev.Channel + " " + modes + " " + strings.Join(ev.Args, " "))
+	conn.SendRaw("MODE " + ev.Buffer + " " + modes + " " + strings.Join(ev.Args, " "))
 }
 
 // kickCmd handles /kick <nick> [reason] in the current channel, and
@@ -227,7 +227,7 @@ func kickCmd(conn IRCConn, ev Event) {
 	if len(ev.Args) == 0 {
 		return
 	}
-	chan_ := ev.Channel
+	chan_ := ev.Buffer
 	nickIdx := 0
 	// If the first arg looks like a channel, treat it as the target.
 	first := ev.Args[0]
@@ -358,7 +358,7 @@ func (a engineAPI) Part(network, channel string) error {
 }
 
 func (a engineAPI) Print(network, buffer, text string) {
-	a.e.HandleEvent(Event{Type: evPrint, Network: network, Channel: buffer, Text: text, Time: time.Now()})
+	a.e.HandleEvent(Event{Type: evPrint, Network: network, Buffer: buffer, Text: text, Time: time.Now()})
 }
 
 // SetBufferState mutates the named buffer's State map under the engine
