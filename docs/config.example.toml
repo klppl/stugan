@@ -5,6 +5,12 @@
 [server]
 listen = "127.0.0.1:8080"
 # public_url = "https://irc.example.com"   # for absolute links / push
+# trusted_proxies = ["127.0.0.1/32", "::1/128"]   # reverse proxies in front
+#   of the daemon. When set, the real client IP for auth rate-limiting is read
+#   from CF-Connecting-IP / X-Forwarded-For for requests from these peers.
+#   For a Cloudflare Tunnel (cloudflared → localhost) this is exactly
+#   ["127.0.0.1/32", "::1/128"]. Leave empty when the daemon is directly
+#   exposed — forwarded headers are then ignored (unspoofable).
 
 [log]
 level  = "info"   # debug | info | warn | error
@@ -12,7 +18,9 @@ format = "text"   # text | json
 
 [plugins]
 enabled = true
-sandbox = false   # single-user: full Lua stdlib (logged). See docs/plugins.md.
+# sandbox = true   # default. Restricts the Lua stdlib (no os.execute/io/etc).
+#   Multi-user is always sandboxed. Single-user may set false to opt into the
+#   full stdlib for trusted local scripts. See docs/plugins.md.
 
 # Per-plugin settings, keyed by script basename. Read via stugan.config(...).
 [plugins.settings.highlight_reply]

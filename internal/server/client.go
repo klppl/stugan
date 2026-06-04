@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -15,6 +16,18 @@ import (
 // further behind than this is dropped (its socket closed); the browser
 // reconnects and replays an init snapshot.
 const sendBuffer = 128
+
+// pingInterval is how often the server sends a protocol-level WebSocket ping,
+// and pongTimeout how long it waits for the pong before declaring the socket
+// dead. This detects a browser that vanished without a close handshake (mobile
+// suspend, a dropped radio, a half-open NAT mapping) so the connection is torn
+// down promptly instead of lingering until the OS TCP timeout — and doubles as
+// keepalive traffic that stops idle proxies from cutting the socket. The
+// browser answers protocol pings automatically; no app code runs for them.
+const (
+	pingInterval = 30 * time.Second
+	pongTimeout  = 10 * time.Second
+)
 
 // client is one connected browser socket. All writes funnel through
 // writePump, since a websocket.Conn is not safe for concurrent writes.
@@ -65,6 +78,33 @@ func (c *client) writePump(ctx context.Context) {
 			return
 		case env := <-c.send:
 			if err := wsjson.Write(ctx, c.ws, env); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// pingLoop sends a protocol-level ping every pingInterval and cancels the
+// connection (via cancel, which unblocks the read and write pumps) if a pong
+// doesn't arrive within pongTimeout. websocket.Conn.Ping is safe to call
+// concurrently with the writePump; the pong is processed by the reader, which
+// must be running for Ping to return.
+func (c *client) pingLoop(ctx context.Context, cancel context.CancelFunc) {
+	t := time.NewTicker(pingInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			pctx, pcancel := context.WithTimeout(ctx, pongTimeout)
+			err := c.ws.Ping(pctx)
+			pcancel()
+			if err != nil {
+				if ctx.Err() == nil {
+					c.log.Debug("ws ping failed; closing", "user", c.user, "err", err)
+				}
+				cancel()
 				return
 			}
 		}

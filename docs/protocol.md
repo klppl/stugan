@@ -44,6 +44,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `plugin:list`   | `PluginListResp` | the plugin manager list (answers `plugin:list` and `plugin:action`) |
 | `complete:res`  | `CompleteRes`  | plugin tab-completion candidates (answers `complete:req`) |
 | `highlight`     | `HighlightRules` | the normalized highlight ruleset, broadcast to all the user's tabs after a `highlight:set` |
+| `pong`          | (none)         | answers a c2s `ping` (app-level liveness; see below) |
 | `error`         | `WireError`    | `{code, message}`, correlated to a request `id` |
 
 ### Client → server
@@ -64,6 +65,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `read`          | `ReadMark`     | mark a buffer read up to now (advances the persisted read marker) |
 | `highlight:set` | `HighlightRules` | replace the highlight ruleset (bad regex → `error`; success → `highlight` broadcast) |
 | `buf:close`     | `BufClose`     | close a query/DM buffer (server drops it and re-broadcasts `net:update`; channels use `/part`) |
+| `ping`          | (none)         | app-level liveness probe; answered with `pong` (see below) |
 
 ### Bidirectional
 
@@ -176,6 +178,15 @@ share one path.
 - `id` correlation: requests expecting a definite answer (`backlog:fetch`,
   `search`, `net:add`, `net:info`) carry an `id` the matching reply echoes;
   fire-and-forget events (`typing`) omit it.
+- **Liveness.** A browser `WebSocket` never exposes protocol ping/pong to JS and
+  won't fire `onclose` on a half-open socket (a suspended mobile tab whose TCP
+  flow died silently), so the client runs an app-level heartbeat: while open it
+  sends `ping` periodically and treats any inbound frame (a `pong`, or ordinary
+  traffic) as proof of life; sustained silence — or returning to a backgrounded
+  tab / regaining the network — triggers an immediate reconnect. Independently,
+  the server sends protocol-level pings and drops a client that stops ponging.
+  On reconnect the client reloads each buffer's latest page, so messages that
+  arrived while it was away fill in without a manual refresh.
 
 ## Adding an event
 

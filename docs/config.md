@@ -21,6 +21,7 @@ are optional — a missing config file is fine. A ready-to-edit example lives at
 | `public_url` | string | — | Absolute base URL, for push notifications and absolute links. |
 | `static_dir` | string | `client/dist` | Directory the built client is served from. |
 | `origin_patterns` | []string | — | Allowed WebSocket `Origin` patterns when serving from a non-localhost host. |
+| `trusted_proxies` | []string | — | CIDRs (or bare IPs) of reverse proxies in front of the daemon. When the request's direct peer matches, the real client IP for auth rate-limiting is read from `CF-Connecting-IP` / `X-Forwarded-For`. Required behind a proxy (incl. Cloudflare Tunnel) so failed logins are throttled per visitor, not collapsed onto the proxy's address. |
 
 ## `[log]`
 
@@ -34,7 +35,7 @@ are optional — a missing config file is fine. A ready-to-edit example lives at
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `enabled` | bool | `true` | Load the Lua plugin host. |
-| `sandbox` | bool | `false` (single-user) | Restrict the Lua stdlib (removes `io`, `package`, `require`, `os.execute`, …). Defaults on in multi-user. |
+| `sandbox` | bool | `true` | Restrict the Lua stdlib (removes `io`, `package`, `require`, `debug`, `os.execute`, …). Always on in multi-user; single-user may set `false` to opt into the full stdlib for trusted local scripts. |
 
 Per-plugin settings are keyed by script basename and read via
 `stugan.config(...)`:

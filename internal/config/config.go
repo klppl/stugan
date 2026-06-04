@@ -72,6 +72,22 @@ func (c *Config) PluginsEnabled() bool {
 	return c.Plugins.Enabled == nil || *c.Plugins.Enabled
 }
 
+// PluginSandbox reports whether the Lua stdlib should be restricted for
+// plugins. Multi-user mode is always sandboxed: tenants are mutually
+// untrusted and share the daemon process, so a script must never reach
+// os/io. Single-user mode also defaults to sandboxed; the operator may opt
+// out with an explicit `sandbox = false` since the scripts are their own
+// code on their own machine.
+func (c *Config) PluginSandbox() bool {
+	if c.AuthEnabled() {
+		return true
+	}
+	if c.Plugins.Sandbox == nil {
+		return true
+	}
+	return *c.Plugins.Sandbox
+}
+
 // EffectiveUsers returns the users to run: the configured accounts, or a
 // single implicit "default" user owning the top-level networks.
 func (c *Config) EffectiveUsers() []UserConfig {
@@ -101,6 +117,12 @@ type ServerConfig struct {
 	// OriginPatterns authorizes WebSocket origins (path.Match patterns).
 	// Empty falls back to localhost variants.
 	OriginPatterns []string `toml:"origin_patterns"`
+	// TrustedProxies lists CIDRs (or bare IPs) of reverse proxies in front
+	// of the daemon. When a request's direct peer matches, the real client
+	// IP used for auth rate-limiting is taken from X-Forwarded-For instead
+	// of the proxy's address. Leave empty when the daemon is directly
+	// exposed; an untrusted peer's forwarded headers are always ignored.
+	TrustedProxies []string `toml:"trusted_proxies"`
 }
 
 // LogConfig controls structured logging.
@@ -116,10 +138,12 @@ type PluginsConfig struct {
 	// Enabled toggles the plugin host entirely. A nil pointer (the field
 	// omitted from config) means "use the default" — see PluginsEnabled.
 	Enabled *bool `toml:"enabled"`
-	// Sandbox, when true, restricts the Lua stdlib exposed to scripts.
-	// Single-user defaults to false (full stdlib) but the load is logged.
-	// TODO(multi-user): default to true and back with a WASM host.
-	Sandbox bool `toml:"sandbox"`
+	// Sandbox restricts the Lua stdlib exposed to scripts. A nil pointer
+	// (the field omitted) means "use the default" — see PluginSandbox,
+	// which defaults to sandboxed (true). Multi-user mode is always
+	// sandboxed regardless of this value.
+	// TODO(multi-user): back the sandbox with a WASM host.
+	Sandbox *bool `toml:"sandbox"`
 	// Settings holds arbitrary per-plugin configuration tables, keyed by
 	// script name. Exposed read-only to scripts via stugan.config.
 	Settings map[string]map[string]any `toml:"settings"`

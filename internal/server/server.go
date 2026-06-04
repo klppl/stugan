@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -88,6 +89,7 @@ type Options struct {
 	Logger         *slog.Logger
 	ServerName     string
 	OriginPatterns []string
+	TrustedProxies []string
 	StaticDir      string
 	UploadDir      string
 	MaxUpload      int64
@@ -102,14 +104,15 @@ type Options struct {
 
 // Server bridges per-user engines to WebSocket clients.
 type Server struct {
-	hub        Hub
-	log        *slog.Logger
-	serverName string
-	origins    []string
-	staticDir  string
-	uploadDir  string
-	maxUpload  int64
-	push       *pushManager
+	hub            Hub
+	log            *slog.Logger
+	serverName     string
+	origins        []string
+	trustedProxies []*net.IPNet
+	staticDir      string
+	uploadDir      string
+	maxUpload      int64
+	push           *pushManager
 
 	// magicHash and magicSessions implement the outer site-wide
 	// password gate. magicHash is empty when the gate is disabled.
@@ -147,17 +150,18 @@ func New(hub Hub, opts Options) *Server {
 		log.Warn("web push disabled", "err", err)
 	}
 	s := &Server{
-		hub:        hub,
-		log:        log,
-		serverName: name,
-		origins:    origins,
-		staticDir:  opts.StaticDir,
-		uploadDir:  opts.UploadDir,
-		maxUpload:  maxUpload,
-		push:       push,
-		magicHash:  opts.MagicWordHash,
-		authLimit:  newAuthRateLimit(60*time.Second, 8),
-		clients:    map[string]map[*client]struct{}{},
+		hub:            hub,
+		log:            log,
+		serverName:     name,
+		origins:        origins,
+		trustedProxies: parseTrustedProxies(opts.TrustedProxies),
+		staticDir:      opts.StaticDir,
+		uploadDir:      opts.UploadDir,
+		maxUpload:      maxUpload,
+		push:           push,
+		magicHash:      opts.MagicWordHash,
+		authLimit:      newAuthRateLimit(60*time.Second, 8),
+		clients:        map[string]map[*client]struct{}{},
 	}
 	if s.magicHash != "" {
 		s.magicSessions = auth.NewSessions(magicWordTTL)
@@ -325,7 +329,7 @@ func (s *Server) handleMagicWord(w http.ResponseWriter, r *http.Request) {
 	if !requirePost(w, r) {
 		return
 	}
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if !s.authLimit.allow(ip) {
 		http.Error(w, "too many attempts; try again later", http.StatusTooManyRequests)
 		return
@@ -369,7 +373,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !requirePost(w, r) {
 		return
 	}
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if !s.authLimit.allow(ip) {
 		http.Error(w, "too many attempts; try again later", http.StatusTooManyRequests)
 		return
@@ -491,6 +495,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	c.user = userID
 	c.tenant = tenant
 	go c.writePump(ctx)
+	go c.pingLoop(ctx, cancel)
 
 	hello, _ := proto.Frame(proto.THello, proto.Hello{Protocol: proto.Protocol, Server: s.serverName, Caps: s.caps()})
 	state := toInitState(tenant.Engine.Snapshot())
@@ -708,6 +713,12 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		reqHandle(c, env, "buf:reorder requires network and buffers",
 			func(d proto.BufReorder) bool { return d.Network != "" },
 			func(d proto.BufReorder) error { return c.tenant.Engine.ReorderBuffers(d.Network, d.Buffers) })
+
+	case proto.TPing:
+		// App-level liveness probe. The client can't see protocol pongs from
+		// JS, so it sends this frame and reconnects if no reply arrives; echo a
+		// correlated pong straight back.
+		s.reply(c, env.ID, proto.TPong, struct{}{})
 
 	default:
 		s.log.Debug("ignoring unknown frame", "t", env.T)

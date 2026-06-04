@@ -143,6 +143,40 @@ func TestWebSocketLoop(t *testing.T) {
 	}
 }
 
+// TestPingPong checks the app-level liveness frame: a client ping is answered
+// with a pong, which is how the browser confirms a possibly-half-open socket is
+// still alive (it can't see protocol-level pings from JS).
+func TestPingPong(t *testing.T) {
+	eng := core.New(core.Options{Sink: noopSink{}})
+	srv := New(SingleUser(&Tenant{Engine: eng}), Options{})
+	eng.AddSink(srv.Sink(defaultUser))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = eng.Run(ctx) }()
+
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http") + "/ws"
+
+	ws, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer ws.CloseNow()
+
+	readFrame(t, ctx, ws) // hello
+	readFrame(t, ctx, ws) // init
+
+	ping, _ := proto.Frame(proto.TPing, struct{}{})
+	if err := wsjson.Write(ctx, ws, ping); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+	if env := readFrame(t, ctx, ws); env.T != proto.TPong {
+		t.Fatalf("frame = %q, want pong", env.T)
+	}
+}
+
 func TestBacklogReplay(t *testing.T) {
 	hist := &fakeHistory{
 		msgs: []core.Message{

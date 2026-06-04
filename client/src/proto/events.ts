@@ -22,6 +22,7 @@ export const T = {
   PluginList: "plugin:list",
   CompleteRes: "complete:res",
   Highlight: "highlight",
+  Pong: "pong",
   Error: "error",
   MsgSend: "msg:send",
   CompleteReq: "complete:req",
@@ -38,6 +39,7 @@ export const T = {
   Mute: "mute",
   BufClose: "buf:close",
   BufReorder: "buf:reorder",
+  Ping: "ping",
 } as const;
 
 export interface Envelope<D = unknown> {
