@@ -229,16 +229,18 @@ FiSH-style Blowfish-CBC encryption for IRC.
 - **Per-call timeout:** hook invocations run with a context deadline; a hook
   that exceeds it is interrupted (gopher-lua `LState` context cancellation)
   and the script flagged. Protects the single plugin goroutine.
-- **Sandboxing:** `[plugins].sandbox` knob. `false` (single-user default):
-  full Lua stdlib, but each load is logged at WARN noting full-stdlib access.
-  `true`: a restricted environment that removes the globals `io`, `package`,
-  `require`, `load`, `loadstring`, `loadfile`, `dofile`, and the
+- **Sandboxing:** `[plugins].sandbox` knob, **default `true`**. The sandbox is
+  a restricted environment that removes the globals `io`, `package`, `require`,
+  `load`, `loadstring`, `loadfile`, `dofile`, `debug`, and the
   process-affecting `os.*` functions (`execute`, `exit`, `remove`, `rename`,
-  `setenv`, `tmpname`, `getenv`). The rest of the Lua stdlib stays available.
-  > TODO(multi-user): in multi-user mode sandbox defaults to `true`; for
-  > hard isolation, a WASM host (wazero) implements the same `PluginHost`
-  > interface — no API changes for script authors using the documented
-  > surface.
+  `setenv`, `tmpname`, `getenv`). The rest of the Lua stdlib stays available
+  (`os.time`/`os.date`, `string`, `table`, `math`, …). Multi-user mode is
+  **always** sandboxed regardless of the knob — tenants share the process.
+  Single-user mode may set `sandbox = false` to opt into the full stdlib for
+  its own trusted local scripts; each unsandboxed load is logged.
+  > TODO(multi-user): for hard isolation, a WASM host (wazero) implements the
+  > same `PluginHost` interface — no API changes for script authors using the
+  > documented surface.
 
 ## 3.8 Worked examples (shipped in docs/examples/)
 
@@ -361,10 +363,11 @@ ignore list.
 4. The KV store is per-script, SQLite-backed (`plugin_kv` table), and
    survives both hot-reload and daemon restart. The host caches values in
    memory for fast access and writes through on every set/delete.
-5. The sandbox (`[plugins].sandbox = true`) removes `io`, `package`,
-   `require`, `dofile`, `loadfile`, `load`, and the process-affecting `os.*`
-   functions (`execute`, `exit`, `remove`, `rename`, `getenv`, …). It
-   defaults to `false` (full stdlib) for single-user, logged on load.
+5. The sandbox (`[plugins].sandbox`, default `true`) removes `io`, `package`,
+   `require`, `dofile`, `loadfile`, `load`, `debug`, and the process-affecting
+   `os.*` functions (`execute`, `exit`, `remove`, `rename`, `getenv`, …).
+   Always on in multi-user; single-user may set `false` for the full stdlib
+   (logged on load).
 
 ## 3.10 Built-in commands
 

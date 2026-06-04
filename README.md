@@ -65,7 +65,7 @@ Config, history, scripts, and uploads live in the `/data` volume. Put a
 `config.toml` there with `listen = "0.0.0.0:8080"`; set `public_url` /
 `origin_patterns` when serving from a non-localhost host. See
 [docs/docker.md](docs/docker.md) for the full run guide (compose, reverse
-proxy + TLS, auth, updates). The image is built and published by
+proxy + TLS, `trusted_proxies` for login throttling, auth, updates). The image is built and published by
 `.github/workflows/docker.yml`.
 
 ## Configuration

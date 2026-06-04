@@ -14,7 +14,7 @@ const defaultPriority = 500
 func (h *Host) newState() *lua.LState {
 	L := lua.NewState()
 	if h.sandbox {
-		for _, g := range []string{"dofile", "loadfile", "load", "loadstring", "require", "io", "package"} {
+		for _, g := range []string{"dofile", "loadfile", "load", "loadstring", "require", "io", "package", "debug"} {
 			L.SetGlobal(g, lua.LNil)
 		}
 		if osT, ok := L.GetGlobal("os").(*lua.LTable); ok {

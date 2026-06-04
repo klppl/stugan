@@ -107,6 +107,7 @@ func run() error {
 		ServerName:     "stugan/" + version(),
 		StaticDir:      cfg.Server.StaticDir,
 		OriginPatterns: cfg.Server.OriginPatterns,
+		TrustedProxies: cfg.Server.TrustedProxies,
 		UploadDir:      filepath.Join(cfg.DataDir(), "uploads"),
 		PushDir:        filepath.Join(cfg.DataDir(), "push"),
 		MagicWordHash:  magicHash,

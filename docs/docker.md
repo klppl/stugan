@@ -142,6 +142,30 @@ location / {
 With a proxy on the same host you can drop the public port mapping and bind the
 container to localhost instead: `-p 127.0.0.1:8080:8080`.
 
+### Set `trusted_proxies` so login throttling works
+
+Behind any proxy the daemon sees every request coming from the proxy's address,
+not the visitor's. The auth rate-limiter keys on that address, so without
+configuration a handful of failed logins from *anyone* throttles the login
+endpoints for *everyone*. Tell stugan which peers are proxies so it reads the
+real client IP from `CF-Connecting-IP` / `X-Forwarded-For` instead:
+
+```toml
+[server]
+trusted_proxies = ["127.0.0.1/32", "::1/128"]   # same-host proxy / cloudflared
+```
+
+- **Cloudflare Tunnel** (`cloudflared` → the container): the peer is loopback,
+  so `["127.0.0.1/32", "::1/128"]` is exactly right; the visitor IP comes from
+  `CF-Connecting-IP`.
+- **Same-host nginx/Caddy**: same loopback values.
+- **Cloudflare proxying straight to a public origin** (no local proxy): set this
+  to Cloudflare's [published IP ranges](https://www.cloudflare.com/ips/) instead.
+
+It is **not** an environment variable — like all non-secret settings it lives in
+`config.toml` in the `/data` volume. Forwarded headers are ignored from any peer
+not listed here, so an attacker hitting the origin directly can't spoof them.
+
 ## Authentication
 
 **Site-wide password gate** — a single shared password in front of everything,

@@ -107,6 +107,12 @@ hash for a `[[users]]` `password_hash`).
 - **Rate limiting.** `/api/login` and `/api/magicword` are limited per source
   IP (a sliding window, ~8 fails/minute); failures answer after a short delay.
   The login/magic-word forms carry honeypot inputs that trip form-filling bots.
+  The source IP is the direct peer (`RemoteAddr`) unless that peer is listed in
+  `server.trusted_proxies`, in which case the real client is taken from
+  `CF-Connecting-IP` / `X-Forwarded-For` — set this behind any reverse proxy
+  (incl. Cloudflare Tunnel) so the limiter keys per visitor rather than
+  collapsing every request onto the proxy's address. Untrusted peers' forwarded
+  headers are ignored, so they can't be spoofed to dodge the limit.
 - **SSRF guard.** `/api/preview` and `/api/proxy` use a guarded dialer that
   refuses private/loopback/link-local addresses, an 8s timeout, a redirect cap,
   and a response size cap (~10 MB for the proxy).

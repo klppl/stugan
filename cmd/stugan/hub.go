@@ -129,8 +129,9 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 		h.sessions = auth.NewSessions(time.Duration(h.sessMaxAge) * time.Second)
 	}
 
-	// Plugins are sandboxed by default once auth (multi-user) is on.
-	sandbox := cfg.Plugins.Sandbox || h.authEnabled
+	// Plugins are sandboxed by default; multi-user is always sandboxed and
+	// single-user can opt out with `sandbox = false` (see PluginSandbox).
+	sandbox := cfg.PluginSandbox()
 
 	for _, u := range cfg.EffectiveUsers() {
 		dataDir, scriptsDir := userDirs(cfg, u.Name)

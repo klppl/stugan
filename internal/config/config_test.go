@@ -99,3 +99,28 @@ func TestHomeResolution(t *testing.T) {
 		t.Errorf("Home with XDG = %q", got)
 	}
 }
+
+func TestPluginSandbox(t *testing.T) {
+	tru, fls := true, false
+	tests := []struct {
+		name  string
+		users []UserConfig
+		set   *bool
+		want  bool
+	}{
+		{"single-user default on", nil, nil, true},
+		{"single-user explicit off", nil, &fls, false},
+		{"single-user explicit on", nil, &tru, true},
+		{"multi-user forced on despite off", []UserConfig{{Name: "a", PasswordHash: "x"}}, &fls, true},
+		{"multi-user default on", []UserConfig{{Name: "a", PasswordHash: "x"}}, nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Config{Users: tt.users}
+			c.Plugins.Sandbox = tt.set
+			if got := c.PluginSandbox(); got != tt.want {
+				t.Errorf("PluginSandbox() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
