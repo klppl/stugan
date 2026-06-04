@@ -33,6 +33,7 @@ const (
 	TPluginList   = "plugin:list"   // s2c (answers c2s plugin:list/plugin:action)
 	TCompleteRes  = "complete:res"  // s2c (answers c2s complete:req)
 	THighlight    = "highlight"     // s2c (current rules; answers highlight:set)
+	TPong         = "pong"          // s2c (answers c2s ping; app-level liveness)
 	TError        = "error"         // s2c
 
 	TMsgSend      = "msg:send"      // c2s
@@ -50,6 +51,7 @@ const (
 	TMute         = "mute"          // c2s set intent; s2c absolute state broadcast to the user's tabs
 	TBufClose     = "buf:close"     // c2s — close/remove a query buffer from state
 	TBufReorder   = "buf:reorder"   // c2s — manual buffer order within a network
+	TPing         = "ping"          // c2s — app-level liveness probe; answered with pong
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -433,6 +435,13 @@ type BufClose struct {
 	Network string `json:"network"`
 	Buffer  string `json:"buffer"`
 }
+
+// Ping (c2s) and Pong (s2c) are payloadless liveness frames: the browser's
+// WebSocket API can't surface protocol-level ping/pong to JS, so the client
+// probes a possibly half-open socket by sending a ping and watching for any
+// reply. The server answers every ping with a pong; there is no struct to
+// decode. (This is independent of the server's own protocol-level Ping, which
+// detects a dead browser from the server side.)
 
 // WireError is a server→client error, correlated to a request id when set
 // on the Envelope.
