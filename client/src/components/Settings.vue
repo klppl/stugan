@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 import { settings, themeNames, installTheme, uninstallTheme, TEMPLATE } from "../settings";
 import { connection } from "../connection";
-import type { PluginInfo } from "../proto/events";
+import type { PluginInfo, PluginSetting } from "../proto/events";
 import { enablePush } from "../pwa";
 import { authState, logout } from "../auth";
 
@@ -29,6 +29,14 @@ function summary(p: PluginInfo): string {
   if (p.commands?.length) parts.push(p.commands.map((c) => "/" + c).join(" "));
   if (p.hooks) parts.push(`${p.hooks} hook${p.hooks === 1 ? "" : "s"}`);
   return parts.join(" · ") || "no commands or hooks";
+}
+
+// Which plugin's settings form is expanded (one at a time). Settings are
+// declared by the script via stugan.setting() and arrive on each PluginInfo.
+const openPlugin = ref<string | null>(null);
+function setSetting(p: PluginInfo, st: PluginSetting, value: string) {
+  if (st.secret && value === "") return; // blank password field = leave unchanged
+  connection.setPluginSetting(p.name, st.name, value);
 }
 
 // Theme installer state.
@@ -203,11 +211,44 @@ async function enableNotifications() {
             <span v-else-if="p.loaded" class="plugin-badge on">loaded</span>
             <span v-else class="plugin-badge off">off</span>
             <span class="spacer" />
+            <button
+              v-if="p.loaded && p.settings?.length"
+              class="link"
+              @click="openPlugin = openPlugin === p.name ? null : p.name"
+            >
+              {{ openPlugin === p.name ? "close" : "configure" }}
+            </button>
             <button v-if="p.loaded" class="link" @click="connection.pluginAction(p.name, 'reload')">reload</button>
             <button v-if="p.loaded" class="link" @click="connection.pluginAction(p.name, 'unload')">unload</button>
             <button v-else class="link" @click="connection.pluginAction(p.name, 'load')">load</button>
           </div>
           <p class="plugin-desc">{{ summary(p) }}</p>
+
+          <!-- Per-plugin settings form, populated from stugan.setting()
+               declarations. A change is sent immediately; the server replies
+               with a refreshed list so values stay in sync. -->
+          <div v-if="openPlugin === p.name && p.settings?.length" class="plugin-settings">
+            <div v-for="st in p.settings" :key="st.name" class="plugin-setting">
+              <label :for="`set-${p.name}-${st.name}`">{{ st.label || st.name }}</label>
+              <select
+                v-if="st.type === 'select'"
+                :id="`set-${p.name}-${st.name}`"
+                :value="st.value"
+                @change="setSetting(p, st, ($event.target as HTMLSelectElement).value)"
+              >
+                <option v-for="opt in st.options" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+              <input
+                v-else
+                :id="`set-${p.name}-${st.name}`"
+                :type="st.secret ? 'password' : st.type === 'number' ? 'number' : 'text'"
+                :value="st.value"
+                :placeholder="st.secret ? 'unchanged' : (st.default ?? '')"
+                @change="setSetting(p, st, ($event.target as HTMLInputElement).value)"
+              />
+              <span v-if="st.help" class="setting-help">{{ st.help }}</span>
+            </div>
+          </div>
         </div>
         <p class="hint">
           Scripts live in your <code>scripts/</code> directory. A plugin can

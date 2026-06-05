@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -93,11 +94,25 @@ type Host struct {
 
 type script struct {
 	name     string
-	path     string // source file, for reload
-	desc     string // set by stugan.describe()
+	path     string         // source file, for reload
+	desc     string         // set by stugan.describe()
+	settings []*settingDecl // declared via stugan.setting(), in declaration order
 	L        *lua.LState
 	errs     int
 	disabled bool
+}
+
+// settingDecl is one stugan.setting() declaration: metadata for the management
+// UI plus an optional apply callback the host runs when the value changes.
+type settingDecl struct {
+	name    string
+	typ     string // "text" | "number" | "select"
+	label   string
+	help    string
+	def     string
+	secret  bool
+	options []string
+	apply   *lua.LFunction // optional; called with the (string) value on change
 }
 
 type hook struct {
@@ -221,6 +236,7 @@ func (h *Host) Plugins() []core.PluginInfo {
 				Errors:      s.errs,
 				Commands:    h.commandsFor(s),
 				Hooks:       h.hookCount(s),
+				Settings:    h.settingsFor(s),
 			})
 		}
 		// Unloaded files on disk: present but not running.
@@ -286,6 +302,120 @@ func (h *Host) hookCount(s *script) int {
 		}
 	}
 	return n
+}
+
+// kvCache returns script s's in-memory kv map, lazy-filling it from the
+// backing store on first touch (plugin goroutine). Shared by the stugan.kv
+// bindings and the settings machinery so they see one coherent cache.
+func (h *Host) kvCache(s *script) map[string]string {
+	if h.kv[s.name] == nil {
+		if h.kvStore != nil {
+			h.kv[s.name] = h.kvStore.GetAll(s.name)
+		} else {
+			h.kv[s.name] = map[string]string{}
+		}
+	}
+	return h.kv[s.name]
+}
+
+// kvGet/kvSet are the Go-side equivalents of stugan.kv.get/set, writing
+// through to the backing store and keeping the cache coherent.
+func (h *Host) kvGet(s *script, key string) (string, bool) {
+	v, ok := h.kvCache(s)[key]
+	return v, ok
+}
+
+func (h *Host) kvSet(s *script, key, val string) {
+	h.kvCache(s)[key] = val
+	if h.kvStore != nil {
+		if err := h.kvStore.Set(s.name, key, val); err != nil {
+			h.log.Warn("plugin kv set persist", "script", s.name, "err", err)
+		}
+	}
+}
+
+// settingValue is a setting's current effective value: the kv override if set,
+// otherwise the declared default.
+func (h *Host) settingValue(s *script, d *settingDecl) string {
+	if v, ok := h.kvGet(s, d.name); ok {
+		return v
+	}
+	return d.def
+}
+
+// settingsFor projects a script's declared settings for the management UI.
+// Secret values are withheld (Value left blank). Plugin goroutine.
+func (h *Host) settingsFor(s *script) []core.PluginSetting {
+	if len(s.settings) == 0 {
+		return nil
+	}
+	out := make([]core.PluginSetting, 0, len(s.settings))
+	for _, d := range s.settings {
+		ps := core.PluginSetting{
+			Name: d.name, Type: d.typ, Label: d.label, Help: d.help,
+			Default: d.def, Secret: d.secret, Options: d.options,
+		}
+		if !d.secret {
+			ps.Value = h.settingValue(s, d)
+		}
+		out = append(out, ps)
+	}
+	return out
+}
+
+// SetPluginSetting implements core.PluginHost. It validates value against the
+// named setting's type, persists it to the script's kv, and runs the setting's
+// apply callback — all on the plugin goroutine so the cache stays coherent.
+func (h *Host) SetPluginSetting(script, key, value string) error {
+	var rerr error
+	h.do(func() {
+		s := h.scripts[script]
+		if s == nil {
+			rerr = fmt.Errorf("plugin %q is not loaded", script)
+			return
+		}
+		var d *settingDecl
+		for _, x := range s.settings {
+			if x.name == key {
+				d = x
+				break
+			}
+		}
+		if d == nil {
+			rerr = fmt.Errorf("plugin %q has no setting %q", script, key)
+			return
+		}
+		v, err := coerceSetting(d, value)
+		if err != nil {
+			rerr = err
+			return
+		}
+		h.kvSet(s, key, v)
+		if d.apply != nil {
+			h.call(s, d.apply, func(L *lua.LState) { L.Push(lua.LString(v)) }, 0)
+		}
+	})
+	return rerr
+}
+
+// coerceSetting validates and normalizes a raw value against a setting's type.
+func coerceSetting(d *settingDecl, value string) (string, error) {
+	switch d.typ {
+	case "number":
+		if _, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err != nil {
+			return "", fmt.Errorf("setting %q expects a number, got %q", d.name, value)
+		}
+		return strings.TrimSpace(value), nil
+	case "select":
+		for _, opt := range d.options {
+			if value == opt {
+				return value, nil
+			}
+		}
+		return "", fmt.Errorf("setting %q must be one of %v, got %q", d.name, d.options, value)
+	default: // "text" and anything unknown
+		return value, nil
+	}
 }
 
 // LoadPlugin loads (or reloads) the named script from the scripts dir.

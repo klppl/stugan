@@ -8,7 +8,11 @@
 stugan.describe("Auto-reply 'pong' when a trigger word is mentioned (/hlreply)")
 
 local DEFAULT_WORD = "ping"
-local word = stugan.kv.get("word") or DEFAULT_WORD
+local word
+local function apply_word(v) word = (v or ""):lower() end
+apply_word(stugan.setting("word", {
+  default = DEFAULT_WORD, label = "Trigger word", apply = apply_word,
+}))
 
 stugan.hook_message(function(msg)
   if msg.kind == "privmsg" and not msg.self
@@ -25,11 +29,11 @@ stugan.hook_command("hlreply", function(args, ctx)
   end
   if args[1]:lower() == "default" then
     stugan.kv.delete("word")
-    word = DEFAULT_WORD
+    apply_word(DEFAULT_WORD)
     stugan.print(ctx, "hlreply: reset to '" .. word .. "'")
     return
   end
-  word = args[1]:lower()
-  stugan.kv.set("word", word)
+  stugan.kv.set("word", args[1]:lower())
+  apply_word(args[1])
   stugan.print(ctx, "hlreply: trigger word is now '" .. word .. "'")
 end)

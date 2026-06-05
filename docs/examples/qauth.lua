@@ -50,6 +50,18 @@ local function hidehost_enabled()
   return stugan.kv.get("hidehost") ~= "off" -- on unless set to off
 end
 
+-- Declared for the GUI form. Both are read live (above), so no apply callback
+-- is needed. The credentials are deliberately NOT settings — they're set per
+-- network with /qauth set and never exposed to the form.
+stugan.setting("method", {
+  type = "select", options = { "challenge", "plain" }, default = "challenge",
+  label = "Auth method", help = "challenge never sends your password",
+})
+stugan.setting("hidehost", {
+  type = "select", options = { "on", "off" }, default = "on",
+  label = "Hide host (+x after login)",
+})
+
 -- Raw PRIVMSG to Q with no local echo, so the password is never shown.
 local function toq(network, text)
   stugan.send(network, "PRIVMSG " .. Q .. " :" .. text)

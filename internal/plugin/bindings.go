@@ -261,6 +261,46 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 		return 0
 	}))
 
+	// setting(name, opts) declares a configurable value for the management
+	// UI's per-plugin form. opts: {type="text"|"number"|"select", default,
+	// label, help, secret, options={...}, apply=function(value) ... end}.
+	// It records the declaration and returns the current value (kv override
+	// or default) so a script can initialize itself in one line; apply is run
+	// by the host on later changes from the UI. We do NOT invoke apply here —
+	// that would be a reentrant PCall during script load and corrupt the
+	// load's context.
+	t.RawSetString("setting", s.L.NewFunction(func(L *lua.LState) int {
+		name := L.CheckString(1)
+		opts, _ := L.Get(2).(*lua.LTable)
+		d := &settingDecl{name: name, typ: "text", label: name}
+		if opts != nil {
+			if v, ok := opts.RawGetString("type").(lua.LString); ok && v != "" {
+				d.typ = string(v)
+			}
+			if v, ok := opts.RawGetString("label").(lua.LString); ok && v != "" {
+				d.label = string(v)
+			}
+			if v, ok := opts.RawGetString("help").(lua.LString); ok {
+				d.help = string(v)
+			}
+			if v := opts.RawGetString("default"); v != lua.LNil {
+				d.def = L.ToStringMeta(v).String()
+			}
+			if v, ok := opts.RawGetString("secret").(lua.LBool); ok {
+				d.secret = bool(v)
+			}
+			if ov, ok := opts.RawGetString("options").(*lua.LTable); ok {
+				ov.ForEach(func(_, val lua.LValue) { d.options = append(d.options, val.String()) })
+			}
+			if fn, ok := opts.RawGetString("apply").(*lua.LFunction); ok {
+				d.apply = fn
+			}
+		}
+		s.settings = append(s.settings, d)
+		L.Push(lua.LString(h.settingValue(s, d)))
+		return 1
+	}))
+
 	return t
 }
 
@@ -326,25 +366,9 @@ func (h *Host) buildKV(s *script) *lua.LTable {
 	// preload at host startup would race the LStates that haven't run yet
 	// — this way each script sees its own persisted values the first time
 	// it touches kv, regardless of load order.
-	store := func() map[string]string {
-		if h.kv[s.name] == nil {
-			if h.kvStore != nil {
-				h.kv[s.name] = h.kvStore.GetAll(s.name)
-			} else {
-				h.kv[s.name] = map[string]string{}
-			}
-		}
-		return h.kv[s.name]
-	}
+	store := func() map[string]string { return h.kvCache(s) }
 	kv.RawSetString("set", s.L.NewFunction(func(L *lua.LState) int {
-		key := L.CheckString(1)
-		val := L.ToStringMeta(L.Get(2)).String()
-		store()[key] = val
-		if h.kvStore != nil {
-			if err := h.kvStore.Set(s.name, key, val); err != nil {
-				h.log.Warn("plugin kv set persist", "script", s.name, "err", err)
-			}
-		}
+		h.kvSet(s, L.CheckString(1), L.ToStringMeta(L.Get(2)).String())
 		return 0
 	}))
 	kv.RawSetString("get", s.L.NewFunction(func(L *lua.LState) int {

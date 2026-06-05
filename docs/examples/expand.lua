@@ -27,7 +27,12 @@ local function set_prefix(p)
   PFX = p
   PAT = p:gsub("(%W)", "%%%1") .. "([%w_]+)"
 end
-set_prefix(stugan.kv.get(".prefix") or ";")
+-- Declared as a setting (apply rebuilds the pattern on change); stored under
+-- ".prefix" so it stays out of the expansion namespace.
+set_prefix(stugan.setting(".prefix", {
+  default = ";", label = "Trigger prefix", help = "a single punctuation character",
+  apply = set_prefix,
+}))
 
 local BUILTIN = {
   shrug = [[¯\_(ツ)_/¯]],

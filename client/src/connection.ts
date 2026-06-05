@@ -26,6 +26,7 @@ import {
   type PluginInfo,
   type PluginListResp,
   type PluginAction,
+  type PluginSettingReq,
   type CompleteReq,
   type CompleteRes,
   type NetworkDTO,
@@ -1105,6 +1106,13 @@ export class Connection {
   // replies with a refreshed plugin:list, so the UI updates itself.
   pluginAction(name: string, action: PluginAction["action"]) {
     this.sendFrame<PluginAction>(T.PluginAction, { name, action });
+  }
+
+  // setPluginSetting changes one declared setting of a loaded plugin. The
+  // server validates it, persists it, runs the plugin's apply callback, and
+  // replies with a refreshed plugin:list so the form reflects the new value.
+  setPluginSetting(name: string, key: string, value: string) {
+    this.sendFrame<PluginSettingReq>(T.PluginSet, { name, key, value });
   }
 
   // desktopNotify shows a desktop notification for a highlight when the tab

@@ -253,6 +253,9 @@ func (e *Engine) Complete(network, buffer, word string) []string {
 func (e *Engine) LoadPlugin(name string) error   { return e.host.LoadPlugin(name) }
 func (e *Engine) UnloadPlugin(name string) error { return e.host.UnloadPlugin(name) }
 func (e *Engine) ReloadPlugin(name string) error { return e.host.ReloadPlugin(name) }
+func (e *Engine) SetPluginSetting(script, key, value string) error {
+	return e.host.SetPluginSetting(script, key, value)
+}
 
 // AddNetwork registers a pre-built connection and its initial state. Call
 // before Run (used for networks loaded at startup).

@@ -478,6 +478,92 @@ func TestPluginKVPersistsAcrossHosts(t *testing.T) {
 	}
 }
 
+func TestPluginSettings(t *testing.T) {
+	api := &fakeAPI{nickVal: "me"}
+	h := newHost(t, api, map[string]string{
+		"s.lua": `
+			local applied = "?"
+			local function apply_n(v) applied = "n=" .. v end
+			apply_n(stugan.setting("count", { type = "number", default = 3, label = "Count", help = "how many", apply = apply_n }))
+			stugan.setting("mode", { type = "select", options = { "a", "b" }, default = "a", label = "Mode" })
+			stugan.setting("token", { type = "text", default = "sekret", secret = true })
+			stugan.hook_command("show", function(_, ctx) stugan.print(ctx, applied) end)
+		`,
+	}, nil)
+
+	smap := func() map[string]core.PluginSetting {
+		for _, p := range h.Plugins() {
+			if p.Name == "s" {
+				m := map[string]core.PluginSetting{}
+				for _, s := range p.Settings {
+					m[s.Name] = s
+				}
+				return m
+			}
+		}
+		t.Fatal("script s not found")
+		return nil
+	}
+
+	// Declared metadata and default values.
+	m := smap()
+	if len(m) != 3 {
+		t.Fatalf("settings: got %d, want 3 (%+v)", len(m), m)
+	}
+	if s := m["count"]; s.Type != "number" || s.Default != "3" || s.Value != "3" || s.Label != "Count" || s.Help != "how many" {
+		t.Fatalf("count setting wrong: %+v", s)
+	}
+	if s := m["mode"]; s.Type != "select" || len(s.Options) != 2 || s.Options[0] != "a" || s.Value != "a" {
+		t.Fatalf("mode setting wrong: %+v", s)
+	}
+	// A secret value is withheld even though a default was declared.
+	if s := m["token"]; !s.Secret || s.Value != "" {
+		t.Fatalf("token secret not withheld: %+v", s)
+	}
+
+	// The script initialized its own state from the setting's return value.
+	showApplied := func() string {
+		api.prints = nil
+		h.Dispatch(context.Background(), core.Event{Type: core.EvCommand, Network: "n", Buffer: "#c", Command: "show"})
+		if len(api.prints) != 1 {
+			t.Fatalf("show: prints=%v", api.prints)
+		}
+		return api.prints[0][2]
+	}
+	if got := showApplied(); got != "n=3" {
+		t.Fatalf("initial apply: got %q want n=3", got)
+	}
+
+	// A valid change persists and runs the apply callback.
+	if err := h.SetPluginSetting("s", "count", "7"); err != nil {
+		t.Fatalf("set count: %v", err)
+	}
+	if v := smap()["count"].Value; v != "7" {
+		t.Fatalf("count value after set: %q", v)
+	}
+	if got := showApplied(); got != "n=7" {
+		t.Fatalf("apply after set: got %q want n=7", got)
+	}
+
+	// Validation: non-number, bad select option, unknown setting, unknown script.
+	if err := h.SetPluginSetting("s", "count", "abc"); err == nil {
+		t.Fatal("expected error for non-number value")
+	}
+	if err := h.SetPluginSetting("s", "mode", "c"); err == nil {
+		t.Fatal("expected error for invalid select option")
+	}
+	if err := h.SetPluginSetting("s", "nope", "x"); err == nil {
+		t.Fatal("expected error for unknown setting")
+	}
+	if err := h.SetPluginSetting("nosuch", "count", "1"); err == nil {
+		t.Fatal("expected error for unknown script")
+	}
+	// A valid select option is accepted.
+	if err := h.SetPluginSetting("s", "mode", "b"); err != nil {
+		t.Fatalf("set mode b: %v", err)
+	}
+}
+
 func TestHookTimer(t *testing.T) {
 	api := &fakeAPI{}
 	newHost(t, api, map[string]string{
