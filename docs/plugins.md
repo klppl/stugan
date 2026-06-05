@@ -319,6 +319,30 @@ stugan.hook_timer(60 * 1000, function()
 end)
 ```
 
+### sed.lua — fix a typo in your last line
+
+The classic IRC affordance: after sending a message, type `s/teh/the/` to
+resend it corrected (`/g` for all occurrences, `/i` for case-insensitive,
+any punctuation as the delimiter). A `hook_input` remembers the last plain
+line per buffer; a substitution swallows the `s///` line and sends the fixed
+version in its place. Matching is **literal** (not Lua patterns) — what you
+want for typo fixes — and a line that doesn't apply is sent through unchanged.
+See `docs/examples/sed.lua`.
+
+### urls.lua — remember links posted in a buffer
+
+A persistent daemon is the right place to keep "what was that link from
+yesterday?" A `hook_message` scrapes http(s) URLs and keeps the last few per
+buffer in `stugan.kv` (so they survive restart); `/urls`, `/urls <n>`, and
+`/urls clear` recall or forget them. See `docs/examples/urls.lua`.
+
+### expand.lua — a text expander
+
+Type `;shrug` and it becomes `¯\_(ツ)_/¯` when the line is sent; triggers
+expand inline and tab-complete. A `hook_input` rewrites known triggers, a
+`hook_completion` offers their names, and `/exp` manages your own (persisted
+in `stugan.kv`, shadowing the built-ins). See `docs/examples/expand.lua`.
+
 ### fish.lua — FiSH-style Blowfish encryption
 
 A worked use of `stugan.crypto`. Implements the wire formats interoperable

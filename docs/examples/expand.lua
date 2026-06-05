@@ -1,0 +1,110 @@
+-- expand.lua — a text expander for chat.
+--
+-- Type a short trigger and it becomes the full text when you send the line:
+--   ;shrug      → ¯\_(ツ)_/¯
+--   ;tableflip  → (╯°□°)╯︵ ┻━┻
+-- Triggers expand anywhere in a line ("well ;shrug i guess"), and several
+-- can appear at once. Tab-completion offers the trigger names.
+--
+-- Define your own, persisted in stugan.kv across reloads and restarts:
+--   /exp                       list every trigger (yours + built-in)
+--   /exp brb back in a moment  define ;brb
+--   /exp del brb               remove it
+-- A custom trigger shadows a built-in of the same name.
+--
+-- Change the prefix in config.toml:
+--   [plugins.settings.expand]
+--   prefix = ";"
+
+stugan.describe("Text expander: ;shrug, ;tableflip, … ; manage with /exp")
+
+local PFX = stugan.config("prefix", ";")
+
+local BUILTIN = {
+  shrug = [[¯\_(ツ)_/¯]],
+  tableflip = "(╯°□°)╯︵ ┻━┻",
+  unflip = "┬─┬ ノ( ゜-゜ノ)",
+  lenny = "( ͡° ͜ʖ ͡°)",
+  disapprove = "ಠ_ಠ",
+  fingers = "┌( ಠ‿ಠ)┘",
+  why = "ლ(ಠ益ಠლ)",
+  facepalm = "(－‸ლ)",
+}
+
+-- A trigger name is a run of word characters after the prefix.
+local function lookup(name)
+  return stugan.kv.get(name) or BUILTIN[name]
+end
+
+-- pattern matches the (escaped) prefix followed by a name; the gsub callback
+-- returns nil for unknown names, which leaves the original text untouched.
+local PAT = PFX:gsub("(%W)", "%%%1") .. "([%w_]+)"
+
+stugan.hook_input(function(input, ctx)
+  if input == "" then return input end
+  return (input:gsub(PAT, function(name) return lookup(name) end))
+end)
+
+stugan.hook_completion(function(word, ctx)
+  if word:sub(1, #PFX) ~= PFX then return end
+  local frag = word:sub(#PFX + 1)
+  local out, seen = {}, {}
+  local function consider(name)
+    if not seen[name] and name:sub(1, #frag) == frag then
+      seen[name] = true
+      out[#out + 1] = PFX .. name
+    end
+  end
+  for k in pairs(stugan.kv.all()) do consider(k) end
+  for k in pairs(BUILTIN) do consider(k) end
+  return out
+end)
+
+stugan.hook_command("exp", function(args, ctx)
+  -- list
+  if #args == 0 then
+    local user = stugan.kv.all()
+    local names, seen = {}, {}
+    for k in pairs(user) do names[#names + 1] = k; seen[k] = true end
+    for k in pairs(BUILTIN) do if not seen[k] then names[#names + 1] = k end end
+    table.sort(names)
+    if #names == 0 then
+      stugan.print(ctx, "exp: no expansions defined")
+      return
+    end
+    stugan.print(ctx, "exp: expansions (prefix '" .. PFX .. "'):")
+    for _, n in ipairs(names) do
+      local tag = user[n] and "" or "  (built-in)"
+      stugan.print(ctx, "  " .. PFX .. n .. " → " .. (user[n] or BUILTIN[n]) .. tag)
+    end
+    return
+  end
+
+  -- delete
+  if args[1] == "del" then
+    local name = args[2]
+    if not name then
+      stugan.print(ctx, "usage: /exp del <name>")
+    elseif stugan.kv.get(name) then
+      stugan.kv.delete(name)
+      stugan.print(ctx, "exp: removed " .. PFX .. name)
+    else
+      stugan.print(ctx, "exp: no custom expansion " .. PFX .. name)
+    end
+    return
+  end
+
+  -- define
+  local name = args[1]
+  if not name:match("^[%w_]+$") then
+    stugan.print(ctx, "exp: name must be letters/digits/underscore")
+    return
+  end
+  if #args < 2 then
+    stugan.print(ctx, "usage: /exp <name> <text…>")
+    return
+  end
+  local value = table.concat(args, " ", 2)
+  stugan.kv.set(name, value)
+  stugan.print(ctx, "exp: " .. PFX .. name .. " → " .. value)
+end)
