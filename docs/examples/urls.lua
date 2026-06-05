@@ -9,15 +9,17 @@
 --   /urls <n>      list the last n
 --   /urls clear    forget them
 --
--- Configure the cap in config.toml:
---   [plugins.settings.urls]
---   max  = 50   -- links retained per buffer
---   show = 10   -- default number /urls prints
+-- Settings live inside stugan (persisted in kv) — no config.toml:
+--   /urls max <n>    links retained per buffer (default 50)
+--   /urls show <n>   default number /urls prints (default 10)
 
 stugan.describe("Remember links posted in a buffer (/urls, /urls clear)")
 
-local MAX = tonumber(stugan.config("max", 50)) or 50
-local SHOW = tonumber(stugan.config("show", 10)) or 10
+-- Setting keys have no tab, so they never collide with the per-buffer
+-- "network\tbuffer" list keys.
+local DEFAULT_MAX, DEFAULT_SHOW = 50, 10
+local function get_max() return tonumber(stugan.kv.get("max")) or DEFAULT_MAX end
+local function get_show() return tonumber(stugan.kv.get("show")) or DEFAULT_SHOW end
 
 -- One kv entry per (network, buffer): records joined by "\n", each record
 -- "epoch\tnick\turl". kv keys use \t, distinct from the field/record seps.
@@ -57,7 +59,7 @@ stugan.hook_message(function(msg)
       for _, u in ipairs(found) do
         list[#list + 1] = (msg.time or os.time()) .. "\t" .. who .. "\t" .. u
       end
-      while #list > MAX do table.remove(list, 1) end
+      while #list > get_max() do table.remove(list, 1) end
       stugan.kv.set(key(msg.network, msg.buffer), table.concat(list, "\n"))
     end
   end
@@ -74,8 +76,19 @@ stugan.hook_command("urls", function(args, ctx)
     stugan.print(ctx, "urls: cleared " .. ctx.buffer)
     return
   end
+  if args[1] == "max" or args[1] == "show" then
+    local n = tonumber(args[2])
+    if not n or n < 1 then
+      local cur = args[1] == "max" and get_max() or get_show()
+      stugan.print(ctx, "urls: " .. args[1] .. " = " .. cur .. "  (usage: /urls " .. args[1] .. " <n>)")
+    else
+      stugan.kv.set(args[1], n)
+      stugan.print(ctx, "urls: " .. args[1] .. " = " .. n)
+    end
+    return
+  end
 
-  local limit = tonumber(args[1]) or SHOW
+  local limit = tonumber(args[1]) or get_show()
   local list = load(ctx.network, ctx.buffer)
   if #list == 0 then
     stugan.print(ctx, "urls: none seen in " .. ctx.buffer)

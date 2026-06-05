@@ -345,7 +345,7 @@ func TestFishSplitsLongLines(t *testing.T) {
 	if !strings.HasPrefix(out.Message.Text, "+OK *") {
 		t.Fatalf("first chunk: got %q", out.Message.Text[:40])
 	}
-	// Other example scripts (auto_away.lua) may emit unrelated raw sends
+	// Other example scripts (away.lua) may emit unrelated raw sends
 	// from their timers — filter to PRIVMSGs into our buffer.
 	var extras [][2]string
 	for _, s := range api.sentRaw() {
