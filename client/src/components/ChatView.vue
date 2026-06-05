@@ -36,9 +36,10 @@ const buffer = computed(() => connection.activeBuffer());
 // compared against the row's message). null = no divider for this buffer.
 const markerMsg = computed(() => buffer.value?.unreadMarker ?? null);
 
-// unreadCount: how many messages sit from the divider down to the live tail —
-// the number shown in the jump bar. indexOf compares by reference, matching
-// how the divider itself is placed (r.msg === markerMsg).
+// unreadCount: total messages from the divider down to the live tail. Used as
+// the fallback count while the divider still sits above the loaded backlog.
+// indexOf compares by reference, matching how the divider itself is placed
+// (r.msg === markerMsg).
 const unreadCount = computed(() => {
   const m = markerMsg.value;
   const msgs = buffer.value?.messages;
@@ -52,34 +53,61 @@ const unreadCount = computed(() => {
 // acts on it (jump or dismiss) while the divider itself stays; a fresh marker
 // (new unread, or switching to another buffer's divider) re-shows it.
 const barHidden = ref(false);
-watch(markerMsg, () => (barHidden.value = false));
 
-// markerOffscreen tracks whether the "new messages" divider is actually out of
-// view — i.e. the user would have to scroll to reach it. The bar is only a
-// useful affordance in that case; when the divider (and the unread lines below
-// it) already fit on screen there's nothing to jump to, so we suppress it even
-// for a single new message. Recomputed on scroll and after every layout change.
-const markerOffscreen = ref(false);
-function updateMarkerOffscreen() {
-  const el = listEl.value;
-  if (!el || !markerMsg.value) {
-    markerOffscreen.value = false;
-    return;
-  }
+// remaining: how many unread lines still sit entirely above the viewport — the
+// number you'd scroll up past to reach the "new messages" divider, and the
+// figure shown in the jump bar. It counts down as you scroll up and those lines
+// come into view, and is *monotonic* for a given marker: scrolling back down
+// never resurrects already-read lines, so once it reaches zero the bar stays
+// gone. (The old behaviour gated visibility on the divider being off-screen,
+// which flipped back on every time the user scrolled past it again.) A fresh
+// marker restarts the countdown.
+const remaining = ref(0);
+let remainingReset = true;
+
+// liveUnseenAbove counts the unread rows (the .message elements after the
+// divider) whose bottom edge lies above the top of the scroll viewport, i.e.
+// not yet scrolled into view. The unread rows are contiguous and ordered top-
+// to-bottom, so we can stop at the first one that reaches into the viewport.
+// When the divider isn't rendered at all (it sits above the loaded backlog)
+// every unread line is still unseen, so fall back to the full count.
+function liveUnseenAbove(el: HTMLElement): number {
   const sep = el.querySelector(".unread-sep") as HTMLElement | null;
-  if (!sep) {
-    // Divider not rendered (e.g. it sits above the loaded backlog) → off-screen.
-    markerOffscreen.value = true;
-    return;
+  if (!sep) return unreadCount.value;
+  const viewTop = el.getBoundingClientRect().top;
+  let n = 0;
+  for (let node = sep.nextElementSibling; node; node = node.nextElementSibling) {
+    if (!node.classList.contains("message")) continue;
+    if (node.getBoundingClientRect().bottom <= viewTop) n++;
+    else break;
   }
-  const view = el.getBoundingClientRect();
-  const r = sep.getBoundingClientRect();
-  // Off-screen when the divider lies entirely above or below the viewport.
-  markerOffscreen.value = r.bottom <= view.top || r.top >= view.bottom;
+  return n;
 }
 
+// recomputeRemaining refreshes the countdown after any scroll or layout change.
+// On the first pass for a marker it takes the live figure as the starting
+// count; thereafter it only ever shrinks (Math.min), so reading-then-scrolling-
+// back-down can't bring the bar back.
+function recomputeRemaining() {
+  const el = listEl.value;
+  if (!el || !markerMsg.value) {
+    remaining.value = 0;
+    remainingReset = true;
+    return;
+  }
+  const live = liveUnseenAbove(el);
+  remaining.value = remainingReset ? live : Math.min(remaining.value, live);
+  remainingReset = false;
+}
+
+watch(markerMsg, () => {
+  barHidden.value = false;
+  remainingReset = true;
+  remaining.value = 0;
+});
+
 const showUnreadBar = computed(
-  () => !!markerMsg.value && unreadCount.value > 0 && !barHidden.value && markerOffscreen.value,
+  () => !!markerMsg.value && remaining.value > 0 && !barHidden.value,
 );
 
 // jumpToMarker scrolls the divider into view and releases stick-to-bottom so
@@ -224,7 +252,7 @@ function onScroll() {
     stick = false;
   }
   lastScrollTop = st;
-  updateMarkerOffscreen();
+  recomputeRemaining();
 }
 function scrollToBottom() {
   const el = listEl.value;
@@ -263,7 +291,7 @@ watch(
     } else if (stick) {
       scrollToBottom();
     }
-    updateMarkerOffscreen();
+    recomputeRemaining();
   },
 );
 watch(
@@ -276,14 +304,14 @@ watch(
       return;
     }
     scrollToBottom();
-    updateMarkerOffscreen();
+    recomputeRemaining();
   },
 );
 // A fresh marker (or its removal) may appear without a scroll or length change
 // — recompute once the divider has rendered so the bar's visibility is right.
 watch(markerMsg, async () => {
   await nextTick();
-  updateMarkerOffscreen();
+  recomputeRemaining();
 });
 
 // When a fresh jump is set up, the view/active/messages-length watchers
@@ -489,11 +517,11 @@ onMounted(() => {
   if ("ResizeObserver" in window) {
     contentRO = new ResizeObserver(() => {
       if (stick && !(store.jump && jumpMatchesActive())) scrollToBottom();
-      updateMarkerOffscreen();
+      recomputeRemaining();
     });
     if (contentEl.value) contentRO.observe(contentEl.value);
   }
-  updateMarkerOffscreen();
+  recomputeRemaining();
 });
 onUnmounted(() => {
   document.removeEventListener("keydown", onGlobalKeydown);
@@ -572,7 +600,7 @@ async function onDrop(e: DragEvent) {
         </div>
         <div v-if="showUnreadBar" class="unread-jump" role="status">
           <button type="button" class="unread-jump-go" @click="jumpToMarker">
-            ↑ {{ unreadCount }} new message{{ unreadCount === 1 ? "" : "s" }} — jump to first unread
+            ↑ {{ remaining }} new message{{ remaining === 1 ? "" : "s" }} — jump to first unread
           </button>
           <button type="button" class="unread-jump-x" aria-label="Dismiss" @click="dismissMarker">✕</button>
         </div>
