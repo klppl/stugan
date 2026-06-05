@@ -61,6 +61,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `net:info`      | (ref)          | request a network's full config |
 | `plugin:list`   | (none)         | request the plugin manager list |
 | `plugin:action` | `PluginAction` | load/unload/reload a plugin by name |
+| `plugin:setting`| `PluginSettingReq` | set one declared setting of a plugin (replies with `plugin:list`) |
 | `complete:req`  | `CompleteReq`  | ask plugins for tab-completion candidates (`seq`-correlated) |
 | `read`          | `ReadMark`     | mark a buffer read up to now (advances the persisted read marker) |
 | `highlight:set` | `HighlightRules` | replace the highlight ruleset (bad regex → `error`; success → `highlight` broadcast) |
@@ -144,11 +145,20 @@ type React  struct { Network, Buffer, Target, Nick, Reaction string }  // Target
 type Redact struct { Network, Buffer, Target, By, Reason string }
 
 type PluginAction struct { Name, Action string }   // Action: load|unload|reload
+type PluginSettingReq struct { Name, Key, Value string } // set Key=Value on plugin Name
+type PluginSetting struct {
+    Name, Type       string     // Type: text|number|select
+    Label, Help      string
+    Value, Default   string     // Value blank for Secret settings
+    Secret           bool
+    Options          []string   // allowed values when Type=="select"
+}
 type PluginInfo struct {
     Name, Description string
     Loaded, Disabled bool
     Errors, Hooks    int
-    Commands         []string   // /command names it registered
+    Commands         []string        // /command names it registered
+    Settings         []PluginSetting // values declared via stugan.setting()
 }
 type PluginListResp struct { Plugins []PluginInfo }
 

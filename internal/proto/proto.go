@@ -36,22 +36,23 @@ const (
 	TPong         = "pong"          // s2c (answers c2s ping; app-level liveness)
 	TError        = "error"         // s2c
 
-	TMsgSend      = "msg:send"      // c2s
-	TCompleteReq  = "complete:req"  // c2s — ask plugins for tab-completion candidates
-	TBacklogFetch = "backlog:fetch" // c2s
-	TContextFetch = "context:fetch" // c2s
-	TSearch       = "search"        // c2s
-	TNetAdd       = "net:add"       // c2s
-	TNetEdit      = "net:edit"      // c2s
-	TNetConnect   = "net:connect"   // c2s
-	TList         = "list"          // c2s
-	TPluginAction = "plugin:action" // c2s — load/unload/reload a plugin
-	TRead         = "read"          // c2s — mark a buffer read (advance read marker)
-	THighlightSet = "highlight:set" // c2s — replace the highlight ruleset
-	TMute         = "mute"          // c2s set intent; s2c absolute state broadcast to the user's tabs
-	TBufClose     = "buf:close"     // c2s — close/remove a query buffer from state
-	TBufReorder   = "buf:reorder"   // c2s — manual buffer order within a network
-	TPing         = "ping"          // c2s — app-level liveness probe; answered with pong
+	TMsgSend      = "msg:send"       // c2s
+	TCompleteReq  = "complete:req"   // c2s — ask plugins for tab-completion candidates
+	TBacklogFetch = "backlog:fetch"  // c2s
+	TContextFetch = "context:fetch"  // c2s
+	TSearch       = "search"         // c2s
+	TNetAdd       = "net:add"        // c2s
+	TNetEdit      = "net:edit"       // c2s
+	TNetConnect   = "net:connect"    // c2s
+	TList         = "list"           // c2s
+	TPluginAction = "plugin:action"  // c2s — load/unload/reload a plugin
+	TPluginSet    = "plugin:setting" // c2s — set a plugin's declared setting
+	TRead         = "read"           // c2s — mark a buffer read (advance read marker)
+	THighlightSet = "highlight:set"  // c2s — replace the highlight ruleset
+	TMute         = "mute"           // c2s set intent; s2c absolute state broadcast to the user's tabs
+	TBufClose     = "buf:close"      // c2s — close/remove a query buffer from state
+	TBufReorder   = "buf:reorder"    // c2s — manual buffer order within a network
+	TPing         = "ping"           // c2s — app-level liveness probe; answered with pong
 )
 
 // Envelope is the single framing for every message in both directions. The
@@ -365,13 +366,38 @@ type PluginAction struct {
 // plugin manager. Loaded is false for *.lua files present in the scripts
 // dir but not currently running.
 type PluginInfo struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Loaded      bool     `json:"loaded"`
-	Disabled    bool     `json:"disabled,omitempty"`
-	Errors      int      `json:"errors,omitempty"`
-	Commands    []string `json:"commands,omitempty"`
-	Hooks       int      `json:"hooks"`
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Loaded      bool            `json:"loaded"`
+	Disabled    bool            `json:"disabled,omitempty"`
+	Errors      int             `json:"errors,omitempty"`
+	Commands    []string        `json:"commands,omitempty"`
+	Hooks       int             `json:"hooks"`
+	Settings    []PluginSetting `json:"settings,omitempty"`
+}
+
+// PluginSetting is the wire projection of core.PluginSetting: one field in a
+// plugin's settings form. Value is the current value (blank for Secret
+// settings). Options is populated only when Type == "select".
+type PluginSetting struct {
+	Name    string   `json:"name"`
+	Type    string   `json:"type"`
+	Label   string   `json:"label,omitempty"`
+	Help    string   `json:"help,omitempty"`
+	Value   string   `json:"value"`
+	Default string   `json:"default,omitempty"`
+	Secret  bool     `json:"secret,omitempty"`
+	Options []string `json:"options,omitempty"`
+}
+
+// PluginSettingReq is a client→server request to set one declared setting of a
+// loaded plugin. Name is the script; Key is the setting name; Value is the new
+// value (validated server-side against the setting's type). The reply is a
+// plugin:list frame with the refreshed list.
+type PluginSettingReq struct {
+	Name  string `json:"name"`
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // PluginListResp answers a plugin:list request (and every plugin:action),

@@ -34,6 +34,7 @@ export const T = {
   NetConnect: "net:connect",
   List: "list",
   PluginAction: "plugin:action",
+  PluginSet: "plugin:setting",
   Read: "read",
   HighlightSet: "highlight:set",
   Mute: "mute",
@@ -314,6 +315,26 @@ export interface PluginInfo {
   errors?: number;
   commands?: string[];
   hooks: number;
+  settings?: PluginSetting[];
+}
+
+export interface PluginSetting {
+  name: string;
+  type: string; // "text" | "number" | "select"
+  label?: string;
+  help?: string;
+  value: string;
+  default?: string;
+  secret?: boolean;
+  options?: string[];
+}
+
+// PluginSettingReq sets one declared setting of a loaded plugin; the reply is
+// a plugin:list frame with the refreshed list.
+export interface PluginSettingReq {
+  name: string;
+  key: string;
+  value: string;
 }
 
 export interface PluginListResp {

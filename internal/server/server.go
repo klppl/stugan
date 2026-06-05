@@ -653,6 +653,20 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			Plugins: toPluginInfos(c.tenant.Engine.Plugins()),
 		})
 
+	case proto.TPluginSet:
+		var d proto.PluginSettingReq
+		if err := decode(env, &d); err != nil || d.Name == "" || d.Key == "" {
+			c.sendError(env.ID, "bad_request", "plugin:setting requires name and key")
+			return
+		}
+		if err := c.tenant.Engine.SetPluginSetting(d.Name, d.Key, d.Value); err != nil {
+			c.sendError(env.ID, "bad_request", err.Error())
+			return
+		}
+		s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
+			Plugins: toPluginInfos(c.tenant.Engine.Plugins()),
+		})
+
 	case proto.THighlightSet:
 		var d proto.HighlightRules
 		if err := decode(env, &d); err != nil {

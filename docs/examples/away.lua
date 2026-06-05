@@ -23,15 +23,28 @@ local DEFAULT_IDLE_MIN = 10
 local DEFAULT_MSG = "idle"
 local DEFAULT_REPLY = "I'm away; I'll see your message when I'm back."
 
--- All three settings live in kv, falling back to the defaults above.
+-- Settings: declared so they show in the GUI plugin form, and read from kv with
+-- an apply callback so a change (from the form or a command) takes effect live.
+-- stugan.setting returns the current value (kv override or default) to init.
 local IDLE_MS
-do
-  local saved = tonumber(stugan.kv.get("idle_minutes"))
-  IDLE_MS = (saved or DEFAULT_IDLE_MIN) * 60 * 1000
-end
+local function apply_idle(v) IDLE_MS = (tonumber(v) or DEFAULT_IDLE_MIN) * 60 * 1000 end
+apply_idle(stugan.setting("idle_minutes", {
+  type = "number", default = DEFAULT_IDLE_MIN,
+  label = "Idle timeout (min)", help = "0 disables auto-away",
+  apply = apply_idle,
+}))
 
-local MSG = stugan.kv.get("message") or DEFAULT_MSG
-local REPLY = stugan.kv.get("reply") or DEFAULT_REPLY
+local MSG
+local function apply_msg(v) MSG = v end
+apply_msg(stugan.setting("message", {
+  default = DEFAULT_MSG, label = "Away status", apply = apply_msg,
+}))
+
+local REPLY
+local function apply_reply(v) REPLY = v end
+apply_reply(stugan.setting("reply", {
+  default = DEFAULT_REPLY, label = "PM auto-reply", apply = apply_reply,
+}))
 
 local last = {} -- network -> unix seconds of last activity
 local away = {} -- network -> true while marked away
@@ -114,12 +127,13 @@ stugan.hook_command("awaymsg", function(args, ctx)
   end
   if args[1]:lower() == "default" then
     stugan.kv.delete("message")
-    MSG = DEFAULT_MSG
+    apply_msg(DEFAULT_MSG)
     stugan.print(ctx, "awaymsg: reverted to default (\"" .. MSG .. "\")")
     return
   end
-  MSG = table.concat(args, " ")
-  stugan.kv.set("message", MSG)
+  local v = table.concat(args, " ")
+  stugan.kv.set("message", v)
+  apply_msg(v)
   stugan.print(ctx, "awaymsg: away status set to \"" .. MSG .. "\"")
 end)
 
@@ -130,12 +144,13 @@ stugan.hook_command("awayreply", function(args, ctx)
   end
   if args[1]:lower() == "default" then
     stugan.kv.delete("reply")
-    REPLY = DEFAULT_REPLY
+    apply_reply(DEFAULT_REPLY)
     stugan.print(ctx, "awayreply: reverted to default (\"" .. REPLY .. "\")")
     return
   end
-  REPLY = table.concat(args, " ")
-  stugan.kv.set("reply", REPLY)
+  local v = table.concat(args, " ")
+  stugan.kv.set("reply", v)
+  apply_reply(v)
   stugan.print(ctx, "awayreply: auto-reply set to \"" .. REPLY .. "\"")
 end)
 
@@ -151,7 +166,7 @@ stugan.hook_command("idle", function(args, ctx)
 
   if args[1]:lower() == "default" then
     stugan.kv.delete("idle_minutes")
-    IDLE_MS = DEFAULT_IDLE_MIN * 60 * 1000
+    apply_idle(DEFAULT_IDLE_MIN)
     stugan.print(ctx, "idle: reverted to default (" .. (IDLE_MS / 60000) .. " min)")
     return
   end
@@ -161,8 +176,8 @@ stugan.hook_command("idle", function(args, ctx)
     stugan.print(ctx, "usage: /idle <minutes>  (0 disables, 'default' resets)")
     return
   end
-  IDLE_MS = m * 60 * 1000
   stugan.kv.set("idle_minutes", m)
+  apply_idle(m)
   if m == 0 then
     stugan.print(ctx, "idle: auto-away disabled")
   else

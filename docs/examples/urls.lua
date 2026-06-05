@@ -21,6 +21,11 @@ local DEFAULT_MAX, DEFAULT_SHOW = 50, 10
 local function get_max() return tonumber(stugan.kv.get("max")) or DEFAULT_MAX end
 local function get_show() return tonumber(stugan.kv.get("show")) or DEFAULT_SHOW end
 
+-- Declare them for the GUI form. No apply callback needed: get_max/get_show
+-- read kv live, so a change from the form takes effect on the next message.
+stugan.setting("max", { type = "number", default = DEFAULT_MAX, label = "Links kept per buffer" })
+stugan.setting("show", { type = "number", default = DEFAULT_SHOW, label = "Shown by /urls" })
+
 -- One kv entry per (network, buffer): records joined by "\n", each record
 -- "epoch\tnick\turl". kv keys use \t, distinct from the field/record seps.
 local function key(network, buffer)

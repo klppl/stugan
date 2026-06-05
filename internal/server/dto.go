@@ -137,6 +137,33 @@ func toPluginInfos(ps []core.PluginInfo) []proto.PluginInfo {
 			Errors:      p.Errors,
 			Commands:    p.Commands,
 			Hooks:       p.Hooks,
+			Settings:    toPluginSettings(p.Settings),
+		}
+	}
+	return out
+}
+
+// toPluginSettings projects a plugin's declared settings. The host already
+// blanks Value for secret settings; we never copy a secret value here either.
+func toPluginSettings(ss []core.PluginSetting) []proto.PluginSetting {
+	if len(ss) == 0 {
+		return nil
+	}
+	out := make([]proto.PluginSetting, len(ss))
+	for i, s := range ss {
+		val := s.Value
+		if s.Secret {
+			val = ""
+		}
+		out[i] = proto.PluginSetting{
+			Name:    s.Name,
+			Type:    s.Type,
+			Label:   s.Label,
+			Help:    s.Help,
+			Value:   val,
+			Default: s.Default,
+			Secret:  s.Secret,
+			Options: s.Options,
 		}
 	}
 	return out

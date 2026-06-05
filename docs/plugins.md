@@ -152,14 +152,29 @@ local t = stugan.kv.get("last_seen")        -- nil if unset
 stugan.kv.delete("last_seen")
 local all = stugan.kv.all()                  -- table of every key->value
 
--- Read plugin-scoped config from config.toml:
+-- Declare a user-facing setting. It renders as a field in the plugin's form
+-- in Settings → Plugins, is backed by kv (key == name), and returns the
+-- current value (kv override, else default) so you can initialize in one line.
+-- opts: { type = "text"|"number"|"select", default, label, help,
+--         secret = true,            -- value is never sent to the client
+--         options = {"a","b"},      -- choices when type == "select"
+--         apply = function(value) … end }  -- run when the value changes
+local IDLE_MS
+local function apply_idle(v) IDLE_MS = (tonumber(v) or 10) * 60000 end
+apply_idle(stugan.setting("idle_minutes", {
+  type = "number", default = 10, label = "Idle timeout (min)", apply = apply_idle,
+}))
+-- The host runs apply on changes from the form; settings that read kv live
+-- (e.g. `tonumber(stugan.kv.get("max"))`) need no apply at all. Prefer
+-- stugan.setting over stugan.config for anything a user might change —
+-- config.toml can only be edited on the server.
+
+-- Read plugin-scoped config from config.toml (a server-only fallback; prefer
+-- stugan.setting above):
 --   [plugins.settings.greet]
 --   target = "#stugan"
 local target = stugan.config("target")      -- this script's settings table
 local target = stugan.config("target", "#default")  -- with fallback
--- NOTE: prefer kv for anything a user might want to change. config.toml can
--- only be edited on the server, so the example plugins keep settings in kv with
--- a built-in default and a slash-command to set them (see away/urls/expand/qauth).
 
 -- Structured logging (goes to the daemon log, tagged with script name):
 stugan.log.info("loaded")
@@ -178,7 +193,10 @@ directory — loaded and not — with its description (or, lacking one, the
 commands and hook count it registered) and buttons to **load**, **unload**, or
 **reload** it at runtime. Reloading re-reads the file from disk without
 restarting the daemon or dropping IRC connections (the same teardown the
-fsnotify watcher uses on save).
+fsnotify watcher uses on save). A loaded plugin that declared settings with
+`stugan.setting()` also gets a **configure** toggle that opens a form to edit
+them in place; a change is validated against the setting's type, persisted to
+the plugin's kv, and applied live via its `apply` callback.
 
 ## 3.6.1 Crypto primitives
 

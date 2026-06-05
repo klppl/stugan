@@ -35,13 +35,29 @@ type ConnHandler interface {
 // read-only projection the host builds on demand; the runtime types (LState,
 // hooks) never leak into core.
 type PluginInfo struct {
-	Name        string   // script identity (filename without .lua)
-	Description string   // text the script declared via stugan.describe()
-	Loaded      bool     // a *.lua file present and currently running
-	Disabled    bool     // auto-disabled after repeated runtime errors
-	Errors      int      // runtime errors raised since it was (re)loaded
-	Commands    []string // /command names it registered
-	Hooks       int      // message/input/signal/timer hooks it registered
+	Name        string          // script identity (filename without .lua)
+	Description string          // text the script declared via stugan.describe()
+	Loaded      bool            // a *.lua file present and currently running
+	Disabled    bool            // auto-disabled after repeated runtime errors
+	Errors      int             // runtime errors raised since it was (re)loaded
+	Commands    []string        // /command names it registered
+	Hooks       int             // message/input/signal/timer hooks it registered
+	Settings    []PluginSetting // values declared via stugan.setting()
+}
+
+// PluginSetting is one configurable value a script declared with
+// stugan.setting(), projected for the management UI's per-plugin form. Value
+// is the current effective value (the kv override, else Default); it is blank
+// for Secret settings, which are never sent to the client.
+type PluginSetting struct {
+	Name    string   // setting key (also the kv key)
+	Type    string   // "text" | "number" | "select"
+	Label   string   // human label for the form field
+	Help    string   // optional one-line hint
+	Value   string   // current effective value (blank if Secret)
+	Default string   // built-in default
+	Secret  bool     // value is sensitive; never sent to the client
+	Options []string // allowed values when Type == "select"
 }
 
 // PluginHost is core's view of the plugin runtime (implemented in
@@ -68,6 +84,11 @@ type PluginHost interface {
 	LoadPlugin(name string) error
 	UnloadPlugin(name string) error
 	ReloadPlugin(name string) error
+	// SetPluginSetting writes value to the named setting (declared via
+	// stugan.setting) of a loaded script: it validates against the setting's
+	// type, persists it to the script's kv, and runs the setting's apply
+	// callback — all on the plugin goroutine so the kv cache stays coherent.
+	SetPluginSetting(script, key, value string) error
 	// Close releases the runtime.
 	Close() error
 }
@@ -83,4 +104,7 @@ func (nopHost) Plugins() []PluginInfo                              { return nil 
 func (nopHost) LoadPlugin(string) error                            { return errors.New("plugins are disabled") }
 func (nopHost) UnloadPlugin(string) error                          { return errors.New("plugins are disabled") }
 func (nopHost) ReloadPlugin(string) error                          { return errors.New("plugins are disabled") }
-func (nopHost) Close() error                                       { return nil }
+func (nopHost) SetPluginSetting(string, string, string) error {
+	return errors.New("plugins are disabled")
+}
+func (nopHost) Close() error { return nil }
