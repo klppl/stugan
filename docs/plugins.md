@@ -157,6 +157,9 @@ local all = stugan.kv.all()                  -- table of every key->value
 --   target = "#stugan"
 local target = stugan.config("target")      -- this script's settings table
 local target = stugan.config("target", "#default")  -- with fallback
+-- NOTE: prefer kv for anything a user might want to change. config.toml can
+-- only be edited on the server, so the example plugins keep settings in kv with
+-- a built-in default and a slash-command to set them (see away/urls/expand/qauth).
 
 -- Structured logging (goes to the daemon log, tagged with script name):
 stugan.log.info("loaded")
@@ -267,14 +270,29 @@ end)
 
 ### highlight_reply.lua — auto-reply when a word is mentioned
 
+The trigger word lives in `kv` with a built-in default and a `/hlreply`
+command, so it's set from inside stugan rather than config.toml:
+
 ```lua
-local word = stugan.config("word", "ping")
+local DEFAULT_WORD = "ping"
+local word = stugan.kv.get("word") or DEFAULT_WORD
+
 stugan.hook_message(function(msg)
   if msg.kind == "privmsg" and not msg.self
-     and msg.text:lower():find(word) then
+     and msg.text:lower():find(word, 1, true) then
     stugan.message(msg.network, msg.buffer, msg.from .. ": pong")
   end
   return msg
+end)
+
+stugan.hook_command("hlreply", function(args, ctx)
+  if #args == 0 then
+    stugan.print(ctx, "hlreply: trigger word is '" .. word .. "'")
+    return
+  end
+  word = args[1]:lower()
+  stugan.kv.set("word", word)
+  stugan.print(ctx, "hlreply: trigger word is now '" .. word .. "'")
 end)
 ```
 
@@ -295,10 +313,12 @@ stugan.hook_completion(function(word, ctx)
 end)
 ```
 
-### auto_away.lua — a timer
+### away.lua — idle auto-away + auto-reply, on a timer
+
+A `hook_timer` marks you away after an idle period and `hook_input` clears it
+on your next line — the minimal timer pattern:
 
 ```lua
--- After 10 min with no input from us, set away; clear on our next message.
 local IDLE_MS = 10 * 60 * 1000
 local last = {}  -- network -> unix seconds of our last sent line
 
@@ -318,6 +338,16 @@ stugan.hook_timer(60 * 1000, function()
   end
 end)
 ```
+
+The shipped `docs/examples/away.lua` builds on this: it tracks the away state
+per network (so `AWAY` is sent only on the transition, not every line), sends a
+one-time NOTICE auto-reply to PMs while you're away, and adds `/away` / `/back`
+plus runtime settings `/idle [minutes]` (the timeout; `0` disables),
+`/awaymsg [text]` (the standing away status), and `/awayreply [text]` (the
+auto-reply). Each persists in `kv` over a built-in default and accepts `default`
+to revert — no config.toml. `/away [message]` stays a one-time override that
+doesn't change the standing message. The timer reads `IDLE_MS` as an upvalue, so
+`/idle` takes effect on the next sweep.
 
 ### sed.lua — fix a typo in your last line
 
@@ -342,6 +372,41 @@ Type `;shrug` and it becomes `¯\_(ツ)_/¯` when the line is sent; triggers
 expand inline and tab-complete. A `hook_input` rewrites known triggers, a
 `hook_completion` offers their names, and `/exp` manages your own (persisted
 in `stugan.kv`, shadowing the built-ins). See `docs/examples/expand.lua`.
+
+### nickserv.lua — identify and reclaim your nick on connect
+
+A `hook_signal "connect"` that messages NickServ to IDENTIFY and, if you landed
+on a fallback nick, GHOSTs your real one and switches back (the `NICK` is sent
+from a self-unhooking one-shot timer, a moment after GHOST). The password lives
+in `stugan.kv`, set via `/nickserv set <password>`; service messages go out as
+raw PRIVMSG (not `stugan.message`) so the password is never echoed locally. See
+`docs/examples/nickserv.lua`.
+
+### watch.lua — the mirror of ignore
+
+Where `ignore.lua` drops a nick, `watch.lua` surfaces one: a per-network list in
+`stugan.kv` (same shape as ignore), a marker line in the channel when a watched
+nick joins or parts, and a last-seen record so `/watch` doubles as a `/seen`.
+Commands: `/watch` (list), `/watch <nick> …`, `/unwatch <nick> …`. See
+`docs/examples/watch.lua`.
+
+### qauth.lua — QuakeNet Q authentication
+
+The QuakeNet counterpart to `nickserv.lua`. On `connect` it authenticates with
+Q, defaulting to **CHALLENGEAUTH** — an HMAC-SHA-256 challenge/response built on
+`stugan.crypto.sha256`, so the password never crosses the wire (a plain
+`AUTH user pass` mode is available for networks that need it). Credentials live
+in `stugan.kv`; service messages go out as raw PRIVMSG so nothing is echoed, and
+`hidehost` sets `+x` once Q confirms login. `/qauth set <user> <pass>`, `/qauth`
+(auth now), `/qauth show`, `/qauth method <challenge|plain>`, `/qauth clear`. See
+`docs/examples/qauth.lua`.
+
+### fun.lua — the toy commands
+
+`/roll 2d6` (also `d20`, `6`, `3d6+2`), `/8ball <q>`, `/slap <nick>`. A small
+worked use of `stugan.crypto.random` for unbiased dice (rejection sampling over
+a 32-bit draw) with results sent to the buffer as actions. See
+`docs/examples/fun.lua`.
 
 ### fish.lua — FiSH-style Blowfish encryption
 

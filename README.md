@@ -92,8 +92,9 @@ end)
 ```
 
 See [docs/plugins.md](docs/plugins.md) and [docs/examples](docs/examples)
-(`greet`, `highlight_reply`, `auto_away`, and the bundled FiSH encryption
-plugin).
+(`greet`, `highlight_reply`, `away`, `sed`, `urls`, `expand`, `watch`,
+`nickserv`, `qauth`, `fun`, plus the bundled FiSH encryption and `ignore`
+plugins).
 
 ## Documentation
 
