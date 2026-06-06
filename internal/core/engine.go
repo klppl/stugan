@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -233,6 +234,25 @@ func (e *Engine) HighlightRules() (patterns, exceptions []string) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.highlight.Patterns(), e.highlight.Exceptions()
+}
+
+// SetAliases replaces the command-alias table at runtime (from the settings
+// UI). Keys are matched case-insensitively at expansion time, so the caller
+// should pass lowercase names. Safe to call from a server goroutine: it takes
+// the same lock sendInput holds while reading the table. A nil map clears all
+// aliases. The map is cloned so the caller may not retain or mutate it.
+func (e *Engine) SetAliases(m map[string]string) {
+	e.mu.Lock()
+	e.aliases = maps.Clone(m)
+	e.mu.Unlock()
+}
+
+// Aliases returns a copy of the current command-alias table, for seeding the
+// settings form in the init snapshot.
+func (e *Engine) Aliases() map[string]string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return maps.Clone(e.aliases)
 }
 
 // Plugins lists the plugin scripts the host knows about, for the management
@@ -684,8 +704,12 @@ func (e *Engine) sendInput(network, buffer, text string, depth int) {
 		name, argstr, _ := strings.Cut(rest, " ")
 		if name != "" {
 			// Expand a command alias, then re-process the result (guarded
-			// against alias loops).
-			if tmpl, ok := e.aliases[strings.ToLower(name)]; ok && depth < 8 {
+			// against alias loops). sendInput runs on a server goroutine, so the
+			// table is read under the lock SetAliases writes it with.
+			e.mu.RLock()
+			tmpl, ok := e.aliases[strings.ToLower(name)]
+			e.mu.RUnlock()
+			if ok && depth < 8 {
 				e.sendInput(network, buffer, expandAlias(tmpl, strings.Fields(argstr)), depth+1)
 				return
 			}

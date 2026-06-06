@@ -447,6 +447,46 @@ func TestRunPerformOnConnect(t *testing.T) {
 	}
 }
 
+// TestSetAliasesRuntime verifies an alias installed at runtime (the settings
+// UI path) expands through the input path, and that Aliases() hands back a copy
+// the caller can't use to mutate engine state.
+func TestSetAliasesRuntime(t *testing.T) {
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	if err := e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = e.Run(ctx) }()
+
+	e.SetAliases(map[string]string{"j": "/join $*"})
+
+	// The returned table is a clone: mutating it must not change the engine's.
+	got := e.Aliases()
+	if got["j"] != "/join $*" {
+		t.Fatalf("Aliases() = %v, want j -> /join $*", got)
+	}
+	got["j"] = "/part"
+	if again := e.Aliases(); again["j"] != "/join $*" {
+		t.Fatalf("Aliases() returned a live map; engine mutated to %v", again)
+	}
+
+	e.SendInput("n", "#ops", "/j #ops opskey")
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if slices.Contains(conn.conns[0].rawsSnap(), "JOIN #ops opskey") {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("alias did not expand to a JOIN; raws=%v", conn.conns[0].rawsSnap())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 func TestApplyNickRename(t *testing.T) {
 	e, _ := newTestEngine(t)
 	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Buffer: "#go"})

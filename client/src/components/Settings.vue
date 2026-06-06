@@ -86,6 +86,44 @@ watch(
   },
 );
 
+// Command aliases: one "name = expansion" per line. /name runs the expansion,
+// with $1..$9, $* and $N- substituting the args. The server normalizes names
+// and drops blank/invalid lines, then echoes the table back.
+function formatAliases(m: Record<string, string>): string {
+  return Object.keys(m)
+    .sort()
+    .map((k) => `${k} = ${m[k]}`)
+    .join("\n");
+}
+const aliasText = ref(formatAliases(connection.store.aliases));
+const aliasSaved = ref(false);
+let aliasPending = false;
+
+function saveAliases() {
+  const map: Record<string, string> = {};
+  for (const line of aliasText.value.split("\n")) {
+    const eq = line.indexOf("=");
+    if (eq < 0) continue;
+    const name = line.slice(0, eq).trim();
+    const expansion = line.slice(eq + 1).trim();
+    if (name && expansion) map[name] = expansion;
+  }
+  aliasPending = true;
+  connection.setAliases(map);
+}
+
+watch(
+  () => connection.store.aliases,
+  (m) => {
+    aliasText.value = formatAliases(m);
+    if (aliasPending) {
+      aliasPending = false;
+      aliasSaved.value = true;
+      setTimeout(() => (aliasSaved.value = false), 2000);
+    }
+  },
+);
+
 async function enableNotifications() {
   pushMsg.value = "requesting…";
   const perm = await Notification.requestPermission();
@@ -203,6 +241,29 @@ async function enableNotifications() {
       <div class="row">
         <span class="hint">{{ hlSaved ? "Saved ✓" : "" }}</span>
         <button @click="saveHighlight">Save highlights</button>
+      </div>
+
+      <!-- Command aliases: one "name = expansion" per line. Typing /name runs
+           the expansion; $1..$9, $* and $N- substitute the arguments. -->
+      <h3 class="section">Aliases</h3>
+      <p class="hint">
+        Slash-command shortcuts, one <code>name = /expansion</code> per line.
+        Typing <code>/name</code> runs the expansion (start it with
+        <code>/</code>); <code>$1</code>..<code>$9</code>, <code>$*</code> (all
+        args) and <code>$2-</code> (from arg 2 on) fill in what you typed.
+      </p>
+      <label class="hl-field">
+        <span>Aliases</span>
+        <textarea
+          v-model="aliasText"
+          rows="4"
+          spellcheck="false"
+          placeholder="j = /join $*&#10;wii = /whois $1"
+        />
+      </label>
+      <div class="row">
+        <span class="hint">{{ aliasSaved ? "Saved ✓" : "" }}</span>
+        <button @click="saveAliases">Save aliases</button>
       </div>
 
       <div v-if="authState.authEnabled" class="row">
