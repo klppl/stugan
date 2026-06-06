@@ -15,6 +15,7 @@ import (
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/irc"
 	"github.com/klippelism/stugan/internal/plugin"
+	"github.com/klippelism/stugan/internal/safehttp"
 	"github.com/klippelism/stugan/internal/scripts"
 	"github.com/klippelism/stugan/internal/server"
 	"github.com/klippelism/stugan/internal/store"
@@ -173,6 +174,7 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 				Settings: cfg.Plugins.Settings,
 				Sandbox:  sandbox,
 				KV:       pluginKV{db},
+				HTTP:     safehttp.New(), // stugan.http, SSRF-guarded
 			})
 			if err != nil {
 				return nil, nil, err

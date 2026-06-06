@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -50,6 +51,14 @@ type KV interface {
 	Delete(script, key string) error
 }
 
+// HTTPDoer performs an HTTP request. *http.Client satisfies it. The host takes
+// an injected doer rather than building its own so the SSRF guard lives in one
+// place (internal/safehttp) and tests can supply a permissive client. A nil
+// doer disables the stugan.http binding.
+type HTTPDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
 // Options configures the Lua host.
 type Options struct {
 	API      core.API
@@ -59,6 +68,7 @@ type Options struct {
 	Sandbox  bool                      // restrict the Lua stdlib
 	Timeout  time.Duration             // per-hook timeout (0 = default)
 	KV       KV                        // optional persistence for stugan.kv
+	HTTP     HTTPDoer                  // optional client for stugan.http (nil disables it)
 }
 
 // Host is a Lua implementation of core.PluginHost.
@@ -70,6 +80,14 @@ type Host struct {
 	sandbox  bool
 	timeout  time.Duration
 	kvStore  KV
+
+	httpClient HTTPDoer
+	httpSem    chan struct{} // bounds concurrent stugan.http requests
+
+	// ctx is cancelled by Close so in-flight HTTP requests abort promptly
+	// rather than holding shutdown for their full timeout.
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	jobs     chan func()
 	quit     chan struct{}
@@ -149,6 +167,7 @@ func New(opts Options) (*Host, error) {
 		sandbox:     opts.Sandbox,
 		timeout:     timeout,
 		kvStore:     opts.KV,
+		httpClient:  opts.HTTP,
 		jobs:        make(chan func()),
 		quit:        make(chan struct{}),
 		scripts:     map[string]*script{},
@@ -156,6 +175,10 @@ func New(opts Options) (*Host, error) {
 		signalHooks: map[string][]*hook{},
 		cmdHooks:    map[string]*hook{},
 		unhookers:   map[int]func(){},
+	}
+	h.ctx, h.cancel = context.WithCancel(context.Background())
+	if h.httpClient != nil {
+		h.httpSem = make(chan struct{}, maxConcurrentHTTP)
 	}
 
 	h.wg.Go(h.loop)
@@ -473,6 +496,7 @@ func (h *Host) Close() error {
 	if h.watcher != nil {
 		h.watcher.Close()
 	}
+	h.cancel() // abort in-flight HTTP so shutdown doesn't wait out their timeout
 	h.quitOnce.Do(func() { close(h.quit) })
 	h.wg.Wait()
 	// The loop goroutine has exited; teardown is now race-free.

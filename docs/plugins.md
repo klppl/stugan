@@ -133,7 +133,7 @@ stugan.set_buffer_state(network, buffer, state)  -- state: {[k]=v} or nil
 -- Read state (returns plain Lua tables, snapshots — not live handles):
 stugan.networks()                 -- -> array of {id,name,nick,state}
 stugan.channels(network)          -- -> array of {name,kind,topic}
-stugan.members(network, channel)  -- -> array of {nick,modes,away}
+stugan.members(network, channel)  -- -> array of {nick,account,modes,away}
 stugan.nick(network)              -- -> current nick string
 ```
 
@@ -234,6 +234,63 @@ guard with `pcall` if you want to keep going on bad input.
 
 See `internal/scripts/fish.lua` for a worked plugin that uses these to implement
 FiSH-style Blowfish-CBC encryption for IRC.
+
+## 3.6.2 HTTP
+
+`stugan.http` lets a script reach the web — fetch a page title, hit a weather
+or translation API, post to an LLM. Requests go through the daemon's
+SSRF-guarded client (`internal/safehttp`): it resolves the host and refuses to
+connect to private, loopback, link-local, or otherwise non-public addresses, so
+a script cannot probe your internal network. Response bodies are capped at 1 MiB.
+
+Both calls are **asynchronous**. All Lua runs on a single goroutine, so a
+blocking fetch would stall every other script and the message hot path. Instead
+the request runs off-thread and your callback is scheduled back onto the Lua
+goroutine when it completes — the same model as `hook_timer`.
+
+```lua
+-- get(url, callback): the simple case.
+stugan.http.get("https://example.com/", function(res)
+  if res.ok then
+    stugan.log.info("status " .. res.status .. ", " .. #res.body .. " bytes")
+  else
+    stugan.log.warn("fetch failed: " .. res.error)
+  end
+end)
+
+-- request(opts, callback): method, headers, and body for POST/PUT/etc.
+stugan.http.request({
+  method  = "POST",
+  url     = "https://api.example.com/v1/chat",
+  headers = { ["Authorization"] = "Bearer " .. token,
+              ["Content-Type"]  = "application/json" },
+  body    = '{"prompt":"hello"}',
+}, function(res) ... end)
+```
+
+The callback receives one table:
+
+```lua
+res = {
+  ok      = true,            -- did the request complete (transport level)?
+  status  = 200,             -- HTTP status; 0 on a transport error
+  body    = "…",             -- response body (string, ≤ 1 MiB)
+  headers = { ["content-type"] = "text/html; charset=utf-8", … }, -- keys lowercased
+  error   = nil,             -- set (and ok=false, status=0) only on transport failure
+}
+```
+
+`ok` reports a transport-level success, not a 2xx: a 404 is `ok=true` with
+`status=404`. Check `res.status` yourself. `get`/`request` return `(true, nil)`
+when the request was accepted, or `(false, reason)` if it could not even be
+started — `"http: disabled"` (no client configured) or `"http: too many
+concurrent requests"` (more than 4 in flight). In those two cases the callback
+never fires, so handle the return value if you care about back-pressure.
+
+A default `User-Agent: stugan-plugin/<script>` is sent unless you set your own.
+
+See `docs/examples/title.lua` for a worked plugin that announces the title of
+links posted in a channel.
 
 ## 3.7 Hot reload, isolation, sandboxing
 
@@ -383,6 +440,14 @@ A persistent daemon is the right place to keep "what was that link from
 yesterday?" A `hook_message` scrapes http(s) URLs and keeps the last few per
 buffer in `stugan.kv` (so they survive restart); `/urls`, `/urls <n>`, and
 `/urls clear` recall or forget them. See `docs/examples/urls.lua`.
+
+### title.lua — announce the title of posted links
+
+A worked use of `stugan.http`. A `hook_message` spots http(s) links, fetches
+the page off-thread, scrapes its `<title>`, and prints it locally into the
+buffer (via `stugan.print`, so nothing is sent to IRC). Toggle with
+`/title on|off`; max length is set from the plugin settings form. See
+`docs/examples/title.lua`.
 
 ### expand.lua — a text expander
 

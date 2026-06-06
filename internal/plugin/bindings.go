@@ -241,6 +241,7 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 
 	// Persistence, config, logging ---------------------------------------
 	t.RawSetString("crypto", h.buildCrypto(s))
+	t.RawSetString("http", h.buildHTTP(s))
 	t.RawSetString("kv", h.buildKV(s))
 	t.RawSetString("config", s.L.NewFunction(func(L *lua.LState) int {
 		key := L.CheckString(1)
