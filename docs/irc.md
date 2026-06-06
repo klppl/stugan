@@ -73,7 +73,10 @@ events stugan does not model). Highlights:
   for channel targets, the `status` buffer for server/pre-registration lines,
   otherwise a query keyed by the sender (inbound DM) or target (echoed DM). It
   carries `ID` (msgid tag), `From`, `Account` (account-tag), `Kind`, `Text`,
-  `Tags`, and `Self` (`e.Echo`).
+  `Tags`, and `Self` (`e.Echo`). A **non-ACTION CTCP** (VERSION/PING/TIME/… or a
+  CTCP reply) is dropped rather than translated, so its raw `\x01`-framed payload
+  never shows as garbled text; girc's built-in CTCP handler answers the standard
+  requests.
 - **JOIN / PART / QUIT / NICK / AWAY** → the matching membership/presence
   events; JOIN picks up the account from extended-join or the account tag.
 - **NAMES (353)** → `names` with the parsed member list (prefixes split into

@@ -46,6 +46,19 @@ func TestToEvent(t *testing.T) {
 			text: "waves",
 		},
 		{
+			// A non-ACTION CTCP request is dropped (girc auto-replies); its raw
+			// \x01-framed payload must never surface as a buffer message.
+			name: "ctcp version request dropped",
+			raw:  ":alice!u@h PRIVMSG me :\x01VERSION\x01",
+			ok:   false,
+		},
+		{
+			// A CTCP reply (NOTICE) is likewise dropped, not shown as raw text.
+			name: "ctcp version reply dropped",
+			raw:  ":alice!u@h NOTICE me :\x01VERSION stugan\x01",
+			ok:   false,
+		},
+		{
 			name: "join",
 			raw:  ":bob!u@h JOIN #go",
 			ok:   true,
