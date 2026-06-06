@@ -9,6 +9,32 @@ import (
 	"time"
 )
 
+func TestReconnectDelay(t *testing.T) {
+	tests := []struct {
+		name      string
+		backoff   time.Duration
+		lasted    time.Duration
+		wantSleep time.Duration
+		wantNext  time.Duration
+	}{
+		{"first drop", baseBackoff, 0, time.Second, 2 * time.Second},
+		{"grows while flapping", 4 * time.Second, time.Second, 4 * time.Second, 8 * time.Second},
+		{"caps at max", maxBackoff, time.Second, maxBackoff, maxBackoff},
+		{"doubling clamps to max", 20 * time.Second, time.Second, 20 * time.Second, maxBackoff},
+		{"stable connection resets", maxBackoff, stableFor, baseBackoff, 2 * time.Second},
+		{"just-under-stable does not reset", maxBackoff, stableFor - time.Millisecond, maxBackoff, maxBackoff},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sleep, next := reconnectDelay(tt.backoff, tt.lasted)
+			if sleep != tt.wantSleep || next != tt.wantNext {
+				t.Errorf("reconnectDelay(%v, %v) = (%v, %v), want (%v, %v)",
+					tt.backoff, tt.lasted, sleep, next, tt.wantSleep, tt.wantNext)
+			}
+		})
+	}
+}
+
 // captureSink records printed lines and network snapshots for assertions.
 type captureSink struct {
 	msgs      []Message
