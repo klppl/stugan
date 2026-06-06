@@ -22,6 +22,48 @@ const BUILTINS = [
 const text = ref("");
 const inputEl = ref<HTMLInputElement | null>(null);
 
+// Input history: a session-scoped ring of sent lines, recalled with ↑/↓ when
+// the autocomplete menu is closed (irssi/weechat style). histIdx walks back
+// from the newest entry; -1 means "live", i.e. the user's current draft, which
+// is stashed in histDraft so ↓ past the newest entry restores it. Not
+// persisted — recalled lines can contain /msg-style content.
+const HISTORY_MAX = 100;
+const history: string[] = [];
+let histIdx = -1;
+let histDraft = "";
+
+// setText replaces the input and parks the caret at the end on the next tick
+// (v-model hasn't flushed to the DOM yet), mirroring typeChar's approach.
+function setText(s: string) {
+  text.value = s;
+  nextTick(() => {
+    const el = inputEl.value;
+    if (el) el.setSelectionRange(s.length, s.length);
+  });
+}
+
+function historyPrev() {
+  if (!history.length) return;
+  if (histIdx === -1) {
+    histDraft = text.value;
+    histIdx = history.length - 1;
+  } else if (histIdx > 0) {
+    histIdx--;
+  }
+  setText(history[histIdx]);
+}
+
+function historyNext() {
+  if (histIdx === -1) return;
+  if (histIdx < history.length - 1) {
+    histIdx++;
+    setText(history[histIdx]);
+  } else {
+    histIdx = -1;
+    setText(histDraft);
+  }
+}
+
 interface AC {
   open: boolean;
   items: string[]; // the full replacement token for each candidate
@@ -155,6 +197,12 @@ function onKeydown(e: KeyboardEvent) {
   } else if (e.key === "Tab") {
     e.preventDefault();
     refresh();
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    historyPrev();
+  } else if (e.key === "ArrowDown") {
+    e.preventDefault();
+    historyNext();
   }
 }
 
@@ -170,6 +218,12 @@ function submit() {
   if (!t || !props.buffer) return;
   connection.send(props.network, props.buffer.name, replaceEmoji(t));
   connection.sendTyping(props.network, props.buffer.name, "done");
+  if (history[history.length - 1] !== t) {
+    history.push(t);
+    if (history.length > HISTORY_MAX) history.shift();
+  }
+  histIdx = -1;
+  histDraft = "";
   text.value = "";
   ac.open = false;
   reqSeq++;
