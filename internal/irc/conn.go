@@ -13,6 +13,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/klippelism/stugan/internal/core"
@@ -67,6 +68,25 @@ type Conn struct {
 	// engine's reconnect loop, so these need no locking.
 	addrs   []string
 	addrIdx int
+	// batches collects open inbound draft/multiline batches (ref → buffer). Read
+	// and written only from girc's single read goroutine (the BATCH and message
+	// handlers), so it needs no locking.
+	batches map[string]*multilineBatch
+	// batchSeq names outbound multiline batches; atomic since Message may be
+	// called from the engine loop or a plugin goroutine.
+	batchSeq atomic.Uint64
+}
+
+// multilineBatch accumulates the lines of one inbound draft/multiline message
+// until the closing BATCH. tags/source come from the opening BATCH command,
+// which carries the msgid/time/account for the whole logical message.
+type multilineBatch struct {
+	notice bool
+	target string
+	source *girc.Source
+	tags   girc.Tags
+	lines  []string
+	concat []bool // concat[i]: join line i to the previous with no newline
 }
 
 // compile-time check that Conn satisfies the interface core depends on.
@@ -109,6 +129,9 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 			"labeled-response":        nil,
 			"standard-replies":        nil,
 			"draft/message-redaction": nil,
+			// draft/multiline groups a message split across several lines into
+			// one logical block via BATCH (see (un)batchMultiline).
+			"draft/multiline": nil,
 		},
 	}
 	// A client certificate (CertFP / SASL EXTERNAL) or skipping verification
@@ -149,6 +172,7 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		log:     log.With("network", opts.Network),
 		client:  girc.New(gcfg),
 		addrs:   addrs,
+		batches: map[string]*multilineBatch{},
 	}
 	c.registerHandlers()
 	return c, nil
@@ -180,9 +204,19 @@ func (c *Conn) registerHandlers() {
 		// IRCv3 message-redaction (REDACT) and standard-replies (FAIL/WARN/NOTE).
 		"REDACT", "FAIL", "WARN", "NOTE",
 	}
+	// BATCH brackets a group of messages. We only act on draft/multiline
+	// batches (reassembled into one message); other types (e.g. chathistory)
+	// just tag their members, which pass through normally.
+	h.Add("BATCH", func(gc *girc.Client, e girc.Event) { c.handleBatch(gc, &e) })
+
 	cmds = append(cmds, numericReplies...)
 	for _, cmd := range cmds {
 		h.Add(cmd, func(gc *girc.Client, e girc.Event) {
+			// A message inside an open draft/multiline batch is buffered, not
+			// emitted on its own — it surfaces as one message at BATCH close.
+			if c.absorbMultiline(&e) {
+				return
+			}
 			if ev, ok := toEvent(c.opts.Network, &e, gc.GetNick()); ok {
 				c.emit(ev)
 			}
@@ -360,8 +394,106 @@ func (c *Conn) SendRaw(line string) error { return c.client.Cmd.SendRaw(line) }
 
 // Message sends a PRIVMSG to target.
 func (c *Conn) Message(target, text string) error {
-	c.client.Cmd.Message(target, text)
+	if !strings.Contains(text, "\n") {
+		c.client.Cmd.Message(target, text)
+		return nil
+	}
+	lines := strings.Split(text, "\n")
+	// On a server that negotiated draft/multiline, ship the lines as one logical
+	// message inside a BATCH; otherwise fall back to one PRIVMSG per line so the
+	// text still gets through, just as separate lines.
+	if !c.client.HasCapability("draft/multiline") {
+		for _, ln := range lines {
+			c.client.Cmd.Message(target, ln)
+		}
+		return nil
+	}
+	ref := "ml" + strconv.FormatUint(c.batchSeq.Add(1), 10)
+	_ = c.client.Cmd.SendRaw("BATCH +" + ref + " draft/multiline " + target)
+	for _, ln := range lines {
+		_ = c.client.Cmd.SendRaw("@batch=" + ref + " PRIVMSG " + target + " :" + ln)
+	}
+	_ = c.client.Cmd.SendRaw("BATCH -" + ref)
 	return nil
+}
+
+// handleBatch opens or closes a draft/multiline batch. Other batch types are
+// ignored here (their member messages still pass through normally, tagged).
+func (c *Conn) handleBatch(gc *girc.Client, e *girc.Event) {
+	if len(e.Params) == 0 || len(e.Params[0]) < 2 {
+		return
+	}
+	ref := e.Params[0][1:]
+	switch e.Params[0][0] {
+	case '+':
+		if len(e.Params) >= 3 && e.Params[1] == "draft/multiline" {
+			c.batches[ref] = &multilineBatch{
+				notice: false,
+				target: e.Params[2],
+				source: e.Source,
+				tags:   e.Tags,
+			}
+		}
+	case '-':
+		if b := c.batches[ref]; b != nil {
+			delete(c.batches, ref)
+			c.finishBatch(gc, b)
+		}
+	}
+}
+
+// absorbMultiline buffers a PRIVMSG/NOTICE that belongs to an open
+// draft/multiline batch and reports that it was consumed (so the caller does
+// not emit it as a standalone message). Anything else returns false.
+func (c *Conn) absorbMultiline(e *girc.Event) bool {
+	if e.Command != girc.PRIVMSG && e.Command != girc.NOTICE {
+		return false
+	}
+	b := c.batches[tag(e, "batch")]
+	if b == nil {
+		return false
+	}
+	b.notice = e.Command == girc.NOTICE
+	b.lines = append(b.lines, e.Last())
+	// draft/multiline-concat is a value-less tag, so test presence, not value.
+	concat := false
+	if e.Tags != nil {
+		_, concat = e.Tags.Get("draft/multiline-concat")
+	}
+	b.concat = append(b.concat, concat)
+	return true
+}
+
+// finishBatch reassembles a closed draft/multiline batch into one synthetic
+// PRIVMSG/NOTICE and runs it through the normal translation path, so buffer
+// routing, msgid, account and echo handling are reused unchanged.
+func (c *Conn) finishBatch(gc *girc.Client, b *multilineBatch) {
+	cmd := girc.PRIVMSG
+	if b.notice {
+		cmd = girc.NOTICE
+	}
+	syn := &girc.Event{
+		Command: cmd,
+		Source:  b.source,
+		Params:  []string{b.target, joinMultiline(b.lines, b.concat)},
+		Tags:    b.tags,
+	}
+	if ev, ok := toEvent(c.opts.Network, syn, gc.GetNick()); ok {
+		c.emit(ev)
+	}
+}
+
+// joinMultiline concatenates batch lines: each is preceded by a newline except
+// where draft/multiline-concat asks for it to be glued to the previous line.
+func joinMultiline(lines []string, concat []bool) string {
+	var b strings.Builder
+	for i, ln := range lines {
+		if i > 0 && (i >= len(concat) || !concat[i]) {
+			b.WriteByte('\n')
+		}
+		b.WriteString(ln)
+	}
+	return b.String()
 }
 
 // knownCaps are the IRCv3 capabilities stugan cares about; Caps reports
@@ -371,7 +503,7 @@ var knownCaps = []string{
 	"message-tags", "multi-prefix", "extended-join", "userhost-in-names",
 	"chghost", "setname", "invite-notify", "draft/chathistory", "chathistory",
 	"account-tag", "labeled-response", "standard-replies",
-	"draft/message-redaction",
+	"draft/message-redaction", "draft/multiline",
 }
 
 // Caps returns the negotiated IRCv3 capabilities (from the set stugan uses).

@@ -104,7 +104,7 @@
   background: #000080;
   color: #fff;
 }
-:root[data-theme="mirc"] .chat-input input,
+:root[data-theme="mirc"] .chat-input textarea,
 :root[data-theme="mirc"] .topbar .search {
   background: #fff;
   color: #000;
@@ -867,6 +867,11 @@ body {
      gets bumped to its own row below the nick. */
   flex: 1 1 0;
   min-width: 0;
+  /* pre-wrap preserves the newlines a draft/multiline message carries (and
+     incidental runs of spaces in pasted text) while still wrapping long lines;
+     overflow-wrap breaks an unbroken token rather than overflowing. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .message a {
   color: var(--accent);
@@ -1106,6 +1111,7 @@ body {
 }
 .chat-input {
   display: flex;
+  align-items: flex-end; /* keep the buttons at the bottom as the textarea grows */
   padding: 10px;
   padding-bottom: max(10px, env(safe-area-inset-bottom));
   padding-left: max(10px, env(safe-area-inset-left));
@@ -1118,14 +1124,21 @@ body {
   flex: 1;
   min-width: 0;
 }
-.chat-input input {
+.chat-input textarea {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
   color: var(--fg);
+  font: inherit;
   font-size: 14px;
+  line-height: 1.4;
+  resize: none;
+  overflow-y: auto;
+  max-height: 160px;
+  box-sizing: border-box;
+  display: block;
 }
 .chat-input button {
   padding: 8px 16px;
@@ -1893,7 +1906,7 @@ body {
     padding: 8px;
     padding-bottom: max(8px, env(safe-area-inset-bottom));
   }
-  .chat-input input {
+  .chat-input textarea {
     font-size: 16px; /* prevent iOS zoom */
     padding: 10px 12px;
   }
