@@ -36,6 +36,8 @@ import {
   type WireError,
   type HighlightRules,
   type AliasTable,
+  type FriendDTO,
+  type MonitorRef,
   type MuteSet,
   type BufClose,
   type NetReorder,
@@ -87,6 +89,7 @@ export interface Network {
   state: string;
   caps: string[]; // negotiated IRCv3 caps (gates reaction/redaction UI)
   buffers: Buffer[];
+  friends: FriendDTO[]; // MONITOR list with live presence (sidebar friends)
 }
 
 export type View = "chat" | "mentions" | "search";
@@ -626,13 +629,24 @@ export class Connection {
   private applyNetwork(dto: NetworkDTO, adoptUnread = false) {
     let net = this.store.networks.find((n) => n.id === dto.id);
     if (!net) {
-      net = { id: dto.id, name: dto.name, nick: dto.nick, state: dto.state, caps: dto.caps ?? [], buffers: [] };
+      net = { id: dto.id, name: dto.name, nick: dto.nick, state: dto.state, caps: dto.caps ?? [], buffers: [], friends: [] };
       this.store.networks.push(net);
     } else {
       net.name = dto.name;
       net.nick = dto.nick;
       net.state = dto.state;
       net.caps = dto.caps ?? [];
+    }
+    // Friends (MONITOR): adopt the new list + presence. On a live update (not
+    // the init snapshot), toast any friend that just transitioned to online.
+    const wasOnline = new Map(net.friends.map((f) => [f.nick.toLowerCase(), f.online]));
+    net.friends = dto.friends ?? [];
+    if (!adoptUnread) {
+      for (const f of net.friends) {
+        if (f.online && !wasOnline.get(f.nick.toLowerCase())) {
+          this.pushToast({ code: "friend", message: `${f.nick} is online on ${net.name}` });
+        }
+      }
     }
     const existing = new Map(net.buffers.map((b) => [b.name.toLowerCase(), b]));
     net.buffers = dto.channels.map((c) => {
@@ -1003,6 +1017,17 @@ export class Connection {
   // frame), which refreshes store.highlight; a bad regex returns an error.
   setHighlight(patterns: string[], exceptions: string[]) {
     this.sendFrame<HighlightRules>(T.HighlightSet, { patterns, exceptions });
+  }
+
+  // addFriend / removeFriend manage a network's MONITOR list. The server arms
+  // MONITOR, persists the list, and re-broadcasts the network (net:update),
+  // which refreshes net.friends here.
+  addFriend(network: string, nick: string) {
+    this.sendFrame<MonitorRef>(T.MonitorAdd, { network, nick });
+  }
+
+  removeFriend(network: string, nick: string) {
+    this.sendFrame<MonitorRef>(T.MonitorRemove, { network, nick });
   }
 
   // setAliases replaces the command-alias table. The server normalizes names,

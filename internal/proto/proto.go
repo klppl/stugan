@@ -51,6 +51,8 @@ const (
 	TRead         = "read"           // c2s mark a buffer read; s2c broadcast of that to the user's other tabs
 	THighlightSet = "highlight:set"  // c2s — replace the highlight ruleset
 	TAliasSet     = "aliases:set"    // c2s — replace the command-alias table
+	TMonitorAdd   = "monitor:add"    // c2s — add a nick to a network's friends list
+	TMonitorRem   = "monitor:remove" // c2s — remove a nick from a network's friends list
 	TMute         = "mute"           // c2s set intent; s2c absolute state broadcast to the user's tabs
 	TBufClose     = "buf:close"      // c2s — close/remove a query buffer from state
 	TBufReorder   = "buf:reorder"    // c2s — manual buffer order within a network
@@ -104,6 +106,15 @@ type NetworkDTO struct {
 	State    string       `json:"state"`
 	Caps     []string     `json:"caps,omitempty"` // negotiated IRCv3 caps
 	Channels []ChannelDTO `json:"channels"`
+	// Friends is the network's MONITOR list with live presence, for the sidebar
+	// friends section. Omitted when the network has no friends.
+	Friends []FriendDTO `json:"friends,omitempty"`
+}
+
+// FriendDTO is one monitored nick and whether it is currently online.
+type FriendDTO struct {
+	Nick   string `json:"nick"`
+	Online bool   `json:"online"`
 }
 
 // ChannelDTO is the wire projection of core.Channel. State is an opaque
@@ -470,6 +481,14 @@ type MuteSet struct {
 	Network string `json:"network"`
 	Buffer  string `json:"buffer"`
 	Muted   bool   `json:"muted"`
+}
+
+// MonitorRef identifies a nick to add to or remove from a network's friends
+// list (monitor:add / monitor:remove). The updated list rides the following
+// net:update snapshot, so there is no dedicated reply.
+type MonitorRef struct {
+	Network string `json:"network"`
+	Nick    string `json:"nick"`
 }
 
 // BufClose is a client→server request to close a query/DM buffer, removing it

@@ -487,6 +487,41 @@ body {
   margin: 0;
   padding: 0;
 }
+.friends {
+  list-style: none;
+  margin: 2px 0 6px;
+  padding: 0;
+}
+.friends-header {
+  padding: 3px 16px 3px 24px;
+  font-size: 0.72em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+}
+.friends .friend {
+  padding: 4px 16px 4px 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.friends .friend:hover {
+  background: var(--bg-alt);
+}
+.friends .friend.offline {
+  opacity: 0.45;
+}
+.friend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  flex: none;
+}
+.friend-dot.on {
+  background: #3fb950;
+}
 .buffers li {
   padding: 5px 16px 5px 24px;
   cursor: pointer;

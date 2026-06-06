@@ -88,6 +88,12 @@ func (n *Network) clone() *Network {
 		}
 		nc.Channels[j] = cc
 	}
+	if len(n.MonitorOnline) > 0 {
+		nc.MonitorOnline = make(map[string]bool, len(n.MonitorOnline))
+		for k, v := range n.MonitorOnline {
+			nc.MonitorOnline[k] = v
+		}
+	}
 	return nc
 }
 
@@ -106,6 +112,11 @@ type Network struct {
 	// Params is the full connection config (addr, TLS, SASL, …). Retained
 	// so the GUI can read/edit it; never included in the wire snapshot.
 	Params NetworkParams
+	// MonitorOnline is the live presence of monitored nicks (the friends list,
+	// Params.Monitor): lowercased nick → online. A monitored nick absent from
+	// the map is offline/unknown until the server reports it (730/731). Rebuilt
+	// each connection, so not persisted.
+	MonitorOnline map[string]bool
 }
 
 // Channel returns the buffer with the given name (case-insensitive), or nil.

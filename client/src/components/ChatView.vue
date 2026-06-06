@@ -465,6 +465,17 @@ function ctxDM() {
   memberCtx.close();
   if (ui.isMobile) closeDrawers();
 }
+function isFriended(nick: string): boolean {
+  const net = connection.store.networks.find((n) => n.id === store.active?.network);
+  return net?.friends.some((f) => f.nick.toLowerCase() === nick.toLowerCase()) ?? false;
+}
+function ctxFriend() {
+  const m = memberCtx.state.value?.payload;
+  if (!m || !store.active) return;
+  if (isFriended(m.nick)) connection.removeFriend(store.active.network, m.nick);
+  else connection.addFriend(store.active.network, m.nick);
+  memberCtx.close();
+}
 function ctxMode(flag: "o" | "h" | "v") {
   // Use the /op /deop /voice /devoice /halfop /dehalfop built-ins —
   // they expand to a single MODE line and work in the current channel.
@@ -646,6 +657,9 @@ async function onDrop(e: DragEvent) {
           <button class="ctx-item" type="button" @click="ctxIgnore">Ignore</button>
           <button class="ctx-item" type="button" @click="ctxUnignore">Unignore</button>
           <button class="ctx-item" type="button" @click="ctxDM">Open DM</button>
+          <button class="ctx-item" type="button" @click="ctxFriend">
+            {{ isFriended(memberCtx.state.value.payload.nick) ? "Remove from friends" : "Add to friends" }}
+          </button>
           <div class="ctx-sep"></div>
           <button class="ctx-item" type="button" :disabled="!activeChannel()" @click="ctxMode('o')">
             {{ hasMode(memberCtx.state.value.payload, 'o') ? "−o (deop)" : "+o (op)" }}

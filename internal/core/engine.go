@@ -681,6 +681,66 @@ func (e *Engine) SetConnected(id string, connect bool) error {
 	return nil
 }
 
+// AddMonitor adds a nick to a network's friends list (IRCv3 MONITOR): it
+// updates and persists Params.Monitor and, on a registered connection, arms the
+// watch with MONITOR +. A reconnect re-arms the whole list from Params. No-op
+// if the nick is already monitored.
+func (e *Engine) AddMonitor(networkID, nick string) error {
+	nick = strings.TrimSpace(nick)
+	if nick == "" {
+		return errors.New("empty nick")
+	}
+	e.mu.Lock()
+	n := e.user.Network(networkID)
+	if n == nil {
+		e.mu.Unlock()
+		return errors.New("unknown network")
+	}
+	if slices.ContainsFunc(n.Params.Monitor, func(s string) bool { return eqFold(s, nick) }) {
+		e.mu.Unlock()
+		return nil
+	}
+	n.Params.Monitor = append(n.Params.Monitor, strings.ToLower(nick))
+	conn := e.conns[networkID]
+	registered := n.State == StateRegistered
+	p := n.Params.clone()
+	e.mu.Unlock()
+
+	if conn != nil && registered {
+		_ = conn.SendRaw("MONITOR + " + nick)
+	}
+	e.persistAndNotify(p)
+	return nil
+}
+
+// RemoveMonitor drops a nick from the friends list, clearing its live presence
+// and sending MONITOR - on a registered connection. No-op if not monitored.
+func (e *Engine) RemoveMonitor(networkID, nick string) error {
+	e.mu.Lock()
+	n := e.user.Network(networkID)
+	if n == nil {
+		e.mu.Unlock()
+		return errors.New("unknown network")
+	}
+	before := len(n.Params.Monitor)
+	n.Params.Monitor = slices.DeleteFunc(n.Params.Monitor, func(s string) bool { return eqFold(s, nick) })
+	if len(n.Params.Monitor) == before {
+		e.mu.Unlock()
+		return nil
+	}
+	delete(n.MonitorOnline, strings.ToLower(nick))
+	conn := e.conns[networkID]
+	registered := n.State == StateRegistered
+	p := n.Params.clone()
+	e.mu.Unlock()
+
+	if conn != nil && registered {
+		_ = conn.SendRaw("MONITOR - " + nick)
+	}
+	e.persistAndNotify(p)
+	return nil
+}
+
 // connFor returns the connection for a network id, race-safely.
 func (e *Engine) connFor(id string) IRCConn {
 	e.mu.RLock()
@@ -1251,6 +1311,9 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 			msg += ": " + ev.Text
 		}
 		sys(StatusBuffer, msg)
+		// Drop stale friend presence: a dropped connection knows nothing about
+		// who is online until MONITOR re-reports after the next registration.
+		n.MonitorOnline = nil
 		netChanged = true
 
 	case EvMessageIn:
@@ -1284,6 +1347,25 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		for _, c := range n.Channels {
 			if m, ok := c.Members[lower(ev.Nick)]; ok {
 				m.Away = ev.Away
+				netChanged = true
+			}
+		}
+
+	case EvMonitor:
+		// MONITOR reply (730 online / 731 offline): record the presence of each
+		// reported nick that is actually on our friends list. The fresh snapshot
+		// pushed on netChanged carries the update to the client.
+		if n.MonitorOnline == nil {
+			n.MonitorOnline = make(map[string]bool)
+		}
+		friends := make(map[string]bool, len(n.Params.Monitor))
+		for _, f := range n.Params.Monitor {
+			friends[lower(f)] = true
+		}
+		for _, nk := range ev.Args {
+			lk := lower(nk)
+			if friends[lk] {
+				n.MonitorOnline[lk] = ev.Online
 				netChanged = true
 			}
 		}

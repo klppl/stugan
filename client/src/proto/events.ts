@@ -39,6 +39,8 @@ export const T = {
   Read: "read",
   HighlightSet: "highlight:set",
   AliasSet: "aliases:set",
+  MonitorAdd: "monitor:add",
+  MonitorRemove: "monitor:remove",
   Mute: "mute",
   BufClose: "buf:close",
   BufReorder: "buf:reorder",
@@ -125,6 +127,20 @@ export interface NetworkDTO {
   state: string;
   caps?: string[];
   channels: ChannelDTO[];
+  friends?: FriendDTO[];
+}
+
+// FriendDTO is one monitored nick and whether it is currently online.
+export interface FriendDTO {
+  nick: string;
+  online: boolean;
+}
+
+// MonitorRef adds/removes a nick from a network's friends list (monitor:add /
+// monitor:remove). The updated list rides the next net:update snapshot.
+export interface MonitorRef {
+  network: string;
+  nick: string;
 }
 
 export interface ChannelDTO {

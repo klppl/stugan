@@ -60,6 +60,7 @@ authoritative.
 | `insecure` | bool | Skip TLS certificate verification (self-signed / LAN servers only). |
 | `nick` / `user` / `realname` | string | Identity. |
 | `channels` | []string | Auto-join on connect. |
+| `monitor` | []string | Friends list watched via IRCv3 MONITOR (online/offline). Editable from the GUI thereafter. |
 | `connect` | bool | Connect on startup (default true). |
 | `sasl_user` / `sasl_pass` | string | SASL PLAIN credentials. |
 | `sasl_external` | bool | Use SASL EXTERNAL (CertFP) instead of a password. |

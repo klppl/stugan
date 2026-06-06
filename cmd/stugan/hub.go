@@ -289,7 +289,7 @@ func (c ircConnector) Dial(p core.NetworkParams, h core.ConnHandler) (core.IRCCo
 		Nick: p.Nick, User: p.User, Realname: p.Realname,
 		SASLUser: p.SASLUser, SASLPass: p.SASLPass,
 		ServerPass: p.ServerPass, SASLExternal: p.SASLExternal, CertPEM: p.CertPEM,
-		Channels: p.Channels, ChannelKeys: p.ChannelKeys, Logger: c.log,
+		Channels: p.Channels, ChannelKeys: p.ChannelKeys, Monitor: p.Monitor, Logger: c.log,
 	}, h)
 }
 
@@ -311,6 +311,7 @@ func paramsFromConfig(n config.NetworkConfig, log *slog.Logger) core.NetworkPara
 		TLS: n.TLS, Insecure: n.Insecure,
 		Nick: n.Nick, User: n.User, Realname: n.Realname,
 		SASLUser: n.SASLUser, SASLPass: n.SASLPass, Channels: n.Channels,
+		Monitor:    n.Monitor,
 		ServerPass: n.ServerPass, Perform: n.Perform,
 		SASLExternal: n.SASLExternal, CertPEM: certPEM,
 	}

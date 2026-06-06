@@ -52,6 +52,11 @@ const (
 	// numeric code so the engine can clear request-tracking state on the
 	// "END OF" markers.
 	EvNumeric EventType = "numeric"
+	// EvMonitor is an IRCv3 MONITOR status reply (730 online / 731 offline):
+	// Args lists the affected nicks and Online is their new presence. One event
+	// carries a whole numeric's worth of nicks so a connect-time burst is a
+	// single state update, not one per friend.
+	EvMonitor EventType = "monitor"
 
 	// evSetState is internal: it carries a transient connection-state
 	// change (e.g. Connecting) onto the engine loop so all state mutation
@@ -96,6 +101,7 @@ type Event struct {
 	Members     []Member     // EvNames: the listed channel members
 	MemberModes []MemberMode // EvMode: the membership prefix changes
 	Away        bool         // EvAway: whether Nick is now away
+	Online      bool         // EvMonitor: whether the Args nicks are now online
 	Count       int          // EvListItem: user count
 }
 

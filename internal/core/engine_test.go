@@ -487,6 +487,51 @@ func TestSetAliasesRuntime(t *testing.T) {
 	}
 }
 
+// TestMonitorFriends covers the friends-list lifecycle: add updates and dedups
+// the persisted list, a 730/731 reply (EvMonitor) flips presence for listed
+// nicks only, and remove clears both the list and the presence.
+func TestMonitorFriends(t *testing.T) {
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	if err := e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.AddMonitor("n", "Bob"); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.SnapshotNetwork("n").Params.Monitor; !slices.Equal(got, []string{"bob"}) {
+		t.Fatalf("Monitor = %v, want [bob]", got)
+	}
+	_ = e.AddMonitor("n", "bob") // duplicate (case-insensitive) is a no-op
+	if got := e.SnapshotNetwork("n").Params.Monitor; len(got) != 1 {
+		t.Fatalf("duplicate add grew the list: %v", got)
+	}
+
+	// A 730 reply marks a listed friend online; a non-friend is ignored.
+	e.apply(Event{Type: EvMonitor, Network: "n", Online: true, Args: []string{"bob"}})
+	e.apply(Event{Type: EvMonitor, Network: "n", Online: true, Args: []string{"eve"}})
+	snap := e.SnapshotNetwork("n")
+	if !snap.MonitorOnline["bob"] {
+		t.Fatal("bob not online after 730")
+	}
+	if _, ok := snap.MonitorOnline["eve"]; ok {
+		t.Fatal("non-friend eve was tracked")
+	}
+
+	// Remove clears both the list and the presence.
+	if err := e.RemoveMonitor("n", "BOB"); err != nil {
+		t.Fatal(err)
+	}
+	snap = e.SnapshotNetwork("n")
+	if len(snap.Params.Monitor) != 0 {
+		t.Fatalf("Monitor not cleared: %v", snap.Params.Monitor)
+	}
+	if _, ok := snap.MonitorOnline["bob"]; ok {
+		t.Fatal("presence not cleared on remove")
+	}
+}
+
 func TestApplyNickRename(t *testing.T) {
 	e, _ := newTestEngine(t)
 	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Buffer: "#go"})

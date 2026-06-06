@@ -64,6 +64,7 @@ nick     = "stuganuser"
 user     = "stuganuser"
 realname = "stugan"
 channels = ["#stugan"]
+# monitor = ["friend1", "friend2"]   # IRCv3 MONITOR friends list (online/offline)
 connect  = true
 # sasl_user = "account"           # SASL PLAIN account…
 # sasl_pass = "secret"            # …and its password

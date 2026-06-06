@@ -187,6 +187,9 @@ type NetworkConfig struct {
 	Perform []string `toml:"perform"`
 	// Channels to auto-join after connect/registration.
 	Channels []string `toml:"channels"`
+	// Monitor is the friends list watched via IRCv3 MONITOR (online/offline
+	// notifications). Editable from the GUI thereafter.
+	Monitor []string `toml:"monitor"`
 	// Connect, when false, leaves the network configured but idle.
 	Connect bool `toml:"connect"`
 }

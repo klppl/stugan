@@ -32,39 +32,39 @@ Features built on top:
 - **Message redaction** (`draft/message-redaction`) — a hover ✕ on your own
   messages sends `REDACT`; inbound `REDACT` removes the message from the view.
 - **Typing** (`+typing` TAGMSG) — typing indicators.
+- **Friends / MONITOR** (`MONITOR`, numerics 730/731) — a per-network friends
+  list (`NetworkParams.Monitor`, persisted) re-armed with `MONITOR +` on each
+  register. 730/731 become `EvMonitor`, updating `Network.MonitorOnline`, which
+  rides the network snapshot to a sidebar "friends" section (presence dots,
+  click-to-DM); a toast fires when a friend comes online. Add/remove from the
+  nick context menu.
 
 ## Roadmap (must-haves, prioritized)
 
-1. **MONITOR / notify-list** (`MONITOR`, numerics 730–737; `extended-monitor`).
-   Online/offline tracking for a saved nick list — a "friends" panel with
-   presence dots. Needs: ISUPPORT `MONITOR` check, `MONITOR +` on register,
-   730/731 (online/offline) handling, a persisted list, and a sidebar UI.
-   Mostly additive; the cost is the new UI surface.
-
-2. **BATCH + `draft/multiline`** (`batch`, `draft/multiline`).
+1. **BATCH + `draft/multiline`** (`batch`, `draft/multiline`).
    Send/receive a message split across several lines as one logical block.
    Requires a general `BATCH` state machine in `internal/irc` (also the right
    foundation for grouping `chathistory` replays). Highest-effort item.
 
-3. **`draft/read-marker`** (`MARKREAD`). Sync the read position across
+2. **`draft/read-marker`** (`MARKREAD`). Sync the read position across
    devices/clients server-side, instead of the current client-only unread
    divider. Pairs naturally with the existing divider work.
 
-4. **Redaction persistence.** Today a `REDACT` only removes the live copy;
+3. **Redaction persistence.** Today a `REDACT` only removes the live copy;
    the message still sits in the SQLite history and returns on reload. Delete
    (or tombstone) by msgid in `internal/store` so redactions survive.
 
-5. **SASL SCRAM** (`SCRAM-SHA-256`). We do PLAIN and EXTERNAL/CertFP; SCRAM
+4. **SASL SCRAM** (`SCRAM-SHA-256`). We do PLAIN and EXTERNAL/CertFP; SCRAM
    avoids sending the password even once. Depends on girc support.
 
-6. **`draft/chathistory` depth** — `CHATHISTORY TARGETS`, proper pagination
+5. **`draft/chathistory` depth** — `CHATHISTORY TARGETS`, proper pagination
    (BEFORE/AFTER/BETWEEN), and unread sync, to lean on server history where
    available instead of only the local SQLite backlog.
 
-7. **Surface `chghost` / `setname`** — we negotiate them but don't reflect
+6. **Surface `chghost` / `setname`** — we negotiate them but don't reflect
    host/realname changes anywhere user-visible.
 
-8. **`soju.im/bouncer-networks`** — manage bouncer-side networks from the UI
+7. **`soju.im/bouncer-networks`** — manage bouncer-side networks from the UI
    when connected through soju.
 
 Lower priority / nice-to-have: `utf8only`, `draft/channel-rename`,

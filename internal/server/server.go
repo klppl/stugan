@@ -720,6 +720,24 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		// in sync without a reload.
 		s.broadcast(c.user, proto.TAliases, proto.AliasTable{Aliases: aliases})
 
+	case proto.TMonitorAdd:
+		bestHandle(env,
+			func(d proto.MonitorRef) bool { return d.Network != "" && d.Nick != "" },
+			func(d proto.MonitorRef) {
+				if err := c.tenant.Engine.AddMonitor(d.Network, d.Nick); err != nil {
+					s.log.Error("monitor add", "network", d.Network, "nick", d.Nick, "err", err)
+				}
+			})
+
+	case proto.TMonitorRem:
+		bestHandle(env,
+			func(d proto.MonitorRef) bool { return d.Network != "" && d.Nick != "" },
+			func(d proto.MonitorRef) {
+				if err := c.tenant.Engine.RemoveMonitor(d.Network, d.Nick); err != nil {
+					s.log.Error("monitor remove", "network", d.Network, "nick", d.Nick, "err", err)
+				}
+			})
+
 	case proto.TMute:
 		bestHandle(env,
 			func(d proto.MuteSet) bool { return d.Network != "" && d.Buffer != "" },

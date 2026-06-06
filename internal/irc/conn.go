@@ -50,7 +50,10 @@ type Options struct {
 	// ChannelKeys maps a channel in Channels to its join key (+k password).
 	// Channels without a key are absent.
 	ChannelKeys map[string]string
-	Logger      *slog.Logger
+	// Monitor is the friends list watched via IRCv3 MONITOR, re-armed after
+	// registration on every (re)connect.
+	Monitor []string
+	Logger  *slog.Logger
 }
 
 // Conn is a girc-backed implementation of core.IRCConn.
@@ -158,7 +161,14 @@ func (c *Conn) registerHandlers() {
 	h.Add(girc.CONNECTED, func(gc *girc.Client, _ girc.Event) {
 		c.emit(core.Event{Type: core.EvConnect, Network: c.opts.Network, Nick: gc.GetNick()})
 		c.autojoin(gc)
+		c.armMonitor(gc)
 	})
+
+	// MONITOR status replies: 730 = the listed nicks are online, 731 = offline.
+	// These don't go through toEvent (they're not user-visible system lines) —
+	// they update the friends-list presence directly.
+	h.Add(girc.RPL_MONONLINE, func(_ *girc.Client, e girc.Event) { c.emitMonitor(&e, true) })
+	h.Add(girc.RPL_MONOFFLINE, func(_ *girc.Client, e girc.Event) { c.emitMonitor(&e, false) })
 	h.Add(girc.DISCONNECTED, func(_ *girc.Client, e girc.Event) {
 		c.emit(core.Event{Type: core.EvDisconnect, Network: c.opts.Network, Text: e.Last()})
 	})
@@ -217,6 +227,44 @@ func (c *Conn) autojoin(gc *girc.Client) {
 	}
 	if len(keyless) > 0 {
 		gc.Cmd.Join(keyless...)
+	}
+}
+
+// monitorChunk is how many nicks ride one MONITOR + command. MONITOR targets
+// are comma-separated in a single parameter, so this keeps the line well within
+// IRC's 512-byte budget; a list longer than the server's MONITOR limit just
+// draws a 734 the server handles.
+const monitorChunk = 15
+
+// armMonitor watches the friends list via MONITOR after registration, chunked
+// so a long list stays within the line-length budget.
+func (c *Conn) armMonitor(gc *girc.Client) {
+	for i := 0; i < len(c.opts.Monitor); i += monitorChunk {
+		end := min(i+monitorChunk, len(c.opts.Monitor))
+		gc.Cmd.Monitor('+', strings.Join(c.opts.Monitor[i:end], ","))
+	}
+}
+
+// emitMonitor turns a 730/731 reply into an EvMonitor. The trailing param is a
+// comma-separated target list — nick!user@host for 730, bare nick for 731 — so
+// we keep just the nick of each.
+func (c *Conn) emitMonitor(e *girc.Event, online bool) {
+	list := e.Last()
+	if list == "" {
+		return
+	}
+	var nicks []string
+	for tok := range strings.SplitSeq(list, ",") {
+		tok = strings.TrimSpace(tok)
+		if i := strings.IndexByte(tok, '!'); i >= 0 {
+			tok = tok[:i]
+		}
+		if tok != "" {
+			nicks = append(nicks, tok)
+		}
+	}
+	if len(nicks) > 0 {
+		c.emit(core.Event{Type: core.EvMonitor, Network: c.opts.Network, Online: online, Args: nicks})
 	}
 }
 

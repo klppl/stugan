@@ -8,6 +8,38 @@ import (
 	"github.com/lrstanley/girc"
 )
 
+// recordHandler captures emitted core events for assertions.
+type recordHandler struct{ evs []core.Event }
+
+func (h *recordHandler) HandleEvent(ev core.Event) { h.evs = append(h.evs, ev) }
+
+func TestEmitMonitor(t *testing.T) {
+	h := &recordHandler{}
+	c, err := New(Options{Network: "n", Addr: "a:6667", Nick: "me"}, h)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// 730: online, nick!user@host comma list — keep just the nicks.
+	c.emitMonitor(girc.ParseEvent(":serv 730 me :alice!u@h,bob!u@h"), true)
+	// 731: offline, bare nicks.
+	c.emitMonitor(girc.ParseEvent(":serv 731 me :carol"), false)
+	if len(h.evs) != 2 {
+		t.Fatalf("emitted %d events, want 2", len(h.evs))
+	}
+	if on := h.evs[0]; on.Type != core.EvMonitor || !on.Online ||
+		!slices.Equal(on.Args, []string{"alice", "bob"}) {
+		t.Fatalf("online event = %+v", on)
+	}
+	if off := h.evs[1]; off.Online || !slices.Equal(off.Args, []string{"carol"}) {
+		t.Fatalf("offline event = %+v", off)
+	}
+	// An empty target list emits nothing.
+	c.emitMonitor(girc.ParseEvent(":serv 731 me :"), false)
+	if len(h.evs) != 2 {
+		t.Fatal("empty MONITOR list emitted an event")
+	}
+}
+
 func TestToEvent(t *testing.T) {
 	const self = "me"
 	tests := []struct {

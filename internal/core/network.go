@@ -22,6 +22,9 @@ type NetworkParams struct {
 	SASLUser string   `json:"sasl_user"`
 	SASLPass string   `json:"sasl_pass"`
 	Channels []string `json:"channels"`
+	// Monitor is the friends list: lowercased nicks watched via IRCv3 MONITOR,
+	// re-armed on every (re)connect. Empty when the network has no friends.
+	Monitor []string `json:"monitor,omitempty"`
 	// ChannelKeys maps a channel name (as stored in Channels) to its join key
 	// (+k password), so keyed channels rejoin automatically on (re)connect.
 	// Channels without a key are simply absent from the map.
@@ -61,6 +64,9 @@ func (p NetworkParams) clone() NetworkParams {
 	}
 	if p.Fallbacks != nil {
 		c.Fallbacks = append([]string(nil), p.Fallbacks...)
+	}
+	if p.Monitor != nil {
+		c.Monitor = append([]string(nil), p.Monitor...)
 	}
 	if p.Perform != nil {
 		c.Perform = append([]string(nil), p.Perform...)

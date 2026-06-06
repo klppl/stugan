@@ -15,6 +15,20 @@ const keyDialogFor = ref<{ network: string; buffer: string } | null>(null);
 
 const ctx = useContextMenu<{ network: string; buffer: string; kind: string }>({ height: 180 });
 
+// Friends (MONITOR): online first, then alphabetical. Clicking one opens a DM.
+function sortedFriends(net: Network) {
+  return [...net.friends].sort(
+    (a, b) => Number(b.online) - Number(a.online) || a.nick.localeCompare(b.nick),
+  );
+}
+function onlineCount(net: Network) {
+  return net.friends.filter((f) => f.online).length;
+}
+function openFriend(network: string, nick: string) {
+  connection.openQuery(network, nick);
+  closeDrawers();
+}
+
 // Easter egg: tap the brand 5 times in quick succession to flip into (and
 // back out of) the hidden mIRC theme. The streak resets if you pause too
 // long, so accidental double-clicks never trip it.
@@ -256,6 +270,20 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
             :class="{ highlight: buf.highlight > 0 }"
             >{{ buf.unread }}</span
           >
+        </li>
+      </ul>
+      <ul v-if="net.friends.length" class="friends">
+        <li class="friends-header">friends · {{ onlineCount(net) }}/{{ net.friends.length }} online</li>
+        <li
+          v-for="f in sortedFriends(net)"
+          :key="f.nick"
+          class="friend"
+          :class="{ offline: !f.online }"
+          :title="f.online ? f.nick + ' is online — click to DM' : f.nick + ' is offline'"
+          @click="openFriend(net.id, f.nick)"
+        >
+          <span class="friend-dot" :class="{ on: f.online }"></span>
+          <span class="friend-nick">{{ f.nick }}</span>
         </li>
       </ul>
     </div>

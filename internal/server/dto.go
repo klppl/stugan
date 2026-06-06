@@ -118,6 +118,16 @@ func toNetworkDTO(n *core.Network) proto.NetworkDTO {
 	for _, c := range n.Channels {
 		chans = append(chans, toChannelDTO(c))
 	}
+	var friends []proto.FriendDTO
+	if len(n.Params.Monitor) > 0 {
+		friends = make([]proto.FriendDTO, 0, len(n.Params.Monitor))
+		for _, nick := range n.Params.Monitor {
+			friends = append(friends, proto.FriendDTO{
+				Nick:   nick,
+				Online: n.MonitorOnline[strings.ToLower(nick)],
+			})
+		}
+	}
 	return proto.NetworkDTO{
 		ID:       n.ID,
 		Name:     n.Name,
@@ -125,6 +135,7 @@ func toNetworkDTO(n *core.Network) proto.NetworkDTO {
 		State:    string(n.State),
 		Caps:     n.Caps,
 		Channels: chans,
+		Friends:  friends,
 	}
 }
 
