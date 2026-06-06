@@ -20,9 +20,12 @@ import (
 // Options configures a single network connection. main builds these from
 // config so this package never imports the config package.
 type Options struct {
-	Network  string // network id/name, stamped onto every event
-	Addr     string // host:port
-	TLS      bool
+	Network string // network id/name, stamped onto every event
+	Addr    string // host:port
+	TLS     bool
+	// Insecure skips TLS certificate verification (self-signed / LAN
+	// servers). Only meaningful with TLS.
+	Insecure bool
 	Nick     string
 	User     string
 	Realname string
@@ -93,19 +96,24 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 			"draft/message-redaction": nil,
 		},
 	}
-	// A client certificate enables CertFP and is required for SASL EXTERNAL.
-	// girc uses our TLSConfig verbatim when set, so we must supply ServerName
-	// ourselves (girc only fills it in for its own default config).
-	if opts.CertPEM != "" {
-		cert, err := tls.X509KeyPair([]byte(opts.CertPEM), []byte(opts.CertPEM))
-		if err != nil {
-			return nil, fmt.Errorf("parse client certificate: %w", err)
+	// A client certificate (CertFP / SASL EXTERNAL) or skipping verification
+	// (self-signed servers) both need our own TLSConfig. girc uses it verbatim
+	// when set, so we must supply ServerName ourselves (girc only fills it in
+	// for its own default config).
+	if opts.CertPEM != "" || opts.Insecure {
+		tcfg := &tls.Config{
+			ServerName:         host,
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: opts.Insecure, // user opt-in for self-signed/LAN servers
 		}
-		gcfg.TLSConfig = &tls.Config{
-			ServerName:   host,
-			Certificates: []tls.Certificate{cert},
-			MinVersion:   tls.VersionTLS12,
+		if opts.CertPEM != "" {
+			cert, err := tls.X509KeyPair([]byte(opts.CertPEM), []byte(opts.CertPEM))
+			if err != nil {
+				return nil, fmt.Errorf("parse client certificate: %w", err)
+			}
+			tcfg.Certificates = []tls.Certificate{cert}
 		}
+		gcfg.TLSConfig = tcfg
 	}
 	switch {
 	case opts.SASLExternal:

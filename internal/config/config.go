@@ -157,6 +157,10 @@ type NetworkConfig struct {
 	Addr string `toml:"addr"`
 	// TLS enables an encrypted connection.
 	TLS bool `toml:"tls"`
+	// Insecure skips TLS certificate verification, for self-signed or
+	// LAN servers. Only meaningful with TLS; never enable it against a
+	// server reached over the public internet.
+	Insecure bool `toml:"insecure"`
 	// Nick, User, and Realname identify the client to the server.
 	Nick     string `toml:"nick"`
 	User     string `toml:"user"`

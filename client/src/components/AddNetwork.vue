@@ -8,6 +8,7 @@ const name = ref("");
 const host = ref("");
 const port = ref(6697);
 const tls = ref(true);
+const insecure = ref(false);
 const nick = ref("");
 const channels = ref("");
 const saslUser = ref("");
@@ -28,6 +29,7 @@ function submit() {
     name: name.value.trim(),
     addr: `${host.value.trim()}:${port.value}`,
     tls: tls.value,
+    insecure: (tls.value && insecure.value) || undefined,
     nick: nick.value.trim(),
     sasl_user: saslUser.value.trim() || undefined,
     sasl_pass: saslPass.value || undefined,
@@ -72,6 +74,7 @@ function submit() {
           <span>Perform</span>
           <textarea v-model="perform" rows="3" spellcheck="false" placeholder="/msg NickServ IDENTIFY hunter2&#10;/join #private secretkey" />
         </label>
+        <label v-if="tls" class="row"><span>Allow self-signed</span><input v-model="insecure" type="checkbox" /></label>
         <label class="row"><span>SASL EXTERNAL</span><input v-model="saslExternal" type="checkbox" /></label>
         <label class="row">
           <span>Client cert</span>
@@ -80,6 +83,8 @@ function submit() {
         <p class="hint">
           Perform runs one command per line after connecting (every reconnect).
           A client cert enables CertFP; tick SASL EXTERNAL to authenticate with it.
+          Allow self-signed skips TLS certificate checks — only for trusted LAN
+          servers, never the public internet.
         </p>
       </template>
 

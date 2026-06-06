@@ -6,10 +6,13 @@ import "maps"
 // at runtime (from the GUI) and persisted, so it carries everything needed
 // to dial — unlike NetworkSpec, which only seeds display state.
 type NetworkParams struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Addr     string   `json:"addr"`
-	TLS      bool     `json:"tls"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Addr string `json:"addr"`
+	TLS  bool   `json:"tls"`
+	// Insecure skips TLS certificate verification (self-signed / LAN
+	// servers). Only meaningful with TLS.
+	Insecure bool     `json:"insecure,omitempty"`
 	Nick     string   `json:"nick"`
 	User     string   `json:"user"`
 	Realname string   `json:"realname"`
