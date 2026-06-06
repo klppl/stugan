@@ -89,12 +89,16 @@ patterns. See [core.md](core.md#highlights).
 ## `[aliases]`
 
 A `name → template` map. `$1`–`$9` are positional args, `$*` is all args, `$N-`
-is args from N onward.
+is args from N onward. The template starts with the slash-command it expands to.
 
 ```toml
 [aliases]
 j = "/join $*"
 ```
+
+Also editable from the GUI (Settings → Aliases) and persisted per user; once
+edited there, the stored set overrides this config block, the same way GUI
+network and highlight changes take precedence.
 
 ## Multi-user — `[auth]` and `[[users]]`
 

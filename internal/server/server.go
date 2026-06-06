@@ -511,6 +511,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	patterns, exceptions := tenant.Engine.HighlightRules()
 	state.Highlight = proto.HighlightRules{Patterns: patterns, Exceptions: exceptions}
+	state.Aliases = proto.AliasTable{Aliases: tenant.Engine.Aliases()}
 	state.Muted = loadMuted(tenant)
 	init, _ := proto.Frame(proto.TInit, state)
 	c.trySend(hello)
@@ -693,6 +694,26 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		s.broadcast(c.user, proto.THighlight, proto.HighlightRules{
 			Patterns: hl.Patterns(), Exceptions: hl.Exceptions(),
 		})
+
+	case proto.TAliasSet:
+		var d proto.AliasTable
+		if err := decode(env, &d); err != nil {
+			c.sendError(env.ID, "bad_request", "invalid aliases:set payload")
+			return
+		}
+		aliases := sanitizeAliases(d.Aliases)
+		c.tenant.Engine.SetAliases(aliases)
+		if c.tenant.Prefs != nil {
+			if b, err := json.Marshal(aliases); err == nil {
+				if err := c.tenant.Prefs.SetPref(prefAliases, string(b)); err != nil {
+					s.log.Error("save aliases", "user", c.user, "err", err)
+				}
+			}
+		}
+		// Echo the normalized table to all of the user's tabs — the requester to
+		// confirm the save (and see dropped/normalized entries), others to stay
+		// in sync without a reload.
+		s.broadcast(c.user, proto.TAliases, proto.AliasTable{Aliases: aliases})
 
 	case proto.TMute:
 		bestHandle(env,

@@ -35,6 +35,7 @@ import {
   type MemberDTO,
   type WireError,
   type HighlightRules,
+  type AliasTable,
   type MuteSet,
   type BufClose,
   type NetReorder,
@@ -153,6 +154,9 @@ export interface Store {
   // Highlight ruleset (regex patterns + exceptions), server-persisted per user.
   // Seeded from init and updated by the highlight settings form.
   highlight: HighlightRules;
+  // Command aliases (name → expansion), server-persisted per user. Seeded from
+  // init and updated by the aliases settings form.
+  aliases: Record<string, string>;
   // Muted buffers as bufKey strings (network + U+001F + lowercased buffer).
   // Server-authoritative: seeded from init, toggled via the mute frame, and
   // shared across the user's devices. A muted buffer shows no badge and fires
@@ -253,6 +257,7 @@ export class Connection {
     toasts: [],
     plugins: [],
     highlight: { patterns: [], exceptions: [] },
+    aliases: {},
     muted: [],
   });
 
@@ -499,6 +504,9 @@ export class Connection {
       case T.Highlight:
         this.store.highlight = env.d as HighlightRules;
         break;
+      case T.Aliases:
+        this.store.aliases = (env.d as AliasTable).aliases ?? {};
+        break;
       case T.Mute:
         this.applyMute(env.d as MuteSet);
         break;
@@ -538,6 +546,7 @@ export class Connection {
     // applying networks, because applyNetwork's unread adoption consults the
     // mute set. (Older servers omit these fields — fall back to empty.)
     this.store.highlight = init.highlight ?? { patterns: [], exceptions: [] };
+    this.store.aliases = init.aliases?.aliases ?? {};
     this.store.muted = (init.muted ?? []).map((r) => bufKey(r.network, r.buffer));
     this.migrateLegacyMutes();
     // adoptUnread: the init snapshot carries authoritative unread/highlight
@@ -977,6 +986,13 @@ export class Connection {
   // frame), which refreshes store.highlight; a bad regex returns an error.
   setHighlight(patterns: string[], exceptions: string[]) {
     this.sendFrame<HighlightRules>(T.HighlightSet, { patterns, exceptions });
+  }
+
+  // setAliases replaces the command-alias table. The server normalizes names,
+  // drops invalid entries, persists the table, and echoes it back (an aliases
+  // frame), which refreshes store.aliases.
+  setAliases(aliases: Record<string, string>) {
+    this.sendFrame<AliasTable>(T.AliasSet, { aliases });
   }
 
   // migrateLegacyMutes carries forward per-channel mutes that older builds

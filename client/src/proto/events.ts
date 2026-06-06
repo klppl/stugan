@@ -22,6 +22,7 @@ export const T = {
   PluginList: "plugin:list",
   CompleteRes: "complete:res",
   Highlight: "highlight",
+  Aliases: "aliases",
   Pong: "pong",
   Error: "error",
   MsgSend: "msg:send",
@@ -37,6 +38,7 @@ export const T = {
   PluginSet: "plugin:setting",
   Read: "read",
   HighlightSet: "highlight:set",
+  AliasSet: "aliases:set",
   Mute: "mute",
   BufClose: "buf:close",
   BufReorder: "buf:reorder",
@@ -59,7 +61,16 @@ export interface InitState {
   user: UserDTO;
   networks: NetworkDTO[];
   highlight: HighlightRules;
+  aliases: AliasTable;
   muted?: MuteRef[];
+}
+
+// AliasTable maps a slash-command name (lowercase, no leading slash) to an
+// expansion template using $1..$9, $* and $N-. Delivered in init, carried by
+// aliases:set, and echoed in an aliases frame after a set (names normalized,
+// invalid entries dropped). Persisted per user.
+export interface AliasTable {
+  aliases: Record<string, string>;
 }
 
 // HighlightRules is the user's highlight ruleset: case-insensitive regex

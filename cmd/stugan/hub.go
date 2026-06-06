@@ -152,12 +152,13 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 		// above / on save, so a compile error here means corrupt stored JSON —
 		// log it and fall back rather than refusing to start.
 		highlighter := userHighlighter(db, cfg, log.With("user", u.Name))
+		aliases := userAliases(db, cfg, log.With("user", u.Name))
 
 		connector := ircConnector{log: log.With("user", u.Name)}
 		eng := core.New(core.Options{
 			Logger:    log.With("user", u.Name),
 			Highlight: highlighter,
-			Aliases:   cfg.Aliases,
+			Aliases:   aliases,
 			User:      &core.User{ID: u.Name, Name: u.Name},
 			Connector: connector,
 			Networks:  db, // persist GUI-added networks
@@ -249,6 +250,24 @@ func userHighlighter(db *store.Store, cfg *config.Config, log *slog.Logger) *cor
 		hl, _ = core.NewHighlighter(cfg.Highlight.Patterns, cfg.Highlight.Exceptions)
 	}
 	return hl
+}
+
+// userAliases builds a user's command-alias table from their stored override
+// (the "aliases" pref, set via the settings UI) when present, falling back to
+// the config aliases. A stored value that fails to parse is logged and ignored
+// so a corrupt blob never blocks startup.
+func userAliases(db *store.Store, cfg *config.Config, log *slog.Logger) map[string]string {
+	if v, err := db.Pref("aliases"); err != nil {
+		log.Warn("read aliases pref", "err", err)
+	} else if v != "" {
+		var m map[string]string
+		if err := json.Unmarshal([]byte(v), &m); err != nil {
+			log.Warn("parse aliases pref; using config", "err", err)
+		} else {
+			return m
+		}
+	}
+	return cfg.Aliases
 }
 
 // registerSinks wires the server's per-user sink onto each engine. Call

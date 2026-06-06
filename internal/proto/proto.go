@@ -33,6 +33,7 @@ const (
 	TPluginList   = "plugin:list"   // s2c (answers c2s plugin:list/plugin:action)
 	TCompleteRes  = "complete:res"  // s2c (answers c2s complete:req)
 	THighlight    = "highlight"     // s2c (current rules; answers highlight:set)
+	TAliases      = "aliases"       // s2c (current alias table; answers aliases:set)
 	TPong         = "pong"          // s2c (answers c2s ping; app-level liveness)
 	TError        = "error"         // s2c
 
@@ -49,6 +50,7 @@ const (
 	TPluginSet    = "plugin:setting" // c2s — set a plugin's declared setting
 	TRead         = "read"           // c2s — mark a buffer read (advance read marker)
 	THighlightSet = "highlight:set"  // c2s — replace the highlight ruleset
+	TAliasSet     = "aliases:set"    // c2s — replace the command-alias table
 	TMute         = "mute"           // c2s set intent; s2c absolute state broadcast to the user's tabs
 	TBufClose     = "buf:close"      // c2s — close/remove a query buffer from state
 	TBufReorder   = "buf:reorder"    // c2s — manual buffer order within a network
@@ -84,6 +86,7 @@ type InitState struct {
 	User      UserDTO        `json:"user"`
 	Networks  []NetworkDTO   `json:"networks"`
 	Highlight HighlightRules `json:"highlight"`
+	Aliases   AliasTable     `json:"aliases"`
 	Muted     []MuteRef      `json:"muted,omitempty"`
 }
 
@@ -436,6 +439,16 @@ type CompleteRes struct {
 type HighlightRules struct {
 	Patterns   []string `json:"patterns"`
 	Exceptions []string `json:"exceptions"`
+}
+
+// AliasTable is the user's command-alias map: a slash-command name (lowercase,
+// no leading slash) to an expansion template using $1..$9, $* and $N-. Like
+// HighlightRules it is delivered in InitState, carried by aliases:set, and
+// echoed back in an aliases frame after a set (with names normalized and
+// blank/invalid entries dropped). Persisted per user, so it survives reloads
+// and is shared across the user's devices.
+type AliasTable struct {
+	Aliases map[string]string `json:"aliases"`
 }
 
 // MuteRef identifies one muted buffer. A muted buffer shows no unread badge and

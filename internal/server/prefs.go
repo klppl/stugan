@@ -12,7 +12,25 @@ import (
 const (
 	prefHighlight = "highlight" // proto.HighlightRules
 	prefMuted     = "muted"     // []proto.MuteRef
+	prefAliases   = "aliases"   // map[string]string (command name → expansion)
 )
+
+// sanitizeAliases normalizes a client-supplied alias table: it lowercases and
+// trims names (dropping a leading slash a user might type), and discards any
+// entry with an empty name, an empty expansion, or whitespace in the name (the
+// name must be a single slash-command token). The result is a fresh map.
+func sanitizeAliases(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		k = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(k), "/"))
+		v = strings.TrimSpace(v)
+		if k == "" || v == "" || strings.ContainsAny(k, " \t") {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
 
 // loadMuted reads a tenant's muted-buffer set, or nil when unset or on any
 // error (mute is a best-effort convenience, never worth failing a request for).
