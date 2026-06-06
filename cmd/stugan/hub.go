@@ -265,7 +265,7 @@ type ircConnector struct{ log *slog.Logger }
 
 func (c ircConnector) Dial(p core.NetworkParams, h core.ConnHandler) (core.IRCConn, error) {
 	return irc.New(irc.Options{
-		Network: p.ID, Addr: p.Addr, TLS: p.TLS,
+		Network: p.ID, Addr: p.Addr, TLS: p.TLS, Insecure: p.Insecure,
 		Nick: p.Nick, User: p.User, Realname: p.Realname,
 		SASLUser: p.SASLUser, SASLPass: p.SASLPass,
 		ServerPass: p.ServerPass, SASLExternal: p.SASLExternal, CertPEM: p.CertPEM,
@@ -287,7 +287,7 @@ func paramsFromConfig(n config.NetworkConfig, log *slog.Logger) core.NetworkPara
 		}
 	}
 	return core.NetworkParams{
-		ID: n.Name, Name: n.Name, Addr: n.Addr, TLS: n.TLS,
+		ID: n.Name, Name: n.Name, Addr: n.Addr, TLS: n.TLS, Insecure: n.Insecure,
 		Nick: n.Nick, User: n.User, Realname: n.Realname,
 		SASLUser: n.SASLUser, SASLPass: n.SASLPass, Channels: n.Channels,
 		ServerPass: n.ServerPass, Perform: n.Perform,

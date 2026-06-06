@@ -213,6 +213,7 @@ export interface NetAdd {
   name: string;
   addr: string;
   tls: boolean;
+  insecure?: boolean;
   nick: string;
   user?: string;
   realname?: string;
@@ -290,6 +291,7 @@ export interface NetConfig {
   name: string;
   addr: string;
   tls: boolean;
+  insecure: boolean;
   nick: string;
   user: string;
   realname: string;

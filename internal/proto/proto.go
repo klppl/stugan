@@ -223,6 +223,7 @@ type NetAdd struct {
 	Name         string   `json:"name"`
 	Addr         string   `json:"addr"`
 	TLS          bool     `json:"tls"`
+	Insecure     bool     `json:"insecure,omitempty"`
 	Nick         string   `json:"nick"`
 	User         string   `json:"user,omitempty"`
 	Realname     string   `json:"realname,omitempty"`
@@ -341,6 +342,7 @@ type NetConfig struct {
 	Name         string   `json:"name"`
 	Addr         string   `json:"addr"`
 	TLS          bool     `json:"tls"`
+	Insecure     bool     `json:"insecure"`
 	Nick         string   `json:"nick"`
 	User         string   `json:"user"`
 	Realname     string   `json:"realname"`

@@ -56,6 +56,7 @@ authoritative.
 | `name` | string | Unique network id / display name. |
 | `addr` | string | `host:port`. |
 | `tls` | bool | Use TLS. |
+| `insecure` | bool | Skip TLS certificate verification (self-signed / LAN servers only). |
 | `nick` / `user` / `realname` | string | Identity. |
 | `channels` | []string | Auto-join on connect. |
 | `connect` | bool | Connect on startup (default true). |

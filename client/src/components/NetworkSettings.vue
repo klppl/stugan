@@ -35,6 +35,7 @@ const form = reactive({
   host: "",
   port: 6697,
   tls: true,
+  insecure: false,
   nick: "",
   user: "",
   realname: "",
@@ -52,6 +53,7 @@ function fill(cfg: NetConfig) {
   form.host = host;
   form.port = port;
   form.tls = cfg.tls;
+  form.insecure = cfg.insecure;
   form.nick = cfg.nick;
   form.user = cfg.user;
   form.realname = cfg.realname;
@@ -90,6 +92,7 @@ function save() {
     name: props.network,
     addr: `${form.host.trim()}:${form.port}`,
     tls: form.tls,
+    insecure: form.tls && form.insecure,
     nick: form.nick.trim(),
     user: form.user.trim(),
     realname: form.realname.trim(),
@@ -146,6 +149,7 @@ function remove() {
             <span>Perform</span>
             <textarea v-model="form.perform" rows="3" spellcheck="false" placeholder="/msg NickServ IDENTIFY hunter2&#10;/join #private secretkey" />
           </label>
+          <label v-if="form.tls" class="row"><span>Allow self-signed</span><input v-model="form.insecure" type="checkbox" /></label>
           <label class="row"><span>SASL EXTERNAL</span><input v-model="form.saslExternal" type="checkbox" /></label>
           <label class="row">
             <span>Client cert</span>
