@@ -14,6 +14,8 @@ const settingsFor = ref<string | null>(null);
 const keyDialogFor = ref<{ network: string; buffer: string } | null>(null);
 
 const ctx = useContextMenu<{ network: string; buffer: string; kind: string }>({ height: 180 });
+// Separate menu for friend rows: right-click (or long-press) to DM or remove.
+const friendCtx = useContextMenu<{ network: string; nick: string }>({ height: 80 });
 
 // Friends (MONITOR): online first, then alphabetical. Clicking one opens a DM.
 function sortedFriends(net: Network) {
@@ -25,8 +27,22 @@ function onlineCount(net: Network) {
   return net.friends.filter((f) => f.online).length;
 }
 function openFriend(network: string, nick: string) {
+  if (friendCtx.shouldSuppressClick()) return; // a long-press opened the menu
   connection.openQuery(network, nick);
   closeDrawers();
+}
+function friendDMFromMenu() {
+  const p = friendCtx.state.value?.payload;
+  if (p) {
+    connection.openQuery(p.network, p.nick);
+    closeDrawers();
+  }
+  friendCtx.close();
+}
+function friendRemoveFromMenu() {
+  const p = friendCtx.state.value?.payload;
+  if (p) connection.removeFriend(p.network, p.nick);
+  friendCtx.close();
 }
 
 // Easter egg: tap the brand 5 times in quick succession to flip into (and
@@ -279,8 +295,13 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
           :key="f.nick"
           class="friend"
           :class="{ offline: !f.online }"
-          :title="f.online ? f.nick + ' is online — click to DM' : f.nick + ' is offline'"
+          :title="(f.online ? f.nick + ' is online — click to DM' : f.nick + ' is offline') + '; right-click to remove'"
           @click="openFriend(net.id, f.nick)"
+          @contextmenu="friendCtx.onContext({ network: net.id, nick: f.nick }, $event)"
+          @touchstart.passive="friendCtx.onTouchStart({ network: net.id, nick: f.nick }, $event)"
+          @touchmove.passive="friendCtx.onTouchMove($event)"
+          @touchend="friendCtx.cancelLp"
+          @touchcancel="friendCtx.cancelLp"
         >
           <span class="friend-dot" :class="{ on: f.online }"></span>
           <span class="friend-nick">{{ f.nick }}</span>
@@ -327,6 +348,17 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
       >
         Close query
       </button>
+    </div>
+
+    <div
+      v-if="friendCtx.state.value"
+      class="ctx-menu"
+      :style="{ left: friendCtx.state.value.x + 'px', top: friendCtx.state.value.y + 'px' }"
+      role="menu"
+    >
+      <div class="ctx-header">{{ friendCtx.state.value.payload.nick }}</div>
+      <button class="ctx-item" type="button" @click="friendDMFromMenu">Open DM</button>
+      <button class="ctx-item" type="button" @click="friendRemoveFromMenu">Remove from friends</button>
     </div>
 
     <span class="conn-pill sidebar-conn" :class="store.status" :title="statusLabel">
