@@ -555,7 +555,12 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 				}
 				if err := c.tenant.History.MarkRead(ctx, d.Network, d.Buffer, time.Time{}); err != nil {
 					s.log.Error("mark read", "network", d.Network, "buffer", d.Buffer, "err", err)
+					return
 				}
+				// Converge the user's other tabs/devices: each clears its own
+				// unread badge for this buffer so read state stays consistent
+				// without a reload.
+				s.broadcast(c.user, proto.TRead, d)
 			})
 
 	case proto.TCompleteReq:

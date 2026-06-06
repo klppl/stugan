@@ -229,6 +229,53 @@ func TestBacklogReplay(t *testing.T) {
 	}
 }
 
+// TestReadMarkerBroadcast verifies that one client marking a buffer read makes
+// the server echo a read frame to the user's other connected clients, so unread
+// state converges across devices.
+func TestReadMarkerBroadcast(t *testing.T) {
+	eng := core.New(core.Options{Sink: noopSink{}})
+	srv := New(SingleUser(&Tenant{Engine: eng, History: &fakeHistory{}}), Options{})
+	eng.AddSink(srv.Sink(defaultUser))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = eng.Run(ctx) }()
+
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http") + "/ws"
+	dial := func() *websocket.Conn {
+		ws, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		readFrame(t, ctx, ws) // hello
+		readFrame(t, ctx, ws) // init
+		return ws
+	}
+	ws1 := dial()
+	defer ws1.CloseNow()
+	ws2 := dial()
+	defer ws2.CloseNow()
+
+	// ws1 marks #c read; the server should fan a read frame out to ws2.
+	frame, _ := proto.Frame(proto.TRead, proto.ReadMark{Network: "n", Buffer: "#c"})
+	if err := wsjson.Write(ctx, ws1, frame); err != nil {
+		t.Fatal(err)
+	}
+	env := readFrame(t, ctx, ws2)
+	if env.T != proto.TRead {
+		t.Fatalf("ws2 frame = %q, want read", env.T)
+	}
+	var got proto.ReadMark
+	if err := decode(env, &got); err != nil {
+		t.Fatalf("decode read: %v", err)
+	}
+	if got.Network != "n" || got.Buffer != "#c" {
+		t.Fatalf("read broadcast = %+v, want n/#c", got)
+	}
+}
+
 func TestContextFetch(t *testing.T) {
 	hist := &fakeHistory{
 		msgs: []core.Message{
