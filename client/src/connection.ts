@@ -51,6 +51,10 @@ export interface Buffer {
   highlight: number;
   loaded: boolean;
   more: boolean;
+  // backlogPending is true between a paged backlog:fetch (Load older /
+  // scroll-to-top) and its reply, so scroll-driven auto-loading can't fire a
+  // second overlapping request for the same page.
+  backlogPending: boolean;
   // windowed is true after a jump-to-message fetch: messages holds a
   // centered window around some past point, not the live tail. While
   // windowed, incoming live messages are not appended (they'd appear as
@@ -167,6 +171,7 @@ function emptyBuffer(c: Partial<ChannelDTO> & { name: string }): Buffer {
     highlight: 0,
     loaded: false,
     more: false,
+    backlogPending: false,
     windowed: false,
     state: c.state ?? {},
     unreadMarker: null,
@@ -721,6 +726,7 @@ export class Connection {
     const buf = this.ensureBuf(net, resp.buffer);
     buf.loaded = true;
     buf.more = resp.more;
+    buf.backlogPending = false; // a reply landed — release the auto-load guard
     if (resp.around) {
       // Windowed reply: discard whatever was previously loaded (live tail
       // or another window) and show the new context window in full.
@@ -774,6 +780,7 @@ export class Connection {
       if (buf.unread > 0 && !buf.unreadMarker) buf.markerPending = buf.unread;
       buf.unread = 0;
       buf.highlight = 0;
+      buf.backlogPending = false; // recover if a prior backlog request errored out
       if (!buf.loaded) this.fetchBacklog(network, buffer);
       else this.anchorPendingMarker(buf);
     }
@@ -871,16 +878,17 @@ export class Connection {
   }
 
   fetchBacklog(network: string, buffer: string, before?: string) {
-    if (!before) {
-      const buf = this.buf(network, buffer);
-      if (buf) buf.loaded = true;
+    const buf = this.buf(network, buffer);
+    if (buf) {
+      if (!before) buf.loaded = true;
+      else buf.backlogPending = true; // cleared in applyBacklog when the page lands
     }
     this.sendFrame<BacklogFetch>(T.BacklogFetch, { network, buffer, before, limit: 100 });
   }
 
   loadOlder(network: string, buffer: string) {
     const buf = this.buf(network, buffer);
-    if (!buf || !buf.more || buf.messages.length === 0) return;
+    if (!buf || !buf.more || buf.backlogPending || buf.messages.length === 0) return;
     this.fetchBacklog(network, buffer, buf.messages[0].time);
   }
 

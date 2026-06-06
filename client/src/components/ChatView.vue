@@ -251,6 +251,12 @@ function onScroll() {
     // they never reach this branch and can't accidentally disengage stick.
     stick = false;
   }
+  // Infinite scroll: pull the next older page as the top comes into reach.
+  // Only on real upward movement (st <= lastScrollTop) so the upward jump our
+  // own prepend-reposition makes can't re-trigger it; loadOlder is itself
+  // guarded on `more` and the in-flight backlogPending flag, so spamming it is
+  // safe.
+  if (st < 400 && st <= lastScrollTop) loadOlder();
   lastScrollTop = st;
   recomputeRemaining();
 }
@@ -259,9 +265,14 @@ function scrollToBottom() {
   if (el) el.scrollTop = el.scrollHeight;
 }
 function loadOlder() {
+  const buf = buffer.value;
+  // Mirror connection.loadOlder's guard before capturing prependHeight, so an
+  // ignored call (no older history, or a fetch already in flight) doesn't arm
+  // the scroll-preservation for a load that never happens.
+  if (!store.active || !buf || !buf.more || buf.backlogPending) return;
   const el = listEl.value;
   prependHeight = el ? el.scrollHeight : 0;
-  if (store.active) connection.loadOlder(store.active.network, store.active.buffer);
+  connection.loadOlder(store.active.network, store.active.buffer);
 }
 
 // backToLatest exits jumped-to window mode: ask the connection to drop
