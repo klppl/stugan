@@ -782,26 +782,47 @@ func (e *Engine) startConnLocked(id string, conn IRCConn) {
 // runConn drives one connection with simple exponential reconnect backoff.
 // Phase 4 hardens the stays-connected behavior; this keeps the daemon alive
 // across transient drops in the meantime.
+const (
+	baseBackoff = time.Second
+	maxBackoff  = 30 * time.Second
+	// stableFor is how long a connection must last before we treat it as
+	// healthy and reset the backoff. Longer than a handshake-then-RST so a
+	// flapping server keeps growing its delay, but short enough that a
+	// genuinely-up link recovers a fast first retry on its next drop.
+	stableFor = 60 * time.Second
+)
+
+// reconnectDelay decides how long to wait before the next dial. backoff is the
+// current delay and lasted is how long the connection that just ended stayed
+// up. A connection that lasted at least stableFor reflects a healthy link, not
+// the recent instability the backoff throttles, so its delay resets to base.
+// Returns the duration to sleep and the backoff to carry into the next round.
+func reconnectDelay(backoff, lasted time.Duration) (sleep, next time.Duration) {
+	if lasted >= stableFor {
+		backoff = baseBackoff
+	}
+	return backoff, min(backoff*2, maxBackoff)
+}
+
 func (e *Engine) runConn(ctx context.Context, id string, conn IRCConn) {
-	backoff := time.Second
-	const maxBackoff = 30 * time.Second
+	backoff := baseBackoff
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		e.HandleEvent(Event{Type: evSetState, Network: id, State: StateConnecting})
+		start := time.Now()
 		err := conn.Connect(ctx)
 		if ctx.Err() != nil {
 			return
 		}
-		e.log.Warn("connection ended; will retry", "network", id, "err", err, "backoff", backoff)
+		var sleep time.Duration
+		sleep, backoff = reconnectDelay(backoff, time.Since(start))
+		e.log.Warn("connection ended; will retry", "network", id, "err", err, "backoff", sleep)
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(backoff):
-		}
-		if backoff *= 2; backoff > maxBackoff {
-			backoff = maxBackoff
+		case <-time.After(sleep):
 		}
 	}
 }
