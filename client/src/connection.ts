@@ -266,6 +266,9 @@ export class Connection {
 
   private ws: WebSocket | null = null;
   private reconnectTimer: number | null = null;
+  // A buffer to land on once it exists, set by navigateTo (notification click /
+  // deep link) and consumed by ensureActive.
+  private pendingNav: { network: string; buffer: string } | null = null;
   // Liveness machinery. The browser never surfaces protocol ping/pong to JS and
   // won't fire onclose on a half-open socket (common when a mobile tab is
   // suspended and the TCP flow dies silently), so we run our own heartbeat:
@@ -678,6 +681,14 @@ export class Connection {
   private ensureActive() {
     const has = (a: { network: string; buffer: string } | null) =>
       !!a && !!this.buf(a.network, a.buffer);
+    // A pending navigation (from a notification click that arrived before the
+    // buffer existed, or a cold-start deep link) wins over the last-active
+    // fallback once its buffer has materialized in the snapshot.
+    if (this.pendingNav && has(this.pendingNav)) {
+      this.select(this.pendingNav.network, this.pendingNav.buffer);
+      this.pendingNav = null;
+      return;
+    }
     if (!has(this.store.active)) {
       // Prefer the buffer the user last had open (persisted across reloads);
       // fall back to the first buffer of the first network with any.
@@ -755,6 +766,11 @@ export class Connection {
     if (m.highlight && !m.self && !muted) {
       this.store.mentions.push(m);
       if (this.store.mentions.length > 200) this.store.mentions.shift();
+    }
+    // Desktop-notify on highlights and on direct messages (queries). DMs stay
+    // out of the mentions view above but are still attention-worthy; this
+    // mirrors the server-side push gate in maybePush.
+    if (!m.self && !muted && (m.highlight || (buf.kind === "query" && CONVERSATIONAL.has(m.kind)))) {
       this.desktopNotify(m);
     }
     if (!this.store.active) this.store.active = { network: net.id, buffer: buf.name };
@@ -796,6 +812,14 @@ export class Connection {
     const idx = Math.max(0, buf.messages.length - buf.markerPending);
     buf.unreadMarker = buf.messages[idx];
     buf.markerPending = 0;
+  }
+
+  // navigateTo opens a buffer by name, e.g. from a clicked push notification.
+  // If the buffer isn't in the store yet (cold start before the init snapshot),
+  // it's stashed and applied by ensureActive once the snapshot arrives.
+  navigateTo(network: string, buffer: string) {
+    if (this.buf(network, buffer)) this.select(network, buffer);
+    else this.pendingNav = { network, buffer };
   }
 
   select(network: string, buffer: string) {
@@ -1191,7 +1215,10 @@ export class Connection {
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
     if (!document.hidden) return;
     try {
-      new Notification(`${m.from} in ${m.buffer}`, { body: m.text, tag: m.network + "/" + m.buffer });
+      // A DM's buffer name is just the sender's nick, so "alice in alice" reads
+      // badly — title it with the sender alone.
+      const title = isChannel(m.buffer) ? `${m.from} in ${m.buffer}` : m.from;
+      new Notification(title, { body: m.text, tag: m.network + "/" + m.buffer });
     } catch {
       /* notifications may be unavailable */
     }

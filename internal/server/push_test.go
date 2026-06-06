@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
+
+	"github.com/klippelism/stugan/internal/core"
 )
 
 func TestPushManagerPersistence(t *testing.T) {
@@ -34,6 +36,26 @@ func TestPushManagerPersistence(t *testing.T) {
 	p3, _ := newPushManager(dir)
 	if len(p3.subs["alice"]) != 0 {
 		t.Errorf("subscription not removed; have %d", len(p3.subs["alice"]))
+	}
+}
+
+func TestIsNotifyDM(t *testing.T) {
+	cases := []struct {
+		name string
+		m    core.Message
+		want bool
+	}{
+		{"dm privmsg", core.Message{Buffer: "alice", Kind: core.MsgPrivmsg}, true},
+		{"dm action", core.Message{Buffer: "alice", Kind: core.MsgAction}, true},
+		{"dm notice", core.Message{Buffer: "alice", Kind: core.MsgNotice}, true},
+		{"channel privmsg", core.Message{Buffer: "#chan", Kind: core.MsgPrivmsg}, false},
+		{"status buffer", core.Message{Buffer: core.StatusBuffer, Kind: core.MsgNotice}, false},
+		{"dm join (non-conversational)", core.Message{Buffer: "alice", Kind: core.MsgJoin}, false},
+	}
+	for _, c := range cases {
+		if got := isNotifyDM(c.m); got != c.want {
+			t.Errorf("%s: isNotifyDM = %v, want %v", c.name, got, c.want)
+		}
 	}
 }
 

@@ -182,11 +182,16 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 // (no browser connected for that user). Called from the per-user sink; runs
 // the send async so it never blocks the engine loop.
 func (s *Server) maybePush(user string, m core.Message) {
-	if s.push == nil || !m.Highlight || m.Self {
+	if s.push == nil || m.Self {
+		return
+	}
+	// Notify on highlights and on direct messages (queries): a DM is
+	// attention-worthy even when its text matches no highlight rule.
+	if !m.Highlight && !isNotifyDM(m) {
 		return
 	}
 	if s.connectedCount(user) > 0 {
-		return // user is here; the in-app highlight is enough
+		return // user is here; the in-app notification is enough
 	}
 	// The user is fully away, so honor their muted buffers here too: the
 	// in-app desktopNotify already skips muted buffers client-side, but push
@@ -194,10 +199,21 @@ func (s *Server) maybePush(user string, m core.Message) {
 	if t, ok := s.hub.Tenant(user); ok && isMuted(loadMuted(t), m.Network, m.Buffer) {
 		return
 	}
+	title := m.From + " in " + m.Buffer
+	if core.IsQueryBuffer(m.Buffer) {
+		title = m.From // a DM's buffer name is just the sender's nick
+	}
 	go s.push.notify(user, pushPayload{
-		Title:   m.From + " in " + m.Buffer,
+		Title:   title,
 		Body:    m.Text,
 		Network: m.Network,
 		Buffer:  m.Buffer,
 	}, s.log)
+}
+
+// isNotifyDM reports whether m is an incoming conversational line in a private
+// query buffer, so it should notify even without a highlight-rule match.
+func isNotifyDM(m core.Message) bool {
+	return core.IsQueryBuffer(m.Buffer) &&
+		(m.Kind == core.MsgPrivmsg || m.Kind == core.MsgNotice || m.Kind == core.MsgAction)
 }

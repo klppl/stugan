@@ -1554,6 +1554,13 @@ func bufferKind(name string) ChannelKind {
 // StatusBuffer is the per-network status/server buffer name.
 const StatusBuffer = "*status"
 
+// IsQueryBuffer reports whether a buffer name is a private query (a DM): not a
+// channel and not the per-network status buffer. The server uses this to treat
+// incoming DMs as notification-worthy even when they match no highlight rule.
+func IsQueryBuffer(name string) bool {
+	return name != StatusBuffer && !isChannelName(name)
+}
+
 // isChannelName reports whether name looks like an IRC channel (vs a query).
 func isChannelName(name string) bool {
 	if name == "" {
