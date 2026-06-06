@@ -20,7 +20,17 @@ const BUILTINS = [
 ];
 
 const text = ref("");
-const inputEl = ref<HTMLInputElement | null>(null);
+const inputEl = ref<HTMLTextAreaElement | null>(null);
+
+// Auto-grow the textarea up to a few lines, then scroll. Called after every
+// change (typed, recalled, programmatic) so the box tracks its content.
+const MAX_INPUT_PX = 160;
+function autosize() {
+  const el = inputEl.value;
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight, MAX_INPUT_PX) + "px";
+}
 
 // Input history: a session-scoped ring of sent lines, recalled with ↑/↓ when
 // the autocomplete menu is closed (irssi/weechat style). histIdx walks back
@@ -39,7 +49,20 @@ function setText(s: string) {
   nextTick(() => {
     const el = inputEl.value;
     if (el) el.setSelectionRange(s.length, s.length);
+    autosize();
   });
+}
+
+// caretOnFirstLine / caretOnLastLine gate history recall in a multi-line
+// textarea: ↑/↓ recall history only at the top/bottom edge, and otherwise move
+// the caret between lines as usual.
+function caretOnFirstLine(): boolean {
+  const pos = inputEl.value?.selectionStart ?? 0;
+  return !text.value.slice(0, pos).includes("\n");
+}
+function caretOnLastLine(): boolean {
+  const pos = inputEl.value?.selectionStart ?? text.value.length;
+  return !text.value.slice(pos).includes("\n");
 }
 
 function historyPrev() {
@@ -194,13 +217,17 @@ function onKeydown(e: KeyboardEvent) {
       reqSeq++;
       return;
     }
+  } else if (e.key === "Enter" && !e.shiftKey) {
+    // Enter sends; Shift+Enter falls through to insert a newline.
+    e.preventDefault();
+    submit();
   } else if (e.key === "Tab") {
     e.preventDefault();
     refresh();
-  } else if (e.key === "ArrowUp") {
+  } else if (e.key === "ArrowUp" && caretOnFirstLine()) {
     e.preventDefault();
     historyPrev();
-  } else if (e.key === "ArrowDown") {
+  } else if (e.key === "ArrowDown" && caretOnLastLine()) {
     e.preventDefault();
     historyNext();
   }
@@ -208,6 +235,7 @@ function onKeydown(e: KeyboardEvent) {
 
 function onInput() {
   refresh();
+  autosize();
   if (!props.buffer) return;
   if (text.value.trim()) connection.sendTyping(props.network, props.buffer.name, "active");
   else connection.sendTyping(props.network, props.buffer.name, "done");
@@ -227,6 +255,7 @@ function submit() {
   text.value = "";
   ac.open = false;
   reqSeq++;
+  nextTick(autosize); // shrink the box back to one line
 }
 
 async function onPaste(e: ClipboardEvent) {
@@ -260,6 +289,7 @@ async function onFilePicked(e: Event) {
 function appendText(s: string) {
   text.value = (text.value ? text.value.trimEnd() + " " : "") + s + " ";
   inputEl.value?.focus();
+  nextTick(autosize);
 }
 
 function focus() {
@@ -282,6 +312,7 @@ function typeChar(ch: string) {
       const end = text.value.length;
       el.setSelectionRange(end, end);
       refresh();
+      autosize();
     });
   }
   if (props.buffer && text.value.trim()) {
@@ -305,11 +336,14 @@ defineExpose({ inputEl, appendText, focus, typeChar });
           {{ label }}
         </li>
       </ul>
-      <input
+      <textarea
         ref="inputEl"
         v-model="text"
         :disabled="!buffer"
+        rows="1"
         autocomplete="off"
+        spellcheck="false"
+        placeholder="Enter to send · Shift+Enter for a new line"
         @input="onInput"
         @keydown="onKeydown"
         @paste="onPaste"

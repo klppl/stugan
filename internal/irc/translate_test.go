@@ -40,6 +40,49 @@ func TestEmitMonitor(t *testing.T) {
 	}
 }
 
+func TestMultilineBatch(t *testing.T) {
+	h := &recordHandler{}
+	c, err := New(Options{Network: "n", Addr: "a:6667", Nick: "me"}, h)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	gc := c.client
+
+	// Open a draft/multiline batch (the BATCH carries the msgid/source), feed
+	// three member lines (the third glued on with -concat), then close it.
+	c.handleBatch(gc, girc.ParseEvent("@msgid=abc :alice!u@h BATCH +1 draft/multiline #go"))
+	for _, raw := range []string{
+		"@batch=1 :alice!u@h PRIVMSG #go :line one",
+		"@batch=1 :alice!u@h PRIVMSG #go :line two",
+		"@batch=1;draft/multiline-concat :alice!u@h PRIVMSG #go : tail",
+	} {
+		if !c.absorbMultiline(girc.ParseEvent(raw)) {
+			t.Fatalf("line not absorbed: %q", raw)
+		}
+	}
+	c.handleBatch(gc, girc.ParseEvent(":alice!u@h BATCH -1"))
+
+	if len(h.evs) != 1 {
+		t.Fatalf("emitted %d events, want 1 reassembled message", len(h.evs))
+	}
+	got := h.evs[0]
+	if got.Type != core.EvMessageIn || got.Message == nil {
+		t.Fatalf("event = %+v, want one EvMessageIn", got)
+	}
+	if want := "line one\nline two tail"; got.Message.Text != want {
+		t.Fatalf("Text = %q, want %q", got.Message.Text, want)
+	}
+	if got.Message.Buffer != "#go" || got.Message.From != "alice" || got.Message.ID != "abc" {
+		t.Fatalf("routing/meta wrong: buffer=%q from=%q id=%q", got.Message.Buffer, got.Message.From, got.Message.ID)
+	}
+
+	// A message tagged for a batch we never opened is not absorbed (it routes
+	// normally) — e.g. members of a chathistory batch.
+	if c.absorbMultiline(girc.ParseEvent("@batch=99 :bob!u@h PRIVMSG #go :hi")) {
+		t.Fatal("absorbed a message for an unopened batch")
+	}
+}
+
 func TestToEvent(t *testing.T) {
 	const self = "me"
 	tests := []struct {

@@ -38,33 +38,35 @@ Features built on top:
   rides the network snapshot to a sidebar "friends" section (presence dots,
   click-to-DM); a toast fires when a friend comes online. Add/remove from the
   nick context menu.
+- **Multiline** (`draft/multiline` over `BATCH`) — a message with embedded
+  newlines is sent as one logical block: `conn.Message` wraps the lines in a
+  `BATCH +ref draft/multiline` (falling back to one PRIVMSG per line when the
+  cap is absent). Inbound, a `BATCH` state machine in `internal/irc` buffers the
+  members and reassembles them (honoring `draft/multiline-concat`) into one
+  message via the normal translate path. The composer is a textarea (Enter
+  sends, Shift+Enter inserts a newline); bodies render with `pre-wrap`.
 
 ## Roadmap (must-haves, prioritized)
 
-1. **BATCH + `draft/multiline`** (`batch`, `draft/multiline`).
-   Send/receive a message split across several lines as one logical block.
-   Requires a general `BATCH` state machine in `internal/irc` (also the right
-   foundation for grouping `chathistory` replays). Highest-effort item.
-
-2. **`draft/read-marker`** (`MARKREAD`). Sync the read position across
+1. **`draft/read-marker`** (`MARKREAD`). Sync the read position across
    devices/clients server-side, instead of the current client-only unread
    divider. Pairs naturally with the existing divider work.
 
-3. **Redaction persistence.** Today a `REDACT` only removes the live copy;
+2. **Redaction persistence.** Today a `REDACT` only removes the live copy;
    the message still sits in the SQLite history and returns on reload. Delete
    (or tombstone) by msgid in `internal/store` so redactions survive.
 
-4. **SASL SCRAM** (`SCRAM-SHA-256`). We do PLAIN and EXTERNAL/CertFP; SCRAM
+3. **SASL SCRAM** (`SCRAM-SHA-256`). We do PLAIN and EXTERNAL/CertFP; SCRAM
    avoids sending the password even once. Depends on girc support.
 
-5. **`draft/chathistory` depth** — `CHATHISTORY TARGETS`, proper pagination
+4. **`draft/chathistory` depth** — `CHATHISTORY TARGETS`, proper pagination
    (BEFORE/AFTER/BETWEEN), and unread sync, to lean on server history where
    available instead of only the local SQLite backlog.
 
-6. **Surface `chghost` / `setname`** — we negotiate them but don't reflect
+5. **Surface `chghost` / `setname`** — we negotiate them but don't reflect
    host/realname changes anywhere user-visible.
 
-7. **`soju.im/bouncer-networks`** — manage bouncer-side networks from the UI
+6. **`soju.im/bouncer-networks`** — manage bouncer-side networks from the UI
    when connected through soju.
 
 Lower priority / nice-to-have: `utf8only`, `draft/channel-rename`,
