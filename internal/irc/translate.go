@@ -151,6 +151,12 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		if e.IsAction() {
 			kind = core.MsgAction
 			text = e.StripAction()
+		} else if ok, _ := e.IsCTCP(); ok {
+			// A non-ACTION CTCP request or reply (VERSION, PING, TIME,
+			// CLIENTINFO, …). girc's built-in CTCP handler already answers the
+			// standard requests; we drop the message here so the raw \x01-framed
+			// payload never surfaces in a buffer as garbled text.
+			return core.Event{}, false
 		}
 
 		// Channel target → channel buffer. A message from the server itself
