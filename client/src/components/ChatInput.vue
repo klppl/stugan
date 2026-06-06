@@ -3,6 +3,7 @@ import { computed, nextTick, reactive, ref } from "vue";
 import type { Buffer } from "../connection";
 import { connection } from "../connection";
 import { emojiMatches, replaceEmoji } from "../emoji";
+import { ui } from "../ui";
 
 const props = defineProps<{ network: string; buffer: Buffer | null }>();
 
@@ -22,6 +23,14 @@ const BUILTINS = [
 const text = ref("");
 const inputEl = ref<HTMLTextAreaElement | null>(null);
 
+// The Enter/Shift+Enter hint only makes sense with a physical keyboard, and at
+// full length it wraps inside the narrow mobile input — pushing the resting
+// one-row box to two lines with a scrollbar. Use a short, touch-appropriate
+// placeholder on mobile.
+const placeholder = computed(() =>
+  ui.isMobile ? "Message" : "Enter to send · Shift+Enter for a new line",
+);
+
 // Auto-grow the textarea up to a few lines, then scroll. Called after every
 // change (typed, recalled, programmatic) so the box tracks its content.
 const MAX_INPUT_PX = 160;
@@ -29,7 +38,13 @@ function autosize() {
   const el = inputEl.value;
   if (!el) return;
   el.style.height = "auto";
-  el.style.height = Math.min(el.scrollHeight, MAX_INPUT_PX) + "px";
+  // scrollHeight is content + padding but excludes the border, while the box is
+  // border-box — so set the height to scrollHeight + border, otherwise the box
+  // lands ~2px short and overflow-y:auto shows a spurious scrollbar on every
+  // multi-line message.
+  const cs = getComputedStyle(el);
+  const border = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+  el.style.height = Math.min(el.scrollHeight + border, MAX_INPUT_PX) + "px";
 }
 
 // Input history: a session-scoped ring of sent lines, recalled with ↑/↓ when
@@ -343,7 +358,7 @@ defineExpose({ inputEl, appendText, focus, typeChar });
         rows="1"
         autocomplete="off"
         spellcheck="false"
-        placeholder="Enter to send · Shift+Enter for a new line"
+        :placeholder="placeholder"
         @input="onInput"
         @keydown="onKeydown"
         @paste="onPaste"
