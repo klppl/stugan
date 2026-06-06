@@ -156,6 +156,17 @@ async function enableNotifications() {
         <input v-model="settings.reactions" type="checkbox" />
       </label>
 
+      <label class="row">
+        <span>Send typing notifications</span>
+        <input v-model="settings.sendTyping" type="checkbox" />
+      </label>
+      <p class="hint">When on, others in the channel can see when you're typing.</p>
+
+      <label class="row">
+        <span>Show others' typing</span>
+        <input v-model="settings.showTyping" type="checkbox" />
+      </label>
+
       <div v-if="notifSupported" class="row">
         <span>Notifications</span>
         <button @click="enableNotifications">Enable</button>

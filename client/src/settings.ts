@@ -39,6 +39,8 @@ interface Settings {
   foldEvents: boolean; // collapse runs of join/part/quit/nick lines
   coloredNicks: boolean; // colorize nicks by a hash of the name
   reactions: boolean; // show emoji reactions (off by default; most servers don't support it)
+  sendTyping: boolean; // broadcast our own +typing notifications (opt-in: others can see when you type)
+  showTyping: boolean; // display other people's typing notifications
 }
 
 const KEY = "stugan.settings";
@@ -52,6 +54,8 @@ function load(): Settings {
       foldEvents: typeof s.foldEvents === "boolean" ? s.foldEvents : true,
       coloredNicks: typeof s.coloredNicks === "boolean" ? s.coloredNicks : true,
       reactions: typeof s.reactions === "boolean" ? s.reactions : false,
+      sendTyping: typeof s.sendTyping === "boolean" ? s.sendTyping : false,
+      showTyping: typeof s.showTyping === "boolean" ? s.showTyping : true,
     };
   } catch {
     return {
@@ -60,6 +64,8 @@ function load(): Settings {
       foldEvents: true,
       coloredNicks: true,
       reactions: false,
+      sendTyping: false,
+      showTyping: true,
     };
   }
 }

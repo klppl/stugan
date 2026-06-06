@@ -1,4 +1,5 @@
 import { reactive } from "vue";
+import { settings } from "./settings";
 import {
   T,
   type Envelope,
@@ -1009,6 +1010,9 @@ export class Connection {
   // sendTyping notifies the server the user is typing (throttled). state is
   // "active" (keystroke) or "done" (sent/cleared).
   sendTyping(network: string, buffer: string, state: "active" | "done") {
+    // Opt-in: broadcasting typing lets others see when you're composing, so it
+    // stays off unless the user enables it (mirrors the default-off reactions).
+    if (!settings.sendTyping) return;
     // Typing rides the +typing client tag on TAGMSG, which needs message-tags.
     // Skip networks that didn't negotiate it: the server drops these anyway,
     // but gating here avoids pointless frames and keeps the behaviour
@@ -1025,7 +1029,7 @@ export class Connection {
   }
 
   private applyTyping(t: Typing) {
-    if (!t.nick) return;
+    if (!t.nick || !settings.showTyping) return;
     const key = bufKey(t.network, t.buffer);
     if (t.state === "done") {
       this.clearTyping(key, t.nick);
