@@ -56,14 +56,38 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 // uploadFileServer serves stored uploads with sniffing disabled so a stored
-// file can't be reinterpreted as active content.
+// file can't be reinterpreted as active content. Directory listing is
+// disabled (noListFS): uploads are guarded only by their unguessable random
+// names, so a browsable index would let anyone enumerate every stored file.
 func (s *Server) uploadFileServer() http.Handler {
-	fs := http.FileServer(http.Dir(s.uploadDir))
+	fs := http.FileServer(noListFS{http.Dir(s.uploadDir)})
 	return http.StripPrefix("/uploads/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; media-src 'self'")
 		fs.ServeHTTP(w, r)
 	}))
+}
+
+// noListFS wraps an http.FileSystem so directories report as nonexistent.
+// http.FileServer renders an HTML index for any directory request; making
+// Open fail for directories turns those requests into 404s instead.
+type noListFS struct{ fs http.FileSystem }
+
+func (n noListFS) Open(name string) (http.File, error) {
+	f, err := n.fs.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if info.IsDir() {
+		f.Close()
+		return nil, os.ErrNotExist
+	}
+	return f, nil
 }
 
 func randomName() string {

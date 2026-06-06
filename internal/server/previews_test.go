@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -101,5 +102,23 @@ func TestUploadRoundTrip(t *testing.T) {
 	}
 	if got.Header.Get("X-Content-Type-Options") != "nosniff" {
 		t.Error("served upload missing nosniff header")
+	}
+
+	// The uploads directory must not be browsable: a directory request
+	// would otherwise enumerate every stored file, defeating the
+	// unguessable-random-name access model.
+	for _, path := range []string{"/uploads/", "/uploads"} {
+		dir, err := http.Get(hs.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(dir.Body)
+		dir.Body.Close()
+		if dir.StatusCode == http.StatusOK {
+			t.Errorf("GET %s = 200, want directory listing disabled", path)
+		}
+		if strings.Contains(string(body), ".png") {
+			t.Errorf("GET %s leaked a stored filename in body", path)
+		}
 	}
 }
