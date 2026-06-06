@@ -155,6 +155,9 @@ type NetworkConfig struct {
 	Name string `toml:"name"`
 	// Addr is host:port, e.g. "irc.libera.chat:6697".
 	Addr string `toml:"addr"`
+	// Fallbacks are additional host:port servers tried in order when the
+	// primary Addr fails to connect.
+	Fallbacks []string `toml:"fallbacks"`
 	// TLS enables an encrypted connection.
 	TLS bool `toml:"tls"`
 	// Insecure skips TLS certificate verification, for self-signed or

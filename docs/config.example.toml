@@ -57,6 +57,7 @@ word = "ping"
 [[networks]]
 name     = "libera"
 addr     = "irc.libera.chat:6697"
+# fallbacks = ["irc.eu.libera.chat:6697"]  # tried in order if addr won't connect
 tls      = true
 # insecure = true                 # skip TLS cert verification (self-signed / LAN only)
 nick     = "stuganuser"

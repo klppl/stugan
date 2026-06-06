@@ -63,6 +63,44 @@ func TestNewClientCert(t *testing.T) {
 	}
 }
 
+func TestFallbackAddrRotation(t *testing.T) {
+	// New builds the address list primary-first, dropping blank fallbacks.
+	c, err := New(Options{
+		Network: "n", Addr: "a:6667", Nick: "me",
+		Fallbacks: []string{"b:6667", "  ", "c:6667"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	want := []string{"a:6667", "b:6667", "c:6667"}
+	if len(c.addrs) != len(want) {
+		t.Fatalf("addrs = %v, want %v", c.addrs, want)
+	}
+	for i, a := range want {
+		if c.addrs[i] != a {
+			t.Fatalf("addrs[%d] = %q, want %q", i, c.addrs[i], a)
+		}
+	}
+
+	// advanceAddr walks the list and wraps back to the primary.
+	for _, wantIdx := range []int{1, 2, 0, 1} {
+		c.advanceAddr()
+		if c.addrIdx != wantIdx {
+			t.Fatalf("after advance, addrIdx = %d, want %d", c.addrIdx, wantIdx)
+		}
+	}
+
+	// A single-server network never rotates.
+	solo, err := New(Options{Network: "n", Addr: "only:6667", Nick: "me"}, nil)
+	if err != nil {
+		t.Fatalf("New solo: %v", err)
+	}
+	solo.advanceAddr()
+	if solo.addrIdx != 0 {
+		t.Fatalf("solo addrIdx = %d, want 0", solo.addrIdx)
+	}
+}
+
 func TestPlanAutojoin(t *testing.T) {
 	channels := []string{"#open", "#secret", "#also-open", "#vip"}
 	keys := map[string]string{"#secret": "hunter2", "#vip": "swordfish"}

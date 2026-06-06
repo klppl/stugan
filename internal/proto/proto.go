@@ -225,6 +225,7 @@ type SearchResp struct {
 type NetAdd struct {
 	Name         string   `json:"name"`
 	Addr         string   `json:"addr"`
+	Fallbacks    []string `json:"fallbacks,omitempty"`
 	TLS          bool     `json:"tls"`
 	Insecure     bool     `json:"insecure,omitempty"`
 	Nick         string   `json:"nick"`
@@ -344,6 +345,7 @@ type NetConfig struct {
 	Network      string   `json:"network"`
 	Name         string   `json:"name"`
 	Addr         string   `json:"addr"`
+	Fallbacks    []string `json:"fallbacks,omitempty"`
 	TLS          bool     `json:"tls"`
 	Insecure     bool     `json:"insecure"`
 	Nick         string   `json:"nick"`

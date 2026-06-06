@@ -55,6 +55,7 @@ authoritative.
 |-----|------|---------|
 | `name` | string | Unique network id / display name. |
 | `addr` | string | `host:port`. |
+| `fallbacks` | []string | Additional `host:port` servers tried in order when `addr` fails to connect. |
 | `tls` | bool | Use TLS. |
 | `insecure` | bool | Skip TLS certificate verification (self-signed / LAN servers only). |
 | `nick` / `user` / `realname` | string | Identity. |
