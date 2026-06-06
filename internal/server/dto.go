@@ -66,7 +66,8 @@ func toMessageDTOs(ms []core.Message) []proto.MessageDTO {
 // name doubles as its id.
 func netAddParams(d proto.NetAdd) core.NetworkParams {
 	return core.NetworkParams{
-		ID: d.Name, Name: d.Name, Addr: d.Addr, TLS: d.TLS, Insecure: d.Insecure,
+		ID: d.Name, Name: d.Name, Addr: d.Addr, Fallbacks: d.Fallbacks,
+		TLS: d.TLS, Insecure: d.Insecure,
 		Nick: d.Nick, User: d.User, Realname: d.Realname,
 		SASLUser: d.SASLUser, SASLPass: d.SASLPass, Channels: d.Channels,
 		ServerPass: d.ServerPass, Perform: d.Perform,
@@ -78,7 +79,8 @@ func netAddParams(d proto.NetAdd) core.NetworkParams {
 // Network field identifies the existing network being edited.
 func netConfigParams(d proto.NetConfig) core.NetworkParams {
 	return core.NetworkParams{
-		ID: d.Network, Name: d.Network, Addr: d.Addr, TLS: d.TLS, Insecure: d.Insecure,
+		ID: d.Network, Name: d.Network, Addr: d.Addr, Fallbacks: d.Fallbacks,
+		TLS: d.TLS, Insecure: d.Insecure,
 		Nick: d.Nick, User: d.User, Realname: d.Realname,
 		SASLUser: d.SASLUser, SASLPass: d.SASLPass, Channels: d.Channels,
 		ServerPass: d.ServerPass, Perform: d.Perform,
@@ -90,7 +92,8 @@ func netConfigParams(d proto.NetConfig) core.NetworkParams {
 // (the net:info reply).
 func netConfigDTO(p core.NetworkParams) proto.NetConfig {
 	return proto.NetConfig{
-		Network: p.ID, Name: p.Name, Addr: p.Addr, TLS: p.TLS, Insecure: p.Insecure,
+		Network: p.ID, Name: p.Name, Addr: p.Addr, Fallbacks: p.Fallbacks,
+		TLS: p.TLS, Insecure: p.Insecure,
 		Nick: p.Nick, User: p.User, Realname: p.Realname,
 		SASLUser: p.SASLUser, SASLPass: p.SASLPass, Channels: p.Channels,
 		ServerPass: p.ServerPass, Perform: p.Perform,

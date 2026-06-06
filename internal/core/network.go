@@ -9,7 +9,10 @@ type NetworkParams struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Addr string `json:"addr"`
-	TLS  bool   `json:"tls"`
+	// Fallbacks are additional host:port servers tried in order when the
+	// primary Addr fails to connect. Empty for a single-server network.
+	Fallbacks []string `json:"fallbacks,omitempty"`
+	TLS       bool     `json:"tls"`
 	// Insecure skips TLS certificate verification (self-signed / LAN
 	// servers). Only meaningful with TLS.
 	Insecure bool     `json:"insecure,omitempty"`
@@ -55,6 +58,9 @@ func (p NetworkParams) clone() NetworkParams {
 	c := p
 	if p.Channels != nil {
 		c.Channels = append([]string(nil), p.Channels...)
+	}
+	if p.Fallbacks != nil {
+		c.Fallbacks = append([]string(nil), p.Fallbacks...)
 	}
 	if p.Perform != nil {
 		c.Perform = append([]string(nil), p.Perform...)

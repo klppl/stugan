@@ -36,6 +36,7 @@ const form = reactive({
   port: 6697,
   tls: true,
   insecure: false,
+  fallbacks: "",
   nick: "",
   user: "",
   realname: "",
@@ -54,6 +55,7 @@ function fill(cfg: NetConfig) {
   form.port = port;
   form.tls = cfg.tls;
   form.insecure = cfg.insecure;
+  form.fallbacks = (cfg.fallbacks ?? []).join(", ");
   form.nick = cfg.nick;
   form.user = cfg.user;
   form.realname = cfg.realname;
@@ -93,6 +95,10 @@ function save() {
     addr: `${form.host.trim()}:${form.port}`,
     tls: form.tls,
     insecure: form.tls && form.insecure,
+    fallbacks: form.fallbacks
+      .split(",")
+      .map((a) => a.trim())
+      .filter(Boolean),
     nick: form.nick.trim(),
     user: form.user.trim(),
     realname: form.realname.trim(),
@@ -144,6 +150,7 @@ function remove() {
           </button>
         </div>
         <template v-if="showAdvanced">
+          <label class="row"><span>Fallback servers</span><input v-model="form.fallbacks" placeholder="host:port, host2:port (tried if the primary fails)" /></label>
           <label class="row"><span>Server pass</span><input v-model="form.serverPass" type="password" placeholder="bouncer / server password" /></label>
           <label class="row">
             <span>Perform</span>

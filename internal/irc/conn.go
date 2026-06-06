@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/lrstanley/girc"
@@ -21,8 +23,13 @@ import (
 // config so this package never imports the config package.
 type Options struct {
 	Network string // network id/name, stamped onto every event
-	Addr    string // host:port
-	TLS     bool
+	Addr    string // host:port (the primary server)
+	// Fallbacks are additional host:port servers tried in order when a
+	// connection fails to establish on the current one. A server that stays up
+	// keeps being used; only a failed or immediately-flapping connection rotates
+	// to the next. Empty means the network has only the primary Addr.
+	Fallbacks []string
+	TLS       bool
 	// Insecure skips TLS certificate verification (self-signed / LAN
 	// servers). Only meaningful with TLS.
 	Insecure bool
@@ -52,6 +59,11 @@ type Conn struct {
 	handler core.ConnHandler
 	log     *slog.Logger
 	client  *girc.Client
+	// addrs is the ordered server list (primary first, then Fallbacks); addrIdx
+	// is the one the next Connect dials. Connect is called serially by the
+	// engine's reconnect loop, so these need no locking.
+	addrs   []string
+	addrIdx int
 }
 
 // compile-time check that Conn satisfies the interface core depends on.
@@ -122,11 +134,18 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		gcfg.SASL = &girc.SASLPlain{User: opts.SASLUser, Pass: opts.SASLPass}
 	}
 
+	addrs := []string{opts.Addr}
+	for _, a := range opts.Fallbacks {
+		if a = strings.TrimSpace(a); a != "" {
+			addrs = append(addrs, a)
+		}
+	}
 	c := &Conn{
 		opts:    opts,
 		handler: handler,
 		log:     log.With("network", opts.Network),
 		client:  girc.New(gcfg),
+		addrs:   addrs,
 	}
 	c.registerHandlers()
 	return c, nil
@@ -225,7 +244,19 @@ func (c *Conn) emit(ev core.Event) {
 
 // Connect runs the connection, blocking until disconnected or ctx is
 // cancelled (which closes the underlying socket).
+// stableConn is how long a connection must last before we treat the current
+// server as healthy and stay on it; a shorter-lived attempt (a failed dial or
+// an immediate flap) rotates to the next fallback on the following Connect.
+const stableConn = 30 * time.Second
+
 func (c *Conn) Connect(ctx context.Context) error {
+	// Point girc at the current address. A bad address is skipped by advancing
+	// past it so the next retry tries another server rather than wedging here.
+	if err := c.useAddr(c.addrs[c.addrIdx]); err != nil {
+		c.advanceAddr()
+		return fmt.Errorf("irc %s: %w", c.opts.Network, err)
+	}
+
 	stop := make(chan struct{})
 	go func() {
 		select {
@@ -236,13 +267,44 @@ func (c *Conn) Connect(ctx context.Context) error {
 	}()
 	defer close(stop)
 
-	if err := c.client.Connect(); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
+	start := time.Now()
+	err := c.client.Connect()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	// Rotate to the next fallback only when the connection didn't stay up — a
+	// stable session that merely dropped should retry the same server first.
+	if time.Since(start) < stableConn {
+		c.advanceAddr()
+	}
+	if err != nil {
 		return fmt.Errorf("irc %s: %w", c.opts.Network, err)
 	}
 	return nil
+}
+
+// useAddr points girc at addr for the next dial. When we own the TLS config
+// (client cert or skip-verify), its ServerName must track the host too; when we
+// don't, girc fills ServerName from Config.Server itself.
+func (c *Conn) useAddr(addr string) error {
+	host, port, err := splitAddr(addr, c.opts.TLS)
+	if err != nil {
+		return err
+	}
+	c.client.Config.Server = host
+	c.client.Config.Port = port
+	if c.client.Config.TLSConfig != nil {
+		c.client.Config.TLSConfig.ServerName = host
+	}
+	return nil
+}
+
+// advanceAddr moves to the next server in the list, wrapping around. A no-op
+// when there are no fallbacks.
+func (c *Conn) advanceAddr() {
+	if len(c.addrs) > 1 {
+		c.addrIdx = (c.addrIdx + 1) % len(c.addrs)
+	}
 }
 
 // SendRaw writes a raw IRC line.

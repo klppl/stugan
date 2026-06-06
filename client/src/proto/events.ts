@@ -223,6 +223,7 @@ export interface SearchResp {
 export interface NetAdd {
   name: string;
   addr: string;
+  fallbacks?: string[];
   tls: boolean;
   insecure?: boolean;
   nick: string;
@@ -301,6 +302,7 @@ export interface NetConfig {
   network: string;
   name: string;
   addr: string;
+  fallbacks?: string[];
   tls: boolean;
   insecure: boolean;
   nick: string;
