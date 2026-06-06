@@ -256,7 +256,9 @@ export interface NetConnect {
 
 // ReadMark tells the server the user has read a buffer up to now, advancing
 // the server-side read marker so unread badges survive a reload. The server
-// stamps the time with its own clock, so there is no time field here.
+// stamps the time with its own clock, so there is no time field here. The
+// server then echoes the same frame (s2c) to the user's other clients, which
+// clear that buffer's badge to stay in sync across devices.
 export interface ReadMark {
   network: string;
   buffer: string;

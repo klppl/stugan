@@ -510,6 +510,23 @@ export class Connection {
       case T.Mute:
         this.applyMute(env.d as MuteSet);
         break;
+      case T.Read: {
+        // Another of the user's tabs/devices read this buffer; converge by
+        // clearing the local badge. Leave the "new messages" divider in place
+        // if we're actively reading the buffer here, so it isn't yanked away
+        // mid-read; just drop the badge in that case.
+        const d = env.d as ReadMark;
+        const buf = this.buf(d.network, d.buffer);
+        if (buf) {
+          buf.unread = 0;
+          buf.highlight = 0;
+          const a = this.store.active;
+          const isActive =
+            !!a && a.network === d.network && a.buffer.toLowerCase() === d.buffer.toLowerCase();
+          if (!isActive) buf.unreadMarker = null;
+        }
+        break;
+      }
       case T.CompleteRes: {
         const d = env.d as CompleteRes;
         const resolve = this.completionWaiters.get(d.seq);

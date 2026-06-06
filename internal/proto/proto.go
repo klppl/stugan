@@ -48,7 +48,7 @@ const (
 	TList         = "list"           // c2s
 	TPluginAction = "plugin:action"  // c2s — load/unload/reload a plugin
 	TPluginSet    = "plugin:setting" // c2s — set a plugin's declared setting
-	TRead         = "read"           // c2s — mark a buffer read (advance read marker)
+	TRead         = "read"           // c2s mark a buffer read; s2c broadcast of that to the user's other tabs
 	THighlightSet = "highlight:set"  // c2s — replace the highlight ruleset
 	TAliasSet     = "aliases:set"    // c2s — replace the command-alias table
 	TMute         = "mute"           // c2s set intent; s2c absolute state broadcast to the user's tabs
@@ -318,7 +318,9 @@ type Redact struct {
 // "now" — it advances the server-side read marker so unread counts survive a
 // reload. Sent when a buffer is focused and (debounced) as messages arrive in
 // the focused buffer. The server stamps the marker with its own clock; there
-// is no time field to keep client/server clocks from disagreeing.
+// is no time field to keep client/server clocks from disagreeing. After
+// recording it, the server echoes the same frame (s2c) to the user's other
+// connected clients so they clear the buffer's badge and stay in sync.
 type ReadMark struct {
 	Network string `json:"network"`
 	Buffer  string `json:"buffer"`
