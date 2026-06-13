@@ -13,7 +13,8 @@
 --     lines that would exceed IRC's 510-byte payload after expansion.
 --   * /me, /notice, /topic claimed and either encrypted (when keyed) or
 --     delegated to the engine's native behavior (when not).
---   * Incoming PRIVMSG / NOTICE / ACTION decrypted via hook_message.
+--   * Incoming PRIVMSG / NOTICE / ACTION decrypted via hook_message; the
+--     channel topic (on join and on live change) decrypted via hook_topic.
 --   * Manual key management: /setkey, /setkey-ecb, /delkey, /key.
 --   * DH1080 key exchange via /keyx <nick> (private-message only — DH
 --     doesn't extend to multi-party channels).
@@ -507,6 +508,22 @@ stugan.hook_message(function(msg)
   end
   return msg
 end, { priority = 900 })
+
+-- Decrypt an incoming channel topic. Topics ride their own event (not a
+-- PRIVMSG), so they need a dedicated hook: the one above never sees them.
+-- This fires both for the topic delivered on join and for a live /topic
+-- change. A plaintext topic (no fish prefix) decrypts to nil and is left
+-- untouched; only a "+OK …" payload is rewritten.
+stugan.hook_topic(function(t)
+  local key = get_key(t.network, t.buffer)
+  if not key then return end
+  local pt, reason = decrypt(t.text, key)
+  if pt then return pt end
+  if fish_payload(t.text) then
+    stugan.log.debug("fish: topic decrypt failed (" .. tostring(reason)
+      .. ") buffer='" .. tostring(t.buffer) .. "'")
+  end
+end)
 
 -- ---------------------------------------------------------------------------
 -- Commands. /setkey [target] <key> sets a CBC key (the modern default);

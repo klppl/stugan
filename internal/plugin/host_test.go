@@ -242,6 +242,40 @@ func TestHookSignal(t *testing.T) {
 	}
 }
 
+func TestHookTopic(t *testing.T) {
+	api := &fakeAPI{}
+	h := newHost(t, api, map[string]string{
+		"topic.lua": `
+			stugan.hook_topic(function(t)
+			  if t.text == "secret" then return "REVEALED" end
+			  -- returning nothing leaves the topic unchanged
+			end)
+			stugan.hook_signal("topic", function(s)
+			  stugan.print(s.network, s.channel, "saw topic: " .. s.text)
+			end)`,
+	}, nil)
+
+	// A matching topic is rewritten, and the signal hook sees the rewritten text.
+	out, keep := h.Dispatch(context.Background(), core.Event{
+		Type: core.EvTopic, Network: "n", Buffer: "#c", Text: "secret", Nick: "op"})
+	if !keep {
+		t.Fatal("topic event was dropped")
+	}
+	if out.Text != "REVEALED" {
+		t.Errorf("rewritten topic = %q, want %q", out.Text, "REVEALED")
+	}
+	if len(api.prints) != 1 || api.prints[0][2] != "saw topic: REVEALED" {
+		t.Fatalf("signal saw %v, want rewritten text", api.prints)
+	}
+
+	// A non-matching topic passes through untouched.
+	out, _ = h.Dispatch(context.Background(), core.Event{
+		Type: core.EvTopic, Network: "n", Buffer: "#c", Text: "plain", Nick: "op"})
+	if out.Text != "plain" {
+		t.Errorf("unchanged topic = %q, want %q", out.Text, "plain")
+	}
+}
+
 func TestHookInputRewrite(t *testing.T) {
 	api := &fakeAPI{nickVal: "me"}
 	h := newHost(t, api, map[string]string{

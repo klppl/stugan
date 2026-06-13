@@ -204,7 +204,7 @@ func (c *Conn) registerHandlers() {
 
 	cmds := []string{
 		girc.PRIVMSG, girc.NOTICE, girc.JOIN, girc.PART,
-		girc.QUIT, girc.NICK, girc.TOPIC, girc.RPL_NAMREPLY, girc.AWAY,
+		girc.QUIT, girc.NICK, girc.TOPIC, girc.RPL_TOPIC, girc.RPL_NAMREPLY, girc.AWAY,
 		girc.RPL_LIST, girc.RPL_LISTEND, girc.CAP_TAGMSG,
 		// IRCv3 message-redaction (REDACT) and standard-replies (FAIL/WARN/NOTE).
 		"REDACT", "FAIL", "WARN", "NOTE",

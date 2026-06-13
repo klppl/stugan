@@ -42,6 +42,19 @@ func tableToMsg(t *lua.LTable, base core.Message) core.Message {
 	return m
 }
 
+// topicTable builds the table passed to hook_topic. text is threaded through
+// separately so a hook sees the topic as rewritten by an earlier hook in the
+// chain, not the original ev.Text. nick is empty for the topic delivered on
+// join (RPL_TOPIC); set to the setter for a live change.
+func topicTable(L *lua.LState, ev core.Event, text string) *lua.LTable {
+	t := L.NewTable()
+	t.RawSetString("network", lua.LString(ev.Network))
+	t.RawSetString("buffer", lua.LString(ev.Buffer))
+	t.RawSetString("nick", lua.LString(ev.Nick))
+	t.RawSetString("text", lua.LString(text))
+	return t
+}
+
 // ctxTable builds the context table passed to hook_command / hook_input.
 func ctxTable(L *lua.LState, network, buffer, nick string) *lua.LTable {
 	t := L.NewTable()

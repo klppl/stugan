@@ -351,6 +351,20 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			Type: core.EvTopic, Network: network, Time: when,
 			Buffer: ch, Text: e.Last(), Nick: from,
 		}, true
+
+	case girc.RPL_TOPIC:
+		// 332: <me> <channel> :<topic> — the channel's existing topic, sent on
+		// join. No setter is attached, so Nick is empty: the engine updates the
+		// topic bar without printing a "<nick> set topic" line. Routed through
+		// EvTopic (not formatNumeric) so plugins can rewrite it — e.g. fish
+		// decrypts an encrypted topic before it reaches the UI.
+		if len(e.Params) < 2 {
+			return core.Event{}, false
+		}
+		return core.Event{
+			Type: core.EvTopic, Network: network, Time: when,
+			Buffer: e.Params[1], Text: e.Last(),
+		}, true
 	}
 
 	// Server numeric replies (WHOIS, WHOWAS, WHO, errors, …). Each formats

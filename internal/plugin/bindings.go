@@ -52,6 +52,7 @@ func (h *Host) unloadScript(name string) {
 	}
 	h.msgHooks = dropHooks(h.msgHooks, s)
 	h.inputHooks = dropHooks(h.inputHooks, s)
+	h.topicHooks = dropHooks(h.topicHooks, s)
 	h.completionHooks = dropHooks(h.completionHooks, s)
 	for k := range h.signalHooks {
 		h.signalHooks[k] = dropHooks(h.signalHooks[k], s)
@@ -114,6 +115,9 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 	}))
 	t.RawSetString("hook_input", s.L.NewFunction(func(L *lua.LState) int {
 		return h.registerListHook(L, s, &h.inputHooks)
+	}))
+	t.RawSetString("hook_topic", s.L.NewFunction(func(L *lua.LState) int {
+		return h.registerListHook(L, s, &h.topicHooks)
 	}))
 	t.RawSetString("hook_completion", s.L.NewFunction(func(L *lua.LState) int {
 		return h.registerListHook(L, s, &h.completionHooks)

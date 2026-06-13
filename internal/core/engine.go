@@ -943,7 +943,10 @@ func (e *Engine) handle(ctx context.Context, ev Event) {
 	case evSetState:
 		e.apply(ev)
 
-	case EvMessageIn, EvMessageOut:
+	case EvMessageIn, EvMessageOut, EvTopic:
+		// Topics, like messages, are dispatched as rewritable: a plugin may
+		// change the topic text before it's committed (e.g. fish decrypts an
+		// encrypted topic). The host still notifies "topic" signal hooks.
 		out, keep := e.host.Dispatch(ctx, ev)
 		if !keep {
 			return // a hook dropped it
@@ -956,7 +959,7 @@ func (e *Engine) handle(ctx context.Context, ev Event) {
 		}
 		e.runBuiltinCommand(ev)
 
-	default: // join, part, quit, nick, topic, connect, disconnect
+	default: // join, part, quit, nick, connect, disconnect
 		e.host.Dispatch(ctx, ev) // notify-only
 		e.apply(ev)
 		if ev.Type == EvConnect {
@@ -1462,11 +1465,12 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 	case EvTopic:
 		c, _ := n.getOrCreate(ev.Buffer, KindChannel)
 		c.Topic = ev.Text
-		who := ev.Nick
-		if who == "" {
-			who = "topic"
+		// A setter nick means someone changed the topic live — announce it. The
+		// initial topic delivered on join (RPL_TOPIC, no setter) just updates
+		// the topic bar silently.
+		if ev.Nick != "" {
+			sys(ev.Buffer, fmt.Sprintf("%s set topic: %s", ev.Nick, ev.Text))
 		}
-		sys(ev.Buffer, fmt.Sprintf("%s set topic: %s", who, ev.Text))
 		netChanged = true
 	}
 	return emit, netChanged, persist

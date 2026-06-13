@@ -172,6 +172,13 @@ func TestToEvent(t *testing.T) {
 			want: core.Event{Type: core.EvTopic, Network: "n", Buffer: "#go", Text: "the new topic", Nick: "op"},
 		},
 		{
+			// RPL_TOPIC delivered on join: no setter, so Nick stays empty.
+			name: "rpl_topic on join",
+			raw:  ":serv 332 me #go :the existing topic",
+			ok:   true,
+			want: core.Event{Type: core.EvTopic, Network: "n", Buffer: "#go", Text: "the existing topic", Nick: ""},
+		},
+		{
 			name: "unmodeled numeric ignored",
 			raw:  ":serv 001 me :Welcome",
 			ok:   false,

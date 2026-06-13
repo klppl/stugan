@@ -39,6 +39,14 @@ stugan.hook_message(fn)
 -- fn(input, ctx) -> input | nil   (input is the raw text the user sent)
 stugan.hook_input(fn)
 
+-- Rewrite an INCOMING channel topic before it reaches the topic bar. Fires
+-- both for the topic delivered on join and for a live /topic change.
+-- fn(t) -> string | { text = ... } | nil
+--   t = { network, buffer, nick, text }   (nick is "" on join)
+--   return a string or a table with `text` : replace the topic
+--   return nil/nothing                    : leave it unchanged (not dropped)
+stugan.hook_topic(fn)
+
 -- Extend tab-completion. fn(word, ctx) -> array of candidate strings | nil
 -- where `word` is the partial token under the cursor. Each candidate is a
 -- full replacement token (the client appends a space). Results from every

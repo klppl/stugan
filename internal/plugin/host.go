@@ -102,6 +102,7 @@ type Host struct {
 	kv              map[string]map[string]string // per-script KV, survives reload
 	msgHooks        []*hook
 	inputHooks      []*hook
+	topicHooks      []*hook
 	completionHooks []*hook
 	signalHooks     map[string][]*hook
 	cmdHooks        map[string]*hook
@@ -303,6 +304,11 @@ func (h *Host) hookCount(s *script) int {
 		}
 	}
 	for _, hk := range h.inputHooks {
+		if hk.script == s {
+			n++
+		}
+	}
+	for _, hk := range h.topicHooks {
 		if hk.script == s {
 			n++
 		}
@@ -519,6 +525,16 @@ func (h *Host) dispatch(ev core.Event) (core.Event, bool) {
 		return h.runInputHooks(ev)
 	case core.EvCommand:
 		return h.runCommand(ev)
+	case core.EvTopic:
+		// Topic hooks may rewrite the topic text; signal hooks are then
+		// notified with the (possibly rewritten) topic.
+		out, keep := h.runTopicHooks(ev)
+		if keep {
+			if name, ok := signalName(out.Type); ok {
+				h.runSignalHooks(name, out)
+			}
+		}
+		return out, keep
 	default:
 		if name, ok := signalName(ev.Type); ok {
 			h.runSignalHooks(name, ev)
@@ -591,6 +607,37 @@ func (h *Host) runInputHooks(ev core.Event) (core.Event, bool) {
 	}
 	out := ev
 	out.Message = &msg
+	return out, true
+}
+
+// runTopicHooks runs hook_topic in priority order over an EvTopic event. A
+// hook returns a string (or a table with a `text` field) to rewrite the topic,
+// or nil/nothing to leave it unchanged. Topics aren't droppable — they're
+// channel state, not a stream of lines — so the keep flag is always true.
+func (h *Host) runTopicHooks(ev core.Event) (core.Event, bool) {
+	text := ev.Text
+	for _, hk := range h.topicHooks {
+		if hk.script.disabled {
+			continue
+		}
+		cur := text
+		ret, ok := h.call(hk.script, hk.fn, func(L *lua.LState) {
+			L.Push(topicTable(L, ev, cur))
+		}, 1)
+		if !ok {
+			continue // errored hook is skipped, topic passes through unchanged
+		}
+		switch v := ret.(type) {
+		case lua.LString:
+			text = string(v)
+		case *lua.LTable:
+			if s, ok := v.RawGetString("text").(lua.LString); ok {
+				text = string(s)
+			}
+		}
+	}
+	out := ev
+	out.Text = text
 	return out, true
 }
 
