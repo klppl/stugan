@@ -1,26 +1,50 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Swedish cottage at night">
-  <!-- Minimalist cozy-night Swedish 'stuga': Falu-red house with white trim
-       (eave + corner boards) and a single warm-glowing cross-muntin window. -->
+  <!-- Flat, minimalist cozy-night Swedish 'stuga': Falu-red cabin with white trim,
+       a single warm window and a door, a chimney with smoke, a green yard,
+       two spruces and a crescent moon. No gradients or blurs. -->
   <defs>
-    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
-      <feGaussianBlur stdDeviation="18"/>
-    </filter>
+    <clipPath id="rounded"><rect width="512" height="512" rx="82"/></clipPath>
   </defs>
-  <rect width="512" height="512" rx="82" fill="#1b2533"/>
-  <g transform="translate(15.36,15.36) scale(0.94)">
-    <!-- house silhouette -->
-    <polygon points="97.3,250.9 256,102.4 414.7,250.9" fill="#a83a2d"/>
-    <rect x="133.1" y="240.6" width="245.8" height="179.2" fill="#a83a2d"/>
-    <!-- white trim: eave fascia + corner boards -->
-    <rect x="122.9" y="248.3" width="266.2" height="15.4" fill="#f0ece3"/>
-    <rect x="133.1" y="250.9" width="17.9" height="169" fill="#f0ece3"/>
-    <rect x="361.0" y="250.9" width="17.9" height="169" fill="#f0ece3"/>
-    <!-- cozy glow -->
-    <circle cx="256" cy="320" r="69" fill="#f4b13a" opacity="0.55" filter="url(#glow)"/>
-    <!-- single window: white frame, warm glass, white cross muntin -->
-    <rect x="220.2" y="281.6" width="71.7" height="76.8" fill="#f0ece3"/>
-    <rect x="227.3" y="288.8" width="57.3" height="62.5" fill="#f6c863"/>
-    <rect x="252.4" y="288.8" width="7.2" height="62.5" fill="#f0ece3"/>
-    <rect x="227.3" y="316.4" width="57.3" height="7.2" fill="#f0ece3"/>
+  <g clip-path="url(#rounded)">
+    <!-- night sky -->
+    <rect width="512" height="512" fill="#1c2733"/>
+    <!-- crescent moon + two stars -->
+    <circle cx="110" cy="96" r="26" fill="#ece9e1"/>
+    <circle cx="124" cy="88" r="24" fill="#1c2733"/>
+    <circle cx="182" cy="72" r="2.5" fill="#e8e4dc" opacity="0.7"/>
+    <circle cx="398" cy="92" r="2.5" fill="#e8e4dc" opacity="0.7"/>
+    <!-- green yard -->
+    <path d="M0,408 Q256,388 512,404 L512,512 L0,512 Z" fill="#35603f"/>
+    <!-- two minimal spruces -->
+    <rect x="74" y="394" width="10" height="16" fill="#5c3724"/>
+    <polygon points="79,300 50,394 108,394" fill="#28502f"/>
+    <rect x="437" y="396" width="9" height="14" fill="#5c3724"/>
+    <polygon points="441,330 416,400 466,400" fill="#28502f"/>
+    <!-- roof + wall -->
+    <polygon points="256,148 116,262 396,262" fill="#8f3326"/>
+    <rect x="150" y="250" width="212" height="160" fill="#b24435"/>
+    <!-- white trim: eave + corner boards -->
+    <rect x="140" y="258" width="232" height="13" fill="#f0ece3"/>
+    <rect x="150" y="262" width="15" height="148" fill="#f0ece3"/>
+    <rect x="347" y="262" width="15" height="148" fill="#f0ece3"/>
+    <!-- chimney with stone cap -->
+    <rect x="320" y="170" width="22" height="46" fill="#8f3326"/>
+    <rect x="314" y="165" width="34" height="8" fill="#d9d2c6"/>
+    <!-- smoke -->
+    <circle cx="331" cy="150" r="7" fill="#e8e4dc" opacity="0.5"/>
+    <circle cx="337" cy="132" r="9" fill="#e8e4dc" opacity="0.35"/>
+    <circle cx="329" cy="112" r="11" fill="#e8e4dc" opacity="0.22"/>
+    <!-- window: white frame, warm glass, cross muntin -->
+    <rect x="185" y="316" width="58" height="62" fill="#f0ece3"/>
+    <rect x="192" y="323" width="44" height="48" fill="#f5c451"/>
+    <rect x="211.5" y="323" width="5" height="48" fill="#f0ece3"/>
+    <rect x="192" y="345" width="44" height="5" fill="#f0ece3"/>
+    <!-- door: white frame, wood panel, brass knob -->
+    <rect x="292" y="318" width="54" height="92" fill="#f0ece3"/>
+    <rect x="298" y="324" width="42" height="86" fill="#6e4a32"/>
+    <circle cx="334" cy="366" r="4" fill="#f5c451"/>
+    <!-- two simple shrubs at the doorstep -->
+    <circle cx="284" cy="406" r="11" fill="#28502f"/>
+    <circle cx="297" cy="404" r="9" fill="#356b3f"/>
   </g>
 </svg>
