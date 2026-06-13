@@ -183,6 +183,11 @@ func (c *Conn) registerHandlers() {
 	h := c.client.Handlers
 
 	h.Add(girc.CONNECTED, func(gc *girc.Client, _ girc.Event) {
+		// Drop any draft/multiline batch left half-open by a previous
+		// connection that dropped mid-batch (no closing BATCH -ref arrived),
+		// so it can't linger across reconnects. Runs on girc's single handler
+		// goroutine, same as absorbMultiline/handleBatch, so no lock is needed.
+		clear(c.batches)
 		c.emit(core.Event{Type: core.EvConnect, Network: c.opts.Network, Nick: gc.GetNick()})
 		c.autojoin(gc)
 		c.armMonitor(gc)
@@ -245,6 +250,14 @@ func (c *Conn) registerHandlers() {
 	// Gating on e.Echo avoids double-processing the normal events above.
 	h.Add(girc.ALL_EVENTS, func(gc *girc.Client, e girc.Event) {
 		if e.Echo {
+			// An echoed draft/multiline message arrives as a BATCH whose member
+			// lines carry e.Echo; like the command path, absorb them so the
+			// reassembled message surfaces once at BATCH close rather than as
+			// separate lines plus an empty one. (The BATCH open/close commands
+			// are not echoes, so handleBatch still runs from the command path.)
+			if c.absorbMultiline(&e) {
+				return
+			}
 			if ev, ok := toEvent(c.opts.Network, &e, gc.GetNick()); ok {
 				c.emit(ev)
 			}

@@ -62,9 +62,6 @@ const (
 	// change (e.g. Connecting) onto the engine loop so all state mutation
 	// stays single-threaded. Not dispatched to plugins.
 	evSetState EventType = "set_state"
-	// evPrint is internal: a plugin (via API.Print) injects a line into a
-	// buffer. Not dispatched to plugins, so it cannot recurse into hooks.
-	evPrint EventType = "print"
 )
 
 // Event is the unit that flows on the engine's bus. Which fields are set

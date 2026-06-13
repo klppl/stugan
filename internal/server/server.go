@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -40,7 +41,7 @@ const magicWordTTL = 30 * 24 * time.Hour
 // History provides paged message backlog for replay and full-text search,
 // plus the per-buffer read markers that let unread counts survive a reload.
 type History interface {
-	Backlog(ctx context.Context, network, buffer string, before time.Time, limit int) ([]core.Message, bool, error)
+	Backlog(ctx context.Context, network, buffer string, beforeSeq int64, limit int) ([]core.Message, bool, error)
 	BacklogAround(ctx context.Context, network, buffer string, around time.Time, limit int) ([]core.Message, bool, error)
 	Search(ctx context.Context, query, network, buffer string, limit int) ([]core.Message, error)
 	// MarkRead advances a buffer's read marker to ts (zero = now).
@@ -211,7 +212,11 @@ func (s *Server) Handler() http.Handler {
 // Endpoints kept open: /api/me, /api/magicword{,/logout}, /healthz.
 func (s *Server) magicGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.magicWordOpen(r.URL.Path) || s.magicGranted(r) {
+		// Decide on the cleaned path so a crafted "/uploads/../api/..." can't
+		// masquerade as an open static/upload path and slip past the gate. We
+		// only use it for the gate decision; the original request still flows
+		// to the mux (which does its own canonicalization).
+		if s.magicWordOpen(path.Clean(r.URL.Path)) || s.magicGranted(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -843,13 +848,7 @@ func (s *Server) handleBacklog(ctx context.Context, c *client, env proto.Envelop
 		return
 	}
 
-	var before time.Time
-	if d.Before != "" {
-		if t, err := time.Parse(time.RFC3339, d.Before); err == nil {
-			before = t
-		}
-	}
-	msgs, more, err := c.tenant.History.Backlog(ctx, d.Network, d.Buffer, before, limit)
+	msgs, more, err := c.tenant.History.Backlog(ctx, d.Network, d.Buffer, d.BeforeSeq, limit)
 	if err != nil {
 		s.log.Error("backlog query", "err", err)
 		c.sendError(env.ID, "internal", "backlog query failed")
@@ -962,9 +961,10 @@ func (s *Server) connectedCount(user string) int {
 
 // caps lists the optional features this server supports.
 func (s *Server) caps() []string {
-	caps := []string{"uploads", "previews"}
-	caps = append(caps, "search")  // every tenant has a history store
-	caps = append(caps, "plugins") // plugin manager (list/load/unload/reload)
+	caps := []string{"previews", "search", "plugins"} // previews always wired; every tenant has a history store + plugin manager
+	if s.uploadDir != "" {
+		caps = append(caps, "uploads") // only when an upload dir is configured (else /api/upload is unregistered)
+	}
 	if s.push != nil {
 		caps = append(caps, "push")
 	}

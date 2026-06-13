@@ -45,7 +45,7 @@ type fakeHistory struct {
 	unread []core.UnreadCount
 }
 
-func (f *fakeHistory) Backlog(_ context.Context, _, _ string, _ time.Time, _ int) ([]core.Message, bool, error) {
+func (f *fakeHistory) Backlog(_ context.Context, _, _ string, _ int64, _ int) ([]core.Message, bool, error) {
 	return f.msgs, f.more, nil
 }
 func (f *fakeHistory) BacklogAround(_ context.Context, _, _ string, _ time.Time, _ int) ([]core.Message, bool, error) {

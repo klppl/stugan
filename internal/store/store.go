@@ -306,26 +306,31 @@ func (s *Store) UnreadCounts(ctx context.Context) ([]core.UnreadCount, error) {
 }
 
 // Backlog returns up to limit messages for a buffer that are older than the
-// before cursor (a zero time means the most recent page), oldest-first.
-// more reports whether older history remains. The client passes the time of
-// the oldest message it holds as the next before cursor to page backward.
-func (s *Store) Backlog(ctx context.Context, network, buffer string, before time.Time, limit int) (msgs []core.Message, more bool, err error) {
+// beforeSeq cursor (a zero or negative cursor means the most recent page),
+// oldest-first. more reports whether older history remains. The client passes
+// the Seq of the oldest message it holds as the next beforeSeq to page
+// backward.
+//
+// The cursor is the rowid (Seq), not the timestamp, because rows are ordered
+// by id and many messages can share a millisecond timestamp (pastes, bot
+// bursts). A ts-based cursor would skip every other message sharing the
+// boundary millisecond and stall paging; keyset paging on the indexed id is
+// exact.
+func (s *Store) Backlog(ctx context.Context, network, buffer string, beforeSeq int64, limit int) (msgs []core.Message, more bool, err error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	beforeMillis := int64(1<<63 - 1)
-	if !before.IsZero() {
-		beforeMillis = before.UnixMilli()
+	if beforeSeq <= 0 {
+		beforeSeq = int64(1<<63 - 1)
 	}
 	// Fetch limit+1 newest-first to detect whether more remain, then reverse.
-	// Order by id (insertion order) for a stable sequence; filter by ts so
-	// the wire-visible message time can serve as the paging cursor.
+	// Order and page by id (insertion order) for an exact, stable sequence.
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+msgCols+`
 		 FROM messages
-		 WHERE network = ? AND buffer = ? AND ts < ?
+		 WHERE network = ? AND buffer = ? AND id < ?
 		 ORDER BY id DESC LIMIT ?`,
-		network, buffer, beforeMillis, limit+1,
+		network, buffer, beforeSeq, limit+1,
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("backlog query: %w", err)
@@ -366,7 +371,7 @@ func (s *Store) BacklogAround(ctx context.Context, network, buffer string, aroun
 	if around.IsZero() {
 		// Equivalent to "give me the most recent page" — defer to Backlog
 		// so callers don't have to branch.
-		return s.Backlog(ctx, network, buffer, time.Time{}, limit)
+		return s.Backlog(ctx, network, buffer, 0, limit)
 	}
 	aroundMS := around.UnixMilli()
 	beforeHalf := max(limit/2, 1)
@@ -430,16 +435,38 @@ func (s *Store) BacklogAround(ctx context.Context, network, buffer string, aroun
 	return older, more, nil
 }
 
+// ftsQuery turns a user's free-text search into a safe FTS5 MATCH expression.
+// Each whitespace-separated term is wrapped as a quoted FTS5 string literal
+// (embedded quotes doubled), so input like "c++", a stray quote, a trailing
+// "AND", or a "key:value" is matched literally instead of being parsed as FTS5
+// syntax (which would surface to the user as an opaque error). Terms are joined
+// by spaces, preserving FTS5's implicit-AND across words. Returns "" when the
+// query has no usable terms.
+func ftsQuery(raw string) string {
+	fields := strings.Fields(raw)
+	if len(fields) == 0 {
+		return ""
+	}
+	for i, f := range fields {
+		fields[i] = `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
+	}
+	return strings.Join(fields, " ")
+}
+
 // Search runs a full-text query over message text, newest matches first.
 // network and/or buffer narrow the scope when non-empty.
 func (s *Store) Search(ctx context.Context, query, network, buffer string, limit int) ([]core.Message, error) {
 	if limit <= 0 {
 		limit = 50
 	}
+	match := ftsQuery(query)
+	if match == "" {
+		return nil, nil // no usable search terms
+	}
 	q := `SELECT ` + msgColsM + `
 	      FROM messages_fts f JOIN messages m ON m.id = f.rowid
 	      WHERE messages_fts MATCH ?`
-	args := []any{query}
+	args := []any{match}
 	if network != "" {
 		q += " AND m.network = ?"
 		args = append(args, network)
@@ -491,6 +518,7 @@ func scanMessage(rows *sql.Rows) (core.Message, int64, error) {
 		return core.Message{}, 0, err
 	}
 	m.Time = time.UnixMilli(ts).UTC()
+	m.Seq = id
 	m.Self = self != 0
 	m.Highlight = highlight != 0
 	if tags != "" {

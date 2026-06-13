@@ -165,6 +165,10 @@ export interface MemberDTO {
 
 export interface MessageDTO {
   id: string;
+  // seq is the store's monotonic rowid for a persisted message, used as the
+  // keyset cursor when paging history backward (BacklogFetch.before_seq).
+  // Absent (0) for live messages not yet read back from the store.
+  seq?: number;
   network: string;
   buffer: string;
   time: string;
@@ -185,10 +189,13 @@ export interface MsgSend {
 export interface BacklogFetch {
   network: string;
   buffer: string;
-  before?: string;
+  // before_seq is a keyset cursor: the seq (store rowid) of the oldest
+  // message the client holds (0/absent = most recent page). Paging on seq
+  // rather than time is exact when messages share a millisecond timestamp.
+  before_seq?: number;
   // around, when set, asks for a window of context centered on that time
   // — roughly limit/2 messages with ts ≤ around plus limit/2 strictly
-  // newer. Takes precedence over `before`. Used for jump-to-message.
+  // newer. Takes precedence over `before_seq`. Used for jump-to-message.
   around?: string;
   limit?: number;
 }

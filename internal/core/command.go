@@ -358,7 +358,17 @@ func (a engineAPI) Part(network, channel string) error {
 }
 
 func (a engineAPI) Print(network, buffer, text string) {
-	a.e.HandleEvent(Event{Type: evPrint, Network: network, Buffer: buffer, Text: text, Time: time.Now()})
+	// Inject directly rather than via HandleEvent. A hook runs on the engine
+	// loop goroutine (it blocks inside Dispatch), and that goroutine is the
+	// sole consumer of e.events; routing Print back through that channel
+	// deadlocks once the 256-deep buffer fills (the loop can't drain it while
+	// parked in the hook). inject takes e.mu briefly and broadcasts, so it is
+	// safe to call re-entrantly. evPrint bypasses hooks anyway (see handle),
+	// so direct injection is behaviourally identical to the queued path.
+	a.e.inject(Message{
+		Network: network, Buffer: buffer, Time: time.Now(),
+		Kind: MsgSystem, Text: text,
+	})
 }
 
 // SetBufferState mutates the named buffer's State map under the engine

@@ -16,6 +16,15 @@ function memberColor(nick: string): string {
   return settings.coloredNicks ? nickColor(nick) : "";
 }
 
+// msgKey is a stable v-for key for the mentions/search lists. It must not be
+// the array index: the mentions list shifts off its front past 200 entries, so
+// index keys would remap every row to a different message and patch content in
+// place (and attach per-row state to the wrong line). Prefer the store rowid
+// (seq), then the msgid, then a content composite for servers that send neither.
+function msgKey(m: MessageDTO): string | number {
+  return m.seq || m.id || `${m.network}\x1f${m.buffer}\x1f${m.time}\x1f${m.from}`;
+}
+
 // "X is typing…" for the active buffer.
 const typingText = computed(() => {
   if (!store.active) return "";
@@ -575,7 +584,7 @@ async function onDrop(e: DragEvent) {
       <div class="messages">
         <div v-if="store.search.busy" class="empty">searching…</div>
         <div v-else-if="!store.search.results.length" class="empty">no matches</div>
-        <MentionRow v-for="(m, i) in store.search.results" :key="i" :msg="m" />
+        <MentionRow v-for="m in store.search.results" :key="msgKey(m)" :msg="m" />
       </div>
     </template>
 
@@ -584,7 +593,7 @@ async function onDrop(e: DragEvent) {
       <header class="chat-header"><span class="buffer-name">Mentions</span></header>
       <div class="messages">
         <div v-if="!store.mentions.length" class="empty">no mentions yet</div>
-        <MentionRow v-for="(m, i) in store.mentions" :key="i" :msg="m" />
+        <MentionRow v-for="m in store.mentions" :key="msgKey(m)" :msg="m" />
       </div>
     </template>
 

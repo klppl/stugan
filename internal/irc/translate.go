@@ -426,7 +426,17 @@ func formatNumeric(e *girc.Event) (text, subject string, code int, ok bool) {
 		return fmt.Sprintf("%s is logged in as %s", subject, param(2)), subject, code, true
 	case girc.RPL_WHOISACTUALLY: // 338
 		// Variants exist (real host / IP); print whatever the server sent.
-		return fmt.Sprintf("%s %s %s", subject, strings.Join(e.Params[2:len(e.Params)-1], " "), e.Last()), subject, code, true
+		// Params between <nick> and the trailing text are the middle fields;
+		// guard the slice against short/malformed replies (fewer than 3 params)
+		// so a bad line doesn't panic the handler.
+		parts := []string{subject}
+		if len(e.Params) >= 3 {
+			parts = append(parts, e.Params[2:len(e.Params)-1]...)
+		}
+		if last := e.Last(); last != "" {
+			parts = append(parts, last)
+		}
+		return strings.Join(parts, " "), subject, code, true
 	case girc.RPL_WHOISHOST: // 378
 		return fmt.Sprintf("%s %s", subject, e.Last()), subject, code, true
 	case girc.RPL_WHOISMODES: // 379

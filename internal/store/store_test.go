@@ -112,7 +112,7 @@ func TestPersistAndBacklog(t *testing.T) {
 	s.Print(msg("libera", "#other", "bob", "elsewhere", core.MsgPrivmsg, base))
 
 	ctx := context.Background()
-	got, more, err := s.Backlog(ctx, "libera", "#go", time.Time{}, 3)
+	got, more, err := s.Backlog(ctx, "libera", "#go", 0, 3)
 	if err != nil {
 		t.Fatalf("backlog: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestBacklogPaging(t *testing.T) {
 	}
 	ctx := context.Background()
 	// First (newest) page: messages 3,4 oldest-first.
-	page1, more, err := s.Backlog(ctx, "n", "#c", time.Time{}, 2)
+	page1, more, err := s.Backlog(ctx, "n", "#c", 0, 2)
 	if err != nil || !more || len(page1) != 2 {
 		t.Fatalf("page1: %v more=%v len=%d", err, more, len(page1))
 	}
@@ -151,8 +151,8 @@ func TestBacklogPaging(t *testing.T) {
 		t.Fatalf("page1 = %q,%q", page1[0].Text, page1[1].Text)
 	}
 
-	// Page backward using the oldest loaded message's time as the cursor.
-	page2, more, err := s.Backlog(ctx, "n", "#c", page1[0].Time, 2)
+	// Page backward using the oldest loaded message's Seq as the cursor.
+	page2, more, err := s.Backlog(ctx, "n", "#c", page1[0].Seq, 2)
 	if err != nil || !more || len(page2) != 2 {
 		t.Fatalf("page2: %v more=%v len=%d", err, more, len(page2))
 	}
@@ -161,12 +161,56 @@ func TestBacklogPaging(t *testing.T) {
 	}
 
 	// Final page: just message 0, no more.
-	page3, more, err := s.Backlog(ctx, "n", "#c", page2[0].Time, 2)
+	page3, more, err := s.Backlog(ctx, "n", "#c", page2[0].Seq, 2)
 	if err != nil || more || len(page3) != 1 {
 		t.Fatalf("page3: %v more=%v len=%d", err, more, len(page3))
 	}
 	if page3[0].Text != text(0) {
 		t.Fatalf("page3 = %q", page3[0].Text)
+	}
+}
+
+// TestBacklogPagingSameTimestamp guards the keyset cursor: when every message
+// shares one millisecond timestamp (pastes, bot bursts), paging by Seq must
+// still walk all of them without skipping. A ts-based cursor would drop every
+// message sharing the boundary millisecond and stall.
+func TestBacklogPagingSameTimestamp(t *testing.T) {
+	s := openTest(t)
+	ts := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	const total = 10
+	for i := range total {
+		s.Print(msg("n", "#c", "u", text(i), core.MsgPrivmsg, ts)) // all identical ts
+	}
+	ctx := context.Background()
+
+	// Page backward in pages of 3, accumulating oldest-first results.
+	var seen []string
+	cursor := int64(0)
+	for range total { // bounded loop; should converge well before this
+		page, more, err := s.Backlog(ctx, "n", "#c", cursor, 3)
+		if err != nil {
+			t.Fatalf("backlog: %v", err)
+		}
+		if len(page) == 0 {
+			t.Fatalf("empty page with cursor=%d; %d/%d seen", cursor, len(seen), total)
+		}
+		texts := make([]string, len(page))
+		for i, m := range page {
+			texts[i] = m.Text
+		}
+		seen = append(texts, seen...) // prepend; pages arrive newest-block first
+		cursor = page[0].Seq
+		if !more {
+			break
+		}
+	}
+	if len(seen) != total {
+		t.Fatalf("retrieved %d messages, want %d (same-ts paging skipped some)", len(seen), total)
+	}
+	for i := range total {
+		if seen[i] != text(i) {
+			t.Fatalf("message %d = %q, want %q (order/skip bug)", i, seen[i], text(i))
+		}
 	}
 }
 
@@ -256,6 +300,19 @@ func TestSearch(t *testing.T) {
 	}
 	if len(res) != 1 || res[0].Buffer != "#d" {
 		t.Fatalf("scoped search = %+v", res)
+	}
+
+	// Multi-word stays an implicit AND across terms.
+	res, err = s.Search(ctx, "quick fox", "", "", 10)
+	if err != nil || len(res) != 1 {
+		t.Fatalf("search 'quick fox' = %d results err=%v, want 1", len(res), err)
+	}
+
+	// FTS5-special input must not error — it's matched literally, not parsed.
+	for _, q := range []string{`"`, "quick AND", "fox:", "c++", "(quick", "*", "  "} {
+		if _, err := s.Search(ctx, q, "", "", 10); err != nil {
+			t.Errorf("search %q errored: %v", q, err)
+		}
 	}
 }
 

@@ -67,7 +67,7 @@ func (u *User) clone() *User {
 // clone returns a deep copy of a network (channels and members included).
 func (n *Network) clone() *Network {
 	nc := &Network{
-		ID: n.ID, Name: n.Name, Nick: n.Nick, State: n.State, Params: n.Params,
+		ID: n.ID, Name: n.Name, Nick: n.Nick, State: n.State, Params: n.Params.clone(),
 		Channels: make([]*Channel, len(n.Channels)),
 	}
 	for j, ch := range n.Channels {
@@ -266,7 +266,11 @@ type Member struct {
 // Message is a single line in a buffer. It is the unit plugin hooks
 // inspect/mutate and that the wire protocol carries.
 type Message struct {
-	ID        string
+	ID string
+	// Seq is the store's monotonic insertion id (SQLite rowid) for a persisted
+	// message, used as the stable keyset cursor for history paging. Zero for a
+	// live message that hasn't been read back from the store.
+	Seq       int64
 	Network   string
 	Buffer    string // channel or query name
 	Time      time.Time

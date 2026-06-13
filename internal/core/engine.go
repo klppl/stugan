@@ -348,6 +348,11 @@ func (e *Engine) RemoveNetwork(id string) error {
 	}
 	conn := e.conns[id]
 	delete(e.conns, id)
+	// Drop per-network bookkeeping so it doesn't accumulate across add/remove
+	// churn on a long-lived daemon. The network (and its persistence) is gone;
+	// a plugin re-publishes buffer state on rejoin if it's ever re-added.
+	delete(e.pendingState, id)
+	delete(e.listAccum, id)
 	for i, n := range e.user.Networks {
 		if n.ID == id {
 			e.user.Networks = append(e.user.Networks[:i], e.user.Networks[i+1:]...)
@@ -935,7 +940,7 @@ func (e *Engine) loop(ctx context.Context) {
 // Internal events (state, print) bypass the host entirely.
 func (e *Engine) handle(ctx context.Context, ev Event) {
 	switch ev.Type {
-	case evSetState, evPrint:
+	case evSetState:
 		e.apply(ev)
 
 	case EvMessageIn, EvMessageOut:
@@ -1287,14 +1292,6 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 	case evSetState:
 		n.State = ev.State
 		netChanged = true
-
-	case evPrint:
-		_, created := n.getOrCreate(ev.Buffer, bufferKind(ev.Buffer))
-		emit = append(emit, Message{
-			Network: n.ID, Buffer: ev.Buffer, Time: time.Now(),
-			Kind: MsgSystem, Text: ev.Text,
-		})
-		netChanged = created
 
 	case EvConnect:
 		n.State = StateRegistered

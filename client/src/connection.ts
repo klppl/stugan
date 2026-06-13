@@ -941,19 +941,22 @@ export class Connection {
     this.select(network, buf.name);
   }
 
-  fetchBacklog(network: string, buffer: string, before?: string) {
+  fetchBacklog(network: string, buffer: string, beforeSeq?: number) {
     const buf = this.buf(network, buffer);
     if (buf) {
-      if (!before) buf.loaded = true;
+      if (!beforeSeq) buf.loaded = true;
       else buf.backlogPending = true; // cleared in applyBacklog when the page lands
     }
-    this.sendFrame<BacklogFetch>(T.BacklogFetch, { network, buffer, before, limit: 100 });
+    this.sendFrame<BacklogFetch>(T.BacklogFetch, { network, buffer, before_seq: beforeSeq, limit: 100 });
   }
 
   loadOlder(network: string, buffer: string) {
     const buf = this.buf(network, buffer);
     if (!buf || !buf.more || buf.backlogPending || buf.messages.length === 0) return;
-    this.fetchBacklog(network, buffer, buf.messages[0].time);
+    // Page backward by the oldest held message's store rowid (seq), the stable
+    // keyset cursor. The oldest message at index 0 always comes from a backlog
+    // page (live messages append at the tail), so its seq is set.
+    this.fetchBacklog(network, buffer, buf.messages[0].seq);
   }
 
   search(query: string) {
@@ -1251,9 +1254,23 @@ export class Connection {
     this.sendFrame<NetConfig>(T.NetEdit, cfg);
   }
 
-  // removeNetworkLocal drops a network from the store on a net:remove frame.
+  // removeNetworkLocal drops a network from the store on a net:remove frame,
+  // along with the per-network ephemeral state keyed by its bufKey/id, so it
+  // doesn't leak across repeated add/remove cycles within a session.
   private removeNetworkLocal(id: string) {
     this.store.networks = this.store.networks.filter((n) => n.id !== id);
+    delete this.store.netConfigs[id];
+    const prefix = id + "\x1f"; // bufKey prefix for this network's buffers
+    for (const map of [this.store.typing, this.typingTimers, this.readMarkTimers]) {
+      for (const k of Object.keys(map)) {
+        if (k.startsWith(prefix)) {
+          if (map === this.typingTimers || map === this.readMarkTimers) {
+            clearTimeout((map as Record<string, ReturnType<typeof setTimeout>>)[k]);
+          }
+          delete (map as Record<string, unknown>)[k];
+        }
+      }
+    }
     if (this.store.active?.network === id) this.ensureActive();
   }
 

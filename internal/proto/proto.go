@@ -140,7 +140,11 @@ type MemberDTO struct {
 
 // MessageDTO is the wire projection of core.Message. Time is RFC3339.
 type MessageDTO struct {
-	ID        string            `json:"id"`
+	ID string `json:"id"`
+	// Seq is the store's monotonic rowid for a persisted message, used by the
+	// client as the keyset cursor when paging history backward (BacklogFetch.
+	// BeforeSeq). Omitted (0) for live messages not read back from the store.
+	Seq       int64             `json:"seq,omitempty"`
 	Network   string            `json:"network"`
 	Buffer    string            `json:"buffer"`
 	Time      string            `json:"time"`
@@ -163,22 +167,24 @@ type MsgSend struct {
 
 // BacklogFetch is a client→server request for a page of history.
 //
-// Before is an RFC3339 timestamp cursor (empty = most recent page); the
-// server returns messages older than it.
+// BeforeSeq is a keyset cursor: the Seq (store rowid) of the oldest message
+// the client holds (0 or absent = most recent page). The server returns
+// messages with a smaller Seq. Paging on Seq rather than time is exact even
+// when many messages share a millisecond timestamp.
 //
 // Around, when set, asks for a window of context centered on that time —
 // roughly Limit/2 messages with ts ≤ Around plus Limit/2 strictly newer,
 // returned oldest-first. Used for "jump to this message" navigation from
 // mentions and search results. When Around is non-empty it takes
-// precedence over Before.
+// precedence over BeforeSeq.
 //
 // Carry an Envelope.ID to correlate the reply.
 type BacklogFetch struct {
-	Network string `json:"network"`
-	Buffer  string `json:"buffer"`
-	Before  string `json:"before,omitempty"`
-	Around  string `json:"around,omitempty"`
-	Limit   int    `json:"limit,omitempty"`
+	Network   string `json:"network"`
+	Buffer    string `json:"buffer"`
+	BeforeSeq int64  `json:"before_seq,omitempty"`
+	Around    string `json:"around,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
 }
 
 // BacklogResp answers a BacklogFetch with a page of history, oldest-first.
