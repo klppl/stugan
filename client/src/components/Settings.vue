@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
-import { settings, themeNames, installTheme, uninstallTheme, TEMPLATE } from "../settings";
+import { settings, themeNames, installTheme, uninstallTheme, TEMPLATE, PRESET_THEMES } from "../settings";
+import type { PresetTheme } from "../settings";
 import { connection } from "../connection";
 import type { PluginInfo, PluginSetting } from "../proto/events";
 import { enablePush } from "../pwa";
@@ -52,6 +53,14 @@ function doInstall() {
     themeName.value = "";
     themeCss.value = TEMPLATE;
   }
+}
+
+// Load a preset into the install form so the user can install it as-is or
+// tweak the CSS before saving.
+function usePreset(p: PresetTheme) {
+  themeName.value = p.name;
+  themeCss.value = p.css;
+  themeError.value = "";
 }
 
 // Highlight keywords: one regex per line. The server validates and persists
@@ -164,6 +173,19 @@ async function enableNotifications() {
       </div>
 
       <div v-if="showInstall" class="install-theme">
+        <p class="hint">Start from a preset, or paste your own below.</p>
+        <div class="presets">
+          <button
+            v-for="p in PRESET_THEMES"
+            :key="p.name"
+            class="preset"
+            :title="p.blurb"
+            @click="usePreset(p)"
+          >
+            <span class="swatch" :style="{ background: p.css.match(/--bg:\s*([^;]+)/)?.[1], borderColor: p.css.match(/--accent:\s*([^;]+)/)?.[1] }"></span>
+            {{ p.name }}
+          </button>
+        </div>
         <input v-model="themeName" placeholder="Theme name (e.g. Solarized)" />
         <textarea
           v-model="themeCss"

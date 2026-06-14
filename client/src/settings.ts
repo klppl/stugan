@@ -33,6 +33,83 @@ export interface CustomTheme {
   vars: Record<string, string>;
 }
 
+// PRESET_THEMES are ready-made themes a user can install with one click (or
+// copy the CSS to tweak). They're plain custom themes — nothing special once
+// installed — surfaced in the install panel as a starting gallery.
+export interface PresetTheme {
+  name: string;
+  blurb: string;
+  css: string;
+}
+
+export const PRESET_THEMES: PresetTheme[] = [
+  {
+    name: "Nordlig",
+    blurb: "cool Nord-inspired blues and frost",
+    css: `--bg: #1a1f26;
+--bg-alt: #21272f;
+--bg-sidebar: #0d1116;
+--fg: #c4cdd6;
+--fg-dim: #6b7785;
+--accent: #88c0d0;
+--self: #a3be8c;
+--hl: #bf616a;
+--border: #000000;`,
+  },
+  {
+    name: "Brasa",
+    blurb: "warm fireside ambers, easy on late-night eyes",
+    css: `--bg: #241e19;
+--bg-alt: #2c251f;
+--bg-sidebar: #15110e;
+--fg: #ddd0c0;
+--fg-dim: #7d6e5c;
+--accent: #e0a458;
+--self: #b5a76f;
+--hl: #cc6b49;
+--border: #000000;`,
+  },
+  {
+    name: "Dimma",
+    blurb: "a light theme for daytime, low contrast and soft",
+    css: `--bg: #fbfaf6;
+--bg-alt: #f4f1ea;
+--bg-sidebar: #e8e4da;
+--fg: #3a3833;
+--fg-dim: #8a857a;
+--accent: #3b6ea5;
+--self: #4f8a4f;
+--hl: #c0504d;
+--border: #d8d4ca;`,
+  },
+  {
+    name: "Mossa",
+    blurb: "muted forest greens",
+    css: `--bg: #1d231c;
+--bg-alt: #242b22;
+--bg-sidebar: #111510;
+--fg: #c8d4c4;
+--fg-dim: #6a7666;
+--accent: #8ab06f;
+--self: #a8c98a;
+--hl: #d08770;
+--border: #000000;`,
+  },
+  {
+    name: "Midnatt",
+    blurb: "deep navy-black with violet accents",
+    css: `--bg: #1b1d24;
+--bg-alt: #22242c;
+--bg-sidebar: #0e0f13;
+--fg: #cdcfd6;
+--fg-dim: #6f7280;
+--accent: #9d8cd8;
+--self: #7fb0c0;
+--hl: #d56d8a;
+--border: #000000;`,
+  },
+];
+
 interface Settings {
   theme: string;
   customThemes: CustomTheme[];
