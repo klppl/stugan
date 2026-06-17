@@ -501,6 +501,13 @@ stugan.hook_message(function(msg)
   return msg
 end, { priority = 50 })
 
+-- A target is a channel (vs a private query) if it starts with a channel
+-- prefix. Used to scope the plaintext-downgrade marker to queries only.
+local function is_channel(name)
+  local c = name:sub(1, 1)
+  return c == "#" or c == "&" or c == "+" or c == "!"
+end
+
 -- Decrypt incoming PRIVMSG / NOTICE / ACTION if a key matches. Runs late so
 -- the rest of the inbound pipeline (spam filters, mention detectors) sees
 -- the decrypted text and can match on it.
@@ -532,6 +539,15 @@ stugan.hook_message(function(msg)
     stugan.log.debug("fish: decrypt failed (" .. tostring(reason) .. ") buffer='"
       .. tostring(msg.buffer) .. "' from=" .. tostring(msg.from)
       .. " text=" .. string.format("%q", msg.text))
+  elseif not msg.self and not is_channel(msg.buffer) then
+    -- Keyed private query, but an inbound line arrived as cleartext (no fish
+    -- prefix). The lock icon says this conversation is encrypted, so an
+    -- unmarked plaintext line is a downgrade signal worth surfacing — the peer
+    -- dropped their key, or something on the path stripped the encryption.
+    -- Mark it so it can't be mistaken for a normal (encrypted) message. Scoped
+    -- to queries: channels mix keyed and unkeyed members, so plaintext there
+    -- is expected and marking it would be noise.
+    msg.text = "[plaintext] " .. msg.text
   end
   return msg
 end, { priority = 900 })
@@ -631,6 +647,30 @@ stugan.hook_command("notice", function(args, ctx)
   end
   for _, ct in ipairs(chunk_and_encrypt(text, key, mode)) do
     stugan.send(ctx.network, "NOTICE " .. target .. " :" .. ct)
+  end
+end)
+
+-- /msg <target> <text> — the engine's built-in /msg routes straight to IRC via
+-- the API (engineAPI.Message), which does NOT run hook_input. Typed text and
+-- /query go through the input path and get encrypted; /msg would not. Without
+-- claiming it here, "/msg <keyed-nick> secret" leaks plaintext to a buffer the
+-- user believes is encrypted. Encrypt when the target is keyed; otherwise
+-- delegate to the same native path the built-in uses, so behavior is identical
+-- to no-plugin.
+stugan.hook_command("msg", function(args, ctx)
+  local target = args[1]
+  if not target or #args < 2 then
+    stugan.print(ctx, "usage: /msg <target> <text>")
+    return
+  end
+  local text = table.concat(args, " ", 2)
+  local key, mode = get_key(ctx.network, target)
+  if not key then
+    stugan.message(ctx.network, target, text)
+    return
+  end
+  for _, ct in ipairs(chunk_and_encrypt(text, key, mode)) do
+    stugan.send(ctx.network, "PRIVMSG " .. target .. " :" .. ct)
   end
 end)
 

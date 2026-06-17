@@ -405,6 +405,97 @@ func TestFishMeCommand(t *testing.T) {
 	}
 }
 
+// TestFishMsgCommand guards the plaintext-leak gap: the engine's built-in
+// /msg sends via engineAPI.Message, which bypasses hook_input, so fish.lua
+// must claim /msg directly. A keyed target gets an encrypted raw PRIVMSG; an
+// unkeyed target falls back to the native message path (cleartext, like
+// no-plugin).
+func TestFishMsgCommand(t *testing.T) {
+	h, api := loadFish(t)
+	setKey(t, h, "n", "bob", "k", "cbc")
+
+	// /msg bob secret → encrypted PRIVMSG, no plaintext on the wire.
+	api.mu.Lock()
+	api.msgs = nil
+	api.sends = nil
+	api.mu.Unlock()
+	h.Dispatch(context.Background(), core.Event{
+		Type: core.EvCommand, Network: "n", Buffer: "bob",
+		Command: "msg", Args: []string{"bob", "secret"},
+	})
+	raw := api.sentRaw()
+	if len(raw) != 1 || !strings.HasPrefix(raw[0][1], "PRIVMSG bob :+OK *") {
+		t.Errorf("keyed /msg: got %v, want one encrypted PRIVMSG", raw)
+	}
+	if got := api.sentMsgs(); len(got) != 0 {
+		t.Errorf("keyed /msg leaked plaintext via Message: %v", got)
+	}
+
+	// /msg to an unkeyed target delegates to the native message path.
+	api.mu.Lock()
+	api.msgs = nil
+	api.sends = nil
+	api.mu.Unlock()
+	h.Dispatch(context.Background(), core.Event{
+		Type: core.EvCommand, Network: "n", Buffer: "bob",
+		Command: "msg", Args: []string{"stranger", "hi"},
+	})
+	if got := api.sentMsgs(); len(got) != 1 || got[0] != [3]string{"n", "stranger", "hi"} {
+		t.Errorf("plain /msg: got %v", got)
+	}
+}
+
+// TestFishPlaintextDowngradeMarker checks that an inbound cleartext line in a
+// keyed *private query* is marked [plaintext] (a downgrade signal: the peer
+// lost their key or the path stripped encryption), while the same situation on
+// a keyed channel is left untouched (mixed membership → plaintext is normal),
+// and encrypted lines are never marked.
+func TestFishPlaintextDowngradeMarker(t *testing.T) {
+	h, _ := loadFish(t)
+	setKey(t, h, "n", "bob", "k", "cbc")   // keyed query
+	setKey(t, h, "n", "#chan", "k", "cbc") // keyed channel
+
+	// Cleartext from bob in a keyed query → marked.
+	in, _ := h.Dispatch(context.Background(), core.Event{
+		Type: core.EvMessageIn, Network: "n",
+		Message: &core.Message{
+			Network: "n", Buffer: "bob", From: "bob",
+			Kind: core.MsgPrivmsg, Text: "hey are you there",
+		},
+	})
+	if in.Message.Text != "[plaintext] hey are you there" {
+		t.Errorf("keyed-query cleartext: got %q, want it marked [plaintext]", in.Message.Text)
+	}
+
+	// Cleartext in a keyed channel → NOT marked (mixed membership).
+	in, _ = h.Dispatch(context.Background(), core.Event{
+		Type: core.EvMessageIn, Network: "n",
+		Message: &core.Message{
+			Network: "n", Buffer: "#chan", From: "someone",
+			Kind: core.MsgPrivmsg, Text: "plain channel line",
+		},
+	})
+	if in.Message.Text != "plain channel line" {
+		t.Errorf("keyed-channel cleartext must not be marked: got %q", in.Message.Text)
+	}
+
+	// A properly encrypted line in the query decrypts and is NOT marked.
+	out, _ := h.Dispatch(context.Background(), core.Event{
+		Type: core.EvMessageOut, Network: "n",
+		Message: &core.Message{Network: "n", Buffer: "bob", Text: "secret", Self: true},
+	})
+	in, _ = h.Dispatch(context.Background(), core.Event{
+		Type: core.EvMessageIn, Network: "n",
+		Message: &core.Message{
+			Network: "n", Buffer: "bob", From: "bob",
+			Kind: core.MsgPrivmsg, Text: out.Message.Text,
+		},
+	})
+	if in.Message.Text != "secret" {
+		t.Errorf("encrypted query line: got %q, want decrypted+unmarked", in.Message.Text)
+	}
+}
+
 func TestFishNoticeCommand(t *testing.T) {
 	h, api := loadFish(t)
 	setKey(t, h, "n", "#chan", "k", "cbc")
