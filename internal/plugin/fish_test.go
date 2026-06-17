@@ -547,6 +547,92 @@ func findSend(api *fakeAPI, prefix string) string {
 	return ""
 }
 
+// TestFishDH1080CBCToken pins the wire contract real FiSH peers (py-fishcrypt,
+// weechat-fish, FiSH 10) speak: the handshake line is space-delimited and
+// carries a trailing " CBC" capability token. The earlier code (a) omitted the
+// token when sending INIT and (b) parsed the pubkey as the *remainder* of the
+// line, folding " CBC" into the base64 — so an INIT from a real client failed
+// validation and no FINISH was ever sent ("får ingen bekräftelse"). Guard both
+// halves: our INIT must advertise CBC, and an INIT that carries the token must
+// be answered with a CBC FINISH.
+func TestFishDH1080CBCToken(t *testing.T) {
+	alice, aAPI := loadFish(t)
+	bob, bAPI := loadFish(t)
+
+	aAPI.mu.Lock()
+	aAPI.sends = nil
+	aAPI.mu.Unlock()
+	alice.Dispatch(context.Background(), core.Event{
+		Type: core.EvCommand, Network: "n", Buffer: "bob",
+		Command: "keyx", Args: []string{"bob"},
+	})
+	initNotice := findSend(aAPI, "NOTICE bob :DH1080_INIT ")
+	if initNotice == "" {
+		t.Fatalf("alice /keyx emitted no DH1080_INIT (sends=%v)", aAPI.sentRaw())
+	}
+	initBody := strings.TrimPrefix(initNotice, "NOTICE bob :")
+	// Send side: a real peer enables CBC only if it sees this token.
+	if !strings.HasSuffix(initBody, " CBC") {
+		t.Errorf("INIT must advertise CBC; got %q", initBody)
+	}
+	// And the pubkey must be a single whitespace-delimited token (no token
+	// fused onto it).
+	if fields := strings.Fields(initBody); len(fields) != 3 || fields[0] != "DH1080_INIT" || fields[2] != "CBC" {
+		t.Errorf("INIT not space-delimited as <cmd> <pubkey> CBC: %q", initBody)
+	}
+
+	// Receive side: feed the CBC-tokened INIT to bob; he must reply FINISH
+	// that itself carries the CBC token (else the modes diverge).
+	bAPI.mu.Lock()
+	bAPI.sends = nil
+	bAPI.mu.Unlock()
+	bob.Dispatch(context.Background(), core.Event{
+		Type: core.EvMessageIn, Network: "n",
+		Message: &core.Message{
+			Network: "n", Buffer: "alice", From: "alice",
+			Kind: core.MsgNotice, Text: initBody,
+		},
+	})
+	finish := findSend(bAPI, "NOTICE alice :DH1080_FINISH ")
+	if finish == "" {
+		t.Fatalf("bob sent no FINISH for a CBC INIT — the token broke parsing (sends=%v)", bAPI.sentRaw())
+	}
+	if !strings.HasSuffix(strings.TrimPrefix(finish, "NOTICE alice :"), " CBC") {
+		t.Errorf("FINISH must echo the CBC token; got %q", finish)
+	}
+}
+
+// TestFishDH1080LegacyInitCBCCommand covers the legacy command form some
+// clients use to signal CBC: "DH1080_INIT_CBC <pubkey>" (token in the command
+// rather than a trailing word). It must still produce a FINISH.
+func TestFishDH1080LegacyInitCBCCommand(t *testing.T) {
+	alice, aAPI := loadFish(t)
+	bob, bAPI := loadFish(t)
+
+	alice.Dispatch(context.Background(), core.Event{
+		Type: core.EvCommand, Network: "n", Buffer: "bob",
+		Command: "keyx", Args: []string{"bob"},
+	})
+	initBody := strings.TrimPrefix(findSend(aAPI, "NOTICE bob :DH1080_INIT "), "NOTICE bob :")
+	// Reshape "DH1080_INIT <pk> CBC" → "DH1080_INIT_CBC <pk>".
+	fields := strings.Fields(initBody)
+	legacy := "DH1080_INIT_CBC " + fields[1]
+
+	bAPI.mu.Lock()
+	bAPI.sends = nil
+	bAPI.mu.Unlock()
+	bob.Dispatch(context.Background(), core.Event{
+		Type: core.EvMessageIn, Network: "n",
+		Message: &core.Message{
+			Network: "n", Buffer: "alice", From: "alice",
+			Kind: core.MsgNotice, Text: legacy,
+		},
+	})
+	if findSend(bAPI, "NOTICE alice :DH1080_FINISH ") == "" {
+		t.Errorf("bob ignored legacy DH1080_INIT_CBC form (sends=%v)", bAPI.sentRaw())
+	}
+}
+
 // TestFishDH1080RejectsBadPubkey checks the conservative validator: degenerate
 // peer pubkeys (0, 1, p) must be rejected before any modexp runs.
 func TestFishDH1080RejectsBadPubkey(t *testing.T) {

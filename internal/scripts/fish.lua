@@ -297,10 +297,14 @@ end
 -- are the interop contract. Cross-checked from two independent sources.
 --
 -- Wire format (interop with weechat-fish / FiSHLiM / mIRC-FiSH 10):
---   NOTICE <peer> :DH1080_INIT  <dh-b64(g^x mod p)>
---   NOTICE <peer> :DH1080_FINISH <dh-b64(g^y mod p)>
--- The dh-b64 variant: standard base64 of the bytes, then `=` padding is
--- replaced with the literal `A` (an IRC-safe stand-in, since `=` carries
+--   NOTICE <peer> :DH1080_INIT   <dh-b64(g^x mod p)> CBC
+--   NOTICE <peer> :DH1080_FINISH <dh-b64(g^y mod p)> CBC
+-- The line is space-delimited: the token after the command is the pubkey, and
+-- the optional trailing "CBC" token (or a legacy "DH1080_INIT_CBC" command)
+-- negotiates CBC mode. Both ends MUST agree on the token, else one stores a
+-- CBC key and the other an ECB key off the same shared secret and nothing
+-- decrypts. The dh-b64 variant: standard base64 of the bytes, then `=` padding
+-- is replaced with the literal `A` (an IRC-safe stand-in, since `=` carries
 -- meaning in some message-tag contexts).
 --
 -- Security caveat: DH1080 has no authentication. A MITM on the IRC server
@@ -385,23 +389,46 @@ local function dh_send_init(network, peer)
   local x  = crypto.random(DH1080_EXP_LEN)
   local pk = crypto.modexp(DH1080_G, x, DH1080_PRIME)
   pending[pending_key(network, peer)] = x
+  -- Advertise CBC with the trailing " CBC" token. Real FiSH peers
+  -- (py-fishcrypt, weechat-fish, FiSH 10) enable CBC *only* when the INIT
+  -- carries this token; without it they fall back to legacy ECB and the two
+  -- ends derive the same key but store it under different cipher modes —
+  -- every message then looks like garbage. stugan's DH path is CBC-only.
   stugan.send(network, "NOTICE " .. peer .. " :DH1080_INIT "
-    .. dh_b64_encode(trim_leading_zeros(pk)))
+    .. dh_b64_encode(trim_leading_zeros(pk)) .. " CBC")
 end
 
-local function dh_handle_init(network, peer, peer_pk_b64)
+-- parse_dh1080 extracts (pubkey_b64, cbc) from a handshake line for the given
+-- command, mirroring the reference parser (weechat-fish / py-fishcrypt): split
+-- on spaces, take the first token after the command as the pubkey, and treat a
+-- trailing "CBC" token — or the legacy "<cmd>_CBC" command form — as the CBC
+-- capability flag. The old code captured the *remainder* of the line as the
+-- pubkey, which folded the " CBC" token into the base64 and corrupted the key,
+-- so validation failed and the FINISH reply was never sent.
+local function parse_dh1080(text, cmd)
+  local pk = text:match("^" .. cmd .. " (%S+)")
+  if pk then return pk, text:match(" CBC%s*$") ~= nil end
+  pk = text:match("^" .. cmd .. "_CBC (%S+)")
+  if pk then return pk, true end
+  return nil
+end
+
+local function dh_handle_init(network, peer, peer_pk_b64, cbc)
   local peer_pk = dh_b64_decode(peer_pk_b64)
   if not dh_validate(peer_pk) then return false end
   local y      = crypto.random(DH1080_EXP_LEN)
   local our_pk = crypto.modexp(DH1080_G, y, DH1080_PRIME)
   local shared = crypto.modexp(peer_pk, y, DH1080_PRIME)
-  set_key(network, peer, derive_session_key(shared), "cbc")
+  -- Echo the peer's mode: a CBC-capable INIT gets a CBC FINISH and a CBC key;
+  -- a legacy (token-less) INIT gets an ECB FINISH and ECB key. Mismatching the
+  -- mode here is what makes a "successful" exchange still decrypt to garbage.
+  set_key(network, peer, derive_session_key(shared), cbc and "cbc" or "ecb")
   stugan.send(network, "NOTICE " .. peer .. " :DH1080_FINISH "
-    .. dh_b64_encode(trim_leading_zeros(our_pk)))
+    .. dh_b64_encode(trim_leading_zeros(our_pk)) .. (cbc and " CBC" or ""))
   return true
 end
 
-local function dh_handle_finish(network, peer, peer_pk_b64)
+local function dh_handle_finish(network, peer, peer_pk_b64, cbc)
   local k = pending_key(network, peer)
   local x = pending[k]
   if not x then return false end
@@ -409,7 +436,7 @@ local function dh_handle_finish(network, peer, peer_pk_b64)
   local peer_pk = dh_b64_decode(peer_pk_b64)
   if not dh_validate(peer_pk) then return false end
   local shared = crypto.modexp(peer_pk, x, DH1080_PRIME)
-  set_key(network, peer, derive_session_key(shared), "cbc")
+  set_key(network, peer, derive_session_key(shared), cbc and "cbc" or "ecb")
   return true
 end
 
@@ -450,9 +477,9 @@ end, { priority = 100 })
 -- otherwise we'd loop on our own messages with echo-message on.
 stugan.hook_message(function(msg)
   if msg.kind ~= "notice" or msg.self then return msg end
-  local init_b64 = msg.text:match("^DH1080_INIT (.+)$")
-  if init_b64 then
-    if dh_handle_init(msg.network, msg.from, init_b64) then
+  local init_pk, init_cbc = parse_dh1080(msg.text, "DH1080_INIT")
+  if init_pk then
+    if dh_handle_init(msg.network, msg.from, init_pk, init_cbc) then
       stugan.print(msg.network, msg.from,
         "fish: DH1080 key exchange with " .. msg.from .. " established")
     else
@@ -460,9 +487,9 @@ stugan.hook_message(function(msg)
     end
     return nil -- consume; don't show the raw handshake in the buffer
   end
-  local finish_b64 = msg.text:match("^DH1080_FINISH (.+)$")
-  if finish_b64 then
-    if dh_handle_finish(msg.network, msg.from, finish_b64) then
+  local finish_pk, finish_cbc = parse_dh1080(msg.text, "DH1080_FINISH")
+  if finish_pk then
+    if dh_handle_finish(msg.network, msg.from, finish_pk, finish_cbc) then
       stugan.print(msg.network, msg.from,
         "fish: DH1080 key exchange with " .. msg.from .. " established")
     else
