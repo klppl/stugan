@@ -32,6 +32,7 @@ const (
 	TRedact       = "redact"        // s2c (and c2s) — message redaction
 	TPluginList   = "plugin:list"   // s2c (answers c2s plugin:list/plugin:action)
 	TCompleteRes  = "complete:res"  // s2c (answers c2s complete:req)
+	TMissedResult = "missed:result" // s2c (answers missed:fetch — "what you missed" digest)
 	THighlight    = "highlight"     // s2c (current rules; answers highlight:set)
 	TAliases      = "aliases"       // s2c (current alias table; answers aliases:set)
 	TPong         = "pong"          // s2c (answers c2s ping; app-level liveness)
@@ -42,6 +43,7 @@ const (
 	TBacklogFetch = "backlog:fetch"  // c2s
 	TContextFetch = "context:fetch"  // c2s
 	TSearch       = "search"         // c2s
+	TMissedFetch  = "missed:fetch"   // c2s — request the highlights missed since last read (digest)
 	TNetAdd       = "net:add"        // c2s
 	TNetEdit      = "net:edit"       // c2s
 	TNetConnect   = "net:connect"    // c2s
@@ -236,6 +238,18 @@ type SearchReq struct {
 type SearchResp struct {
 	Query   string       `json:"query"`
 	Results []MessageDTO `json:"results"`
+}
+
+// MissedResp answers a missed:fetch with the highlight lines that arrived
+// while the user was away — i.e. messages flagged as a highlight whose time is
+// newer than their buffer's read marker, across every buffer, oldest first.
+// It is the body of the "what you missed" digest the client shows on connect;
+// the unread/mention *counts* shown alongside come from the init snapshot's
+// per-channel tallies, so only the actual lines need a fetch. There is no
+// request struct: the marker set is server-side state, so the request carries
+// no parameters.
+type MissedResp struct {
+	Messages []MessageDTO `json:"messages"`
 }
 
 // NetAdd is a client→server request to add and connect a network at runtime.

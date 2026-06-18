@@ -21,6 +21,7 @@ export const T = {
   Redact: "redact",
   PluginList: "plugin:list",
   CompleteRes: "complete:res",
+  MissedResult: "missed:result",
   Highlight: "highlight",
   Aliases: "aliases",
   Pong: "pong",
@@ -30,6 +31,7 @@ export const T = {
   BacklogFetch: "backlog:fetch",
   ContextFetch: "context:fetch",
   Search: "search",
+  MissedFetch: "missed:fetch",
   NetAdd: "net:add",
   NetEdit: "net:edit",
   NetConnect: "net:connect",
@@ -241,6 +243,13 @@ export interface SearchReq {
 export interface SearchResp {
   query: string;
   results: MessageDTO[];
+}
+
+// MissedResp answers a missed:fetch (T.MissedFetch): the highlight lines that
+// arrived since the user's read markers, oldest-first. Body of the "what you
+// missed" digest; the counts shown alongside come from the init snapshot.
+export interface MissedResp {
+  messages: MessageDTO[];
 }
 
 export interface NetAdd {

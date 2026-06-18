@@ -305,6 +305,48 @@ func (s *Store) UnreadCounts(ctx context.Context) ([]core.UnreadCount, error) {
 	return out, rows.Err()
 }
 
+// MissedHighlights returns the highlight lines that arrived since the user's
+// read markers, across every buffer, in arrival order (oldest-first by store
+// sequence/rowid, like Backlog/Search), capped at limit (newest kept when the
+// cap bites). It is the body of the "what you missed" digest: the same marker
+// semantics as UnreadCounts (only buffers with a marker, self and
+// non-conversational lines excluded), narrowed to highlighted messages and
+// returning the full rows rather than a tally. The LIMIT is applied to the
+// newest matches (ORDER BY id DESC) and the result reversed so the digest reads
+// in arrival order.
+func (s *Store) MissedHighlights(ctx context.Context, limit int) ([]core.Message, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+msgColsM+`
+		 FROM messages m
+		 JOIN read_markers r ON r.network = m.network AND r.buffer = m.buffer
+		 WHERE m.ts > r.ts AND m.self = 0 AND m.highlight = 1
+		   AND m.kind IN ('privmsg', 'notice', 'action')
+		 ORDER BY m.id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("missed highlights: %w", err)
+	}
+	defer rows.Close()
+	var out []core.Message
+	for rows.Next() {
+		m, _, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Reverse newest-first → oldest-first so the digest reads top-down in time.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
 // Backlog returns up to limit messages for a buffer that are older than the
 // beforeSeq cursor (a zero or negative cursor means the most recent page),
 // oldest-first. more reports whether older history remains. The client passes

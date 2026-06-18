@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import Sidebar from "./components/Sidebar.vue";
 import ChatView from "./components/ChatView.vue";
 import TopBar from "./components/TopBar.vue";
@@ -7,15 +7,28 @@ import Settings from "./components/Settings.vue";
 import Login from "./components/Login.vue";
 import MagicWord from "./components/MagicWord.vue";
 import Toast from "./components/Toast.vue";
+import CommandPalette from "./components/CommandPalette.vue";
+import Digest from "./components/Digest.vue";
 import { authState, canEnter, needsMagicWord } from "./auth";
 import { ui, closeDrawers, useSwipeNav } from "./ui";
 import { connection } from "./connection";
 
 const showSettings = ref(false);
+const showPalette = ref(false);
 
 // Mobile: swipe right/left across the viewport to reveal the channel
 // sidebar / members drawer.
 useSwipeNav();
+
+// Ctrl/Cmd-K toggles the command palette (quick switcher) from anywhere.
+function onGlobalKey(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    showPalette.value = !showPalette.value;
+  }
+}
+onMounted(() => window.addEventListener("keydown", onGlobalKey));
+onUnmounted(() => window.removeEventListener("keydown", onGlobalKey));
 
 // --- mIRC easter egg chrome -------------------------------------------------
 // The menu bar and status bar below are inert decoration that only become
@@ -63,6 +76,12 @@ const mircStatus = computed(
         @click="closeDrawers"
       />
       <Settings v-if="showSettings" @close="showSettings = false" />
+      <Digest v-if="connection.store.digestOpen" />
+      <CommandPalette
+        :open="showPalette"
+        @close="showPalette = false"
+        @settings="showSettings = true"
+      />
       <Toast />
     </div>
 

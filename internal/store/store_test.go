@@ -424,3 +424,64 @@ func TestReadMarkersUnreadCounts(t *testing.T) {
 		t.Errorf("after reading to end, want no counts, got %+v", got)
 	}
 }
+
+func TestMissedHighlights(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	base := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	at := func(secs int) time.Time { return base.Add(time.Duration(secs) * time.Second) }
+
+	hlAt := func(network, buffer, from, text string, ts time.Time) core.Message {
+		m := msg(network, buffer, from, text, core.MsgPrivmsg, ts)
+		m.Highlight = true
+		return m
+	}
+
+	// A highlight with no read marker contributes nothing (no baseline).
+	s.Print(hlAt("libera", "#go", "alice", "early ping", at(0)))
+	if got, err := s.MissedHighlights(ctx, 50); err != nil || len(got) != 0 {
+		t.Fatalf("no marker should yield no missed highlights, got %+v (err %v)", got, err)
+	}
+
+	// Mark two buffers read at t=10, then add a mix of later activity.
+	if err := s.MarkRead(ctx, "libera", "#go", at(10)); err != nil {
+		t.Fatalf("MarkRead #go: %v", err)
+	}
+	if err := s.MarkRead(ctx, "libera", "#vim", at(10)); err != nil {
+		t.Fatalf("MarkRead #vim: %v", err)
+	}
+	// Inserted in arrival order — MissedHighlights orders by store sequence
+	// (rowid), consistent with Backlog/Search, so arrival order is the result
+	// order regardless of the wall-clock timestamps.
+	s.Print(hlAt("libera", "#go", "bob", "before marker", at(5)))           // read — excluded
+	s.Print(hlAt("libera", "#vim", "dave", "first", at(20)))                // missed (arrives first)
+	s.Print(hlAt("libera", "#go", "carol", "second", at(30)))               // missed
+	s.Print(msg("libera", "#go", "erin", "plain", core.MsgPrivmsg, at(40))) // not a highlight
+	selfHL := hlAt("libera", "#go", "me", "self ping", at(50))
+	selfHL.Self = true
+	s.Print(selfHL) // self — excluded
+
+	got, err := s.MissedHighlights(ctx, 50)
+	if err != nil {
+		t.Fatalf("MissedHighlights: %v", err)
+	}
+	// Oldest-first by arrival across buffers: #vim/first then #go/second.
+	if len(got) != 2 {
+		t.Fatalf("want 2 missed highlights, got %d: %+v", len(got), got)
+	}
+	if got[0].Buffer != "#vim" || got[0].Text != "first" {
+		t.Errorf("first row = %+v, want #vim/first", got[0])
+	}
+	if got[1].Buffer != "#go" || got[1].Text != "second" {
+		t.Errorf("second row = %+v, want #go/second", got[1])
+	}
+
+	// The limit keeps the newest matches but still returns them oldest-first.
+	got, err = s.MissedHighlights(ctx, 1)
+	if err != nil {
+		t.Fatalf("MissedHighlights limit: %v", err)
+	}
+	if len(got) != 1 || got[0].Text != "second" {
+		t.Errorf("limit=1 should keep newest (#go/second), got %+v", got)
+	}
+}

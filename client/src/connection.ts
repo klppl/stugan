@@ -12,6 +12,7 @@ import {
   type ContextResp,
   type SearchReq,
   type SearchResp,
+  type MissedResp,
   type NetAdd,
   type NetRemove,
   type NetConnect,
@@ -165,6 +166,13 @@ export interface Store {
   // shared across the user's devices. A muted buffer shows no badge and fires
   // no notification.
   muted: string[];
+  // missed holds the highlight lines that arrived while the user was away
+  // (since each buffer's read marker), oldest-first — the body of the "what you
+  // missed" digest. Fetched on connect (fetchMissed → applyMissed); replaced,
+  // never appended to. digestOpen drives the digest overlay's visibility; it
+  // auto-opens once per page session when missed is non-empty.
+  missed: MessageDTO[];
+  digestOpen: boolean;
 }
 
 function emptyBuffer(c: Partial<ChannelDTO> & { name: string }): Buffer {
@@ -262,6 +270,8 @@ export class Connection {
     highlight: { patterns: [], exceptions: [] },
     aliases: {},
     muted: [],
+    missed: [],
+    digestOpen: false,
   });
 
   private ws: WebSocket | null = null;
@@ -283,6 +293,10 @@ export class Connection {
   // that across to applyInit, which arrives just after onopen.
   private everConnected = false;
   private resyncPending = false;
+  // digestAutoShown gates the "what you missed" auto-open to once per page
+  // session: a reconnect re-fetches the digest (counts may have changed) but
+  // won't re-pop the overlay if the user already saw/dismissed it.
+  private digestAutoShown = false;
   private typingTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   private readMarkTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   private lastTypingSent = 0;
@@ -495,6 +509,9 @@ export class Connection {
         this.store.channelList = { network: d.network, channels: d.channels, busy: false };
         break;
       }
+      case T.MissedResult:
+        this.applyMissed(env.d as MissedResp);
+        break;
       case T.React:
         this.applyReact(env.d as React);
         break;
@@ -608,6 +625,37 @@ export class Connection {
       }
       this.markRead(a.network, a.buffer);
     }
+    // Fetch the "what you missed" digest last, so it runs after the active
+    // buffer's marker has been advanced above — the buffer you land on isn't
+    // something you "missed", so its mentions are excluded from the digest.
+    this.fetchMissed();
+  }
+
+  // fetchMissed requests the highlight lines accumulated since the user's read
+  // markers (the digest body). The reply lands in applyMissed.
+  fetchMissed() {
+    this.sendFrame(T.MissedFetch, {});
+  }
+
+  // applyMissed stores the missed-highlights digest and auto-opens the overlay
+  // the first time it's non-empty in a page session (reconnects refresh the
+  // data but don't re-nag — see digestAutoShown).
+  private applyMissed(d: MissedResp) {
+    this.store.missed = d.messages ?? [];
+    if (this.store.missed.length > 0 && !this.digestAutoShown) {
+      this.digestAutoShown = true;
+      this.store.digestOpen = true;
+    }
+  }
+
+  // openDigest / closeDigest drive the "what you missed" overlay. openDigest
+  // also marks it auto-shown so a later reconnect won't pop it again.
+  openDigest() {
+    this.digestAutoShown = true;
+    this.store.digestOpen = true;
+  }
+  closeDigest() {
+    this.store.digestOpen = false;
   }
 
   // resyncBuffers discards loaded message state on every buffer after a

@@ -49,6 +49,9 @@ type History interface {
 	// UnreadCounts reports per-buffer unread/highlight tallies since each
 	// buffer's read marker, for seeding badges at connect time.
 	UnreadCounts(ctx context.Context) ([]core.UnreadCount, error)
+	// MissedHighlights returns the highlight lines since each buffer's read
+	// marker (oldest-first, capped at limit), for the "what you missed" digest.
+	MissedHighlights(ctx context.Context, limit int) ([]core.Message, error)
 }
 
 // Prefs persists per-user server preference blobs (highlight rules, muted
@@ -577,6 +580,9 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	case proto.TSearch:
 		s.handleSearch(ctx, c, env)
 
+	case proto.TMissedFetch:
+		s.handleMissed(ctx, c, env)
+
 	case proto.TNetAdd:
 		reqHandle(c, env, "net:add requires name and addr",
 			func(d proto.NetAdd) bool { return d.Name != "" && d.Addr != "" },
@@ -906,6 +912,24 @@ func (s *Server) handleSearch(ctx context.Context, c *client, env proto.Envelope
 		return
 	}
 	s.reply(c, env.ID, proto.TSearchResult, proto.SearchResp{Query: d.Query, Results: toMessageDTOs(msgs)})
+}
+
+// handleMissed answers a missed:fetch with the highlight lines accumulated
+// since the user's read markers — the body of the "what you missed" digest the
+// client shows on connect. It carries no request payload (the marker set is
+// server-side state). When history is disabled the digest is simply empty.
+func (s *Server) handleMissed(ctx context.Context, c *client, env proto.Envelope) {
+	if c.tenant.History == nil {
+		s.reply(c, env.ID, proto.TMissedResult, proto.MissedResp{})
+		return
+	}
+	msgs, err := c.tenant.History.MissedHighlights(ctx, 50)
+	if err != nil {
+		s.log.Error("missed highlights", "err", err)
+		c.sendError(env.ID, "internal", "missed fetch failed")
+		return
+	}
+	s.reply(c, env.ID, proto.TMissedResult, proto.MissedResp{Messages: toMessageDTOs(msgs)})
 }
 
 // reply sends a correlated frame to one client.

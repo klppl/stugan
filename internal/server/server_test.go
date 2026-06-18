@@ -58,6 +58,9 @@ func (f *fakeHistory) MarkRead(_ context.Context, _, _ string, _ time.Time) erro
 func (f *fakeHistory) UnreadCounts(_ context.Context) ([]core.UnreadCount, error) {
 	return f.unread, nil
 }
+func (f *fakeHistory) MissedHighlights(_ context.Context, _ int) ([]core.Message, error) {
+	return f.msgs, nil
+}
 
 // readFrame reads one envelope with a timeout.
 func readFrame(t *testing.T, ctx context.Context, ws *websocket.Conn) proto.Envelope {
