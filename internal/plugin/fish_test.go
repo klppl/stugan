@@ -79,6 +79,33 @@ func TestFishPublishesBufferState(t *testing.T) {
 	}
 }
 
+// A Blowfish key over 56 bytes can't encrypt (crypto.blowfish_* raises). The
+// old code stored it anyway and lit the lock icon, then every send fell back to
+// plaintext on the caught error — a silent leak. /setkey must now reject it so
+// the buffer is never marked encrypted, and a send goes out as honest plaintext.
+func TestFishRejectsOverlongKey(t *testing.T) {
+	h, api := loadFish(t)
+	longKey := strings.Repeat("k", 70) // > 56-byte Blowfish limit
+	setKey(t, h, "n", "#chan", longKey, "cbc")
+
+	if st := api.bufferState("n", "#chan"); st["encrypted"] != "" {
+		t.Fatalf("over-long key marked buffer encrypted (%v) — lock icon without a usable key leaks plaintext", st)
+	}
+
+	// No key was stored, so the line goes out as plaintext — but honestly, with
+	// no lock icon. The bug was the mismatch (lock icon + cleartext on the wire).
+	out, keep := h.Dispatch(context.Background(), core.Event{
+		Type: core.EvMessageOut, Network: "n",
+		Message: &core.Message{Network: "n", Buffer: "#chan", Text: "secret", Self: true},
+	})
+	if !keep {
+		t.Fatal("line dropped; expected plaintext passthrough on an unkeyed buffer")
+	}
+	if got := out.Message.Text; got != "secret" {
+		t.Fatalf("text = %q, want untouched plaintext %q", got, "secret")
+	}
+}
+
 func TestFishCBCRoundTrip(t *testing.T) {
 	h, _ := loadFish(t)
 	setKey(t, h, "n", "#chan", "hunter2", "cbc")

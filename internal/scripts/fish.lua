@@ -37,6 +37,10 @@ stugan.describe("FiSH Blowfish encryption (/setkey, /keyx, per-channel keys)")
 
 local crypto = stugan.crypto
 local BLOCK   = 8
+-- Blowfish takes a 1..56 byte key (crypto.blowfish_* raises outside that range).
+-- We reject over-long keys at /setkey time so a buffer is never marked encrypted
+-- with a key that can't actually encrypt — see set_cmd and the hook_input guard.
+local MAX_KEY = 56
 local PREFIX_CBC = "+OK *"
 local PREFIX_ECB = "+OK "
 
@@ -464,7 +468,16 @@ stugan.hook_input(function(input, ctx)
   end
   stugan.log.debug("fish: encrypting outgoing for buffer '" .. tostring(ctx.buffer)
     .. "' (" .. tostring(mode) .. ")")
-  local cts = chunk_and_encrypt(input, key, mode)
+  -- Encrypt under pcall and fail CLOSED. If encryption raises (e.g. a bad key)
+  -- or yields nothing, drop the line rather than returning it: the host treats
+  -- a hook error as "skip this hook", which would otherwise send the original
+  -- cleartext to a buffer the user believes is encrypted.
+  local ok, cts = pcall(chunk_and_encrypt, input, key, mode)
+  if not ok or type(cts) ~= "table" or #cts == 0 then
+    stugan.print(ctx, "fish: encryption failed (" .. tostring(cts)
+      .. ") — message NOT sent (refusing to leak plaintext)")
+    return nil -- drop; never emit cleartext on a keyed buffer
+  end
   for i = 2, #cts do
     stugan.send(ctx.network, "PRIVMSG " .. ctx.buffer .. " :" .. cts[i])
   end
@@ -584,6 +597,15 @@ local function set_cmd(mode)
     local target, key = parse_target_and_key(args, ctx)
     if not target or not key or target == "" then
       stugan.print(ctx, "usage: /setkey" .. (mode == "ecb" and "-ecb" or "") .. " [target] <key>")
+      return
+    end
+    -- Blowfish only accepts 1..56 byte keys. Reject anything longer here: if we
+    -- stored it, set_buffer_state would light the lock icon, but every encrypt
+    -- would then raise and the send path would fall back to PLAINTEXT — a silent
+    -- leak in a buffer the user believes is encrypted.
+    if #key > MAX_KEY then
+      stugan.print(ctx, "fish: key too long (" .. #key .. " bytes, max " .. MAX_KEY
+        .. "); not set — buffer left unencrypted")
       return
     end
     set_key(ctx.network, target, key, mode)
