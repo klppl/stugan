@@ -43,6 +43,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `list:result`   | `ListResp`     | channel-browser results (answers `list`) |
 | `plugin:list`   | `PluginListResp` | the plugin manager list (answers `plugin:list` and `plugin:action`) |
 | `complete:res`  | `CompleteRes`  | plugin tab-completion candidates (answers `complete:req`) |
+| `missed:result` | `MissedResp`   | highlight lines missed since the read markers, for the "what you missed" digest (answers `missed:fetch`) |
 | `highlight`     | `HighlightRules` | the normalized highlight ruleset, broadcast to all the user's tabs after a `highlight:set` |
 | `pong`          | (none)         | answers a c2s `ping` (app-level liveness; see below) |
 | `error`         | `WireError`    | `{code, message}`, correlated to a request `id` |
@@ -55,6 +56,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `backlog:fetch` | `BacklogFetch` | request older/windowed history |
 | `context:fetch` | `ContextFetch` | request the window around one message, to expand a mention/search hit inline |
 | `search`        | `SearchReq`    | FTS5 search |
+| `missed:fetch`  | (none)         | request the highlights missed since the read markers (digest body) |
 | `net:add`       | `NetAdd`       | add + connect a network |
 | `net:edit`      | `NetConfig`    | apply settings changes to a network |
 | `net:connect`   | `NetConnect`   | connect/disconnect a network |
