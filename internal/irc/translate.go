@@ -476,7 +476,9 @@ func formatNumeric(e *girc.Event) (text, subject string, code int, ok bool) {
 		ch, user, host, srv, nick, flags := param(1), param(2), param(3), param(4), param(5), param(6)
 		return fmt.Sprintf("%s [%s] (%s@%s) on %s via %s: %s", nick, flags, user, host, ch, srv, e.Last()), ch, code, true
 	case girc.RPL_WHOSPCRPL: // 354 — variable WHOX shape; just print everything
-		return strings.Join(e.Params[1:], " ") + " " + e.Last(), subject, code, true
+		// e.Params[1:] already includes the trailing field, so don't append
+		// e.Last() again (that duplicated the realname/last column).
+		return strings.Join(e.Params[1:], " "), subject, code, true
 	case girc.RPL_ENDOFWHO: // 315
 		return "End of WHO for " + subject, subject, code, true
 	case girc.RPL_ENDOFNAMES: // 366 — paired with /names; end of pendingWhois

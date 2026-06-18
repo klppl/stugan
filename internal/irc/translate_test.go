@@ -382,6 +382,15 @@ func TestToEventNumerics(t *testing.T) {
 			wantCount:   318,
 		},
 		{
+			// WHOX 354: e.Params[1:] already ends with the trailing realname,
+			// so it must appear exactly once (regression: it used to dup).
+			name:        "RPL_WHOSPCRPL",
+			raw:         ":serv 354 me 152 #go ~user host.example nick H :Real Name",
+			wantText:    "152 #go ~user host.example nick H Real Name",
+			wantSubject: "152",
+			wantCount:   354,
+		},
+		{
 			name:        "ERR_NOSUCHNICK",
 			raw:         ":serv 401 me ghost :No such nick/channel",
 			wantText:    "no such nick: ghost",
