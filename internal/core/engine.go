@@ -1314,6 +1314,17 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		// Drop stale friend presence: a dropped connection knows nothing about
 		// who is online until MONITOR re-reports after the next registration.
 		n.MonitorOnline = nil
+		// Drop stale channel membership too. A dropped connection misses the
+		// QUIT/PART traffic that would normally retire members (including our
+		// own pre-disconnect nick once the server pings out its ghost), and the
+		// NAMES burst on rejoin only adds members, never removes them. Clearing
+		// here lets the next registration's NAMES + JOINs rebuild each list from
+		// scratch, so no phantom survives a reconnect.
+		for _, c := range n.Channels {
+			if len(c.Members) > 0 {
+				c.Members = map[string]*Member{}
+			}
+		}
 		netChanged = true
 
 	case EvMessageIn:

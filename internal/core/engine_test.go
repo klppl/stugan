@@ -190,6 +190,37 @@ func TestApplyJoinPartQuit(t *testing.T) {
 	}
 }
 
+// A reconnect must not leave phantom members behind. While disconnected we miss
+// the QUIT/PART traffic that retires members (including our own ghost nick), and
+// the NAMES burst on rejoin only adds, so EvDisconnect has to clear the lists.
+func TestDisconnectClearsMembers(t *testing.T) {
+	e, _ := newTestEngine(t)
+
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Buffer: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Buffer: "#go"})
+	if got := len(net0(e).Channel("#go").Members); got != 2 {
+		t.Fatalf("members = %d, want 2 before disconnect", got)
+	}
+
+	e.apply(Event{Type: EvDisconnect, Network: "net", Text: "ping timeout"})
+	if got := len(net0(e).Channel("#go").Members); got != 0 {
+		t.Fatalf("members = %d, want 0 after disconnect", got)
+	}
+
+	// Rejoin: the NAMES burst rebuilds the list authoritatively. bob is gone,
+	// so it must not reappear; the carried-over entry would have been a phantom.
+	e.apply(Event{Type: EvNames, Network: "net", Buffer: "#go", Members: []Member{
+		{Nick: "alice"}, {Nick: "carol"},
+	}})
+	c := net0(e).Channel("#go")
+	if _, ok := c.Members["bob"]; ok {
+		t.Error("phantom bob survived the reconnect")
+	}
+	if got := len(c.Members); got != 2 {
+		t.Fatalf("members = %d, want 2 after rejoin", got)
+	}
+}
+
 func TestApplyNames(t *testing.T) {
 	e, sink := newTestEngine(t)
 	e.apply(Event{Type: EvNames, Network: "net", Buffer: "#go", Members: []Member{
