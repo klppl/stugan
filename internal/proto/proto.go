@@ -2,10 +2,6 @@
 // daemon and the browser. These Go structs are the single source of truth;
 // the TypeScript mirror in client/src/proto/events.ts is kept in sync by
 // hand. See docs/protocol.md.
-//
-// Phase 2 implements the subset needed for the live loop: hello, init, msg
-// (server→client) and msg:send (client→server). The remaining events from
-// the schema are added in later phases.
 package proto
 
 import "encoding/json"

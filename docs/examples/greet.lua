@@ -1,5 +1,5 @@
 -- greet.lua — a slash-command plus a content filter.
--- Proposed API (Phase 5); see docs/plugins.md.
+-- See docs/plugins.md for the API reference.
 
 stugan.describe("/greet <nick> to say hello; drops messages mentioning 'spoiler'")
 
