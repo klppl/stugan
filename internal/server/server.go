@@ -509,6 +509,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	go c.writePump(ctx)
 	go c.pingLoop(ctx, cancel)
 
+	// Register for sink fan-out BEFORE snapshotting: a line committed
+	// between snapshot and registration would otherwise reach neither the
+	// init state nor the socket and silently vanish for this client. The
+	// inverse overlap (a line in both the snapshot and an already-queued
+	// live frame) is handled by the client, which dedupes on append.
+	s.addClient(userID, c)
+	defer s.removeClient(userID, c)
+
 	hello, _ := proto.Frame(proto.THello, proto.Hello{Protocol: proto.Protocol, Server: s.serverName, Caps: s.caps()})
 	state := toInitState(tenant.Engine.Snapshot())
 	// The live unread counter in core.Channel is browser-only (always 0 here);
@@ -528,9 +536,6 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	init, _ := proto.Frame(proto.TInit, state)
 	c.trySend(hello)
 	c.trySend(init)
-
-	s.addClient(userID, c)
-	defer s.removeClient(userID, c)
 
 	s.readPump(ctx, c)
 }

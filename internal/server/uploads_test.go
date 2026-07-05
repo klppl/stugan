@@ -322,3 +322,35 @@ func TestStripImageMetadataPassthrough(t *testing.T) {
 		t.Error("non-image data was modified")
 	}
 }
+
+// TestUploadOverLimitRejected: a file slightly over the cap fits under the
+// body limit (which leaves headroom for multipart framing) and used to be
+// stored silently truncated to exactly maxUpload bytes. It must 413 instead.
+func TestUploadOverLimitRejected(t *testing.T) {
+	const maxUpload = 4 << 10
+	eng := core.New(core.Options{Sink: noopSink{}})
+	srv := New(SingleUser(&Tenant{Engine: eng}), Options{UploadDir: t.TempDir(), MaxUpload: maxUpload})
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	post := func(size int) *http.Response {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		fw, _ := mw.CreateFormFile("file", "blob.bin")
+		fw.Write(bytes.Repeat([]byte{0xAB}, size))
+		mw.Close()
+		resp, err := http.Post(hs.URL+"/api/upload", mw.FormDataContentType(), &body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+
+	if resp := post(maxUpload + 1); resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("file over cap: status = %d, want 413", resp.StatusCode)
+	}
+	if resp := post(maxUpload); resp.StatusCode != http.StatusOK {
+		t.Errorf("file exactly at cap: status = %d, want 200", resp.StatusCode)
+	}
+}

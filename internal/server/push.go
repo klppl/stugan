@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	webpush "github.com/SherClockHolmes/webpush-go"
 
 	"github.com/klippelism/stugan/internal/core"
+	"github.com/klippelism/stugan/internal/safehttp"
 )
 
 // pushManager handles Web Push: it holds the VAPID keypair and the set of
@@ -19,6 +21,11 @@ type pushManager struct {
 	dir     string
 	pubKey  string
 	privKey string
+	// http is the client used to POST to push services. Endpoints are
+	// user-supplied URLs, so this must be the SSRF-guarded, timeout-bounded
+	// client — webpush-go's fallback is a bare http.Client that can hang a
+	// notify goroutine forever on a stalled endpoint.
+	http *http.Client
 
 	mu   sync.Mutex
 	subs map[string]map[string]webpush.Subscription // user → endpoint → sub
@@ -33,7 +40,7 @@ func newPushManager(dir string) (*pushManager, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	p := &pushManager{dir: dir, subs: map[string]map[string]webpush.Subscription{}}
+	p := &pushManager{dir: dir, subs: map[string]map[string]webpush.Subscription{}, http: safehttp.New()}
 	if err := p.loadOrCreateKeys(); err != nil {
 		return nil, err
 	}
@@ -78,7 +85,9 @@ func (p *pushManager) loadSubs() {
 	}
 }
 
-// saveSubs writes the per-user subscriptions; callers hold p.mu.
+// saveSubs writes the per-user subscriptions; callers hold p.mu. Written to
+// a temp file and renamed so a crash mid-write can't truncate the file and
+// silently drop every subscription on the next load.
 func (p *pushManager) saveSubs() {
 	byUser := map[string][]webpush.Subscription{}
 	for user, m := range p.subs {
@@ -87,7 +96,11 @@ func (p *pushManager) saveSubs() {
 		}
 	}
 	data, _ := json.Marshal(byUser)
-	_ = os.WriteFile(p.subsPath(), data, 0o600)
+	tmp := p.subsPath() + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, p.subsPath())
 }
 
 func (p *pushManager) add(user string, s webpush.Subscription) {
@@ -105,6 +118,15 @@ func (p *pushManager) remove(user, endpoint string) {
 	defer p.mu.Unlock()
 	delete(p.subs[user], endpoint)
 	p.saveSubs()
+}
+
+// validPushEndpoint accepts only well-formed https URLs as subscription
+// endpoints. Real push services are always https; anything else is a
+// request to make the daemon POST somewhere it shouldn't (the safehttp
+// dial guard additionally blocks non-public addresses at send time).
+func validPushEndpoint(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	return err == nil && u.Scheme == "https" && u.Host != ""
 }
 
 // pushPayload is the JSON the service worker receives.
@@ -129,6 +151,7 @@ func (p *pushManager) notify(user string, pl pushPayload, log loggerW) {
 	for _, s := range subs {
 		sub := s
 		resp, err := webpush.SendNotification(body, &sub, &webpush.Options{
+			HTTPClient:      p.http,
 			Subscriber:      "stugan@localhost",
 			VAPIDPublicKey:  p.pubKey,
 			VAPIDPrivateKey: p.privKey,
@@ -170,7 +193,7 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var sub webpush.Subscription
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&sub); err != nil || sub.Endpoint == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&sub); err != nil || !validPushEndpoint(sub.Endpoint) {
 		http.Error(w, "bad subscription", http.StatusBadRequest)
 		return
 	}

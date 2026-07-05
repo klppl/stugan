@@ -86,9 +86,16 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	data, err := io.ReadAll(io.LimitReader(file, s.maxUpload))
+	// Read one byte past the cap so an over-limit file is rejected rather
+	// than silently truncated (the body cap above leaves headroom for
+	// multipart framing, so a file slightly over maxUpload still gets here).
+	data, err := io.ReadAll(io.LimitReader(file, s.maxUpload+1))
 	if err != nil {
 		http.Error(w, "read failed", http.StatusInternalServerError)
+		return
+	}
+	if int64(len(data)) > s.maxUpload {
+		http.Error(w, "upload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 
