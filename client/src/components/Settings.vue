@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from "vue";
 import { settings, themeNames, installTheme, uninstallTheme, TEMPLATE, PRESET_THEMES } from "../settings";
 import type { PresetTheme } from "../settings";
 import { connection } from "../connection";
+import type { UploadEntry } from "../connection";
 import type { PluginInfo, PluginSetting } from "../proto/events";
 import { enablePush } from "../pwa";
 import { authState, logout } from "../auth";
@@ -132,6 +133,32 @@ watch(
     }
   },
 );
+
+// Uploads: list the user's stored files with their size-dependent expiry
+// (the server keeps files 3–7 days; larger files expire sooner). Fetched
+// once when the panel opens; only offered when the server has an upload dir.
+const hasUploads = connection.hasCap("uploads");
+const uploadList = ref<UploadEntry[] | null>(null); // null = still loading
+onMounted(async () => {
+  if (hasUploads) uploadList.value = await connection.listUploads();
+});
+
+function fmtSize(n: number): string {
+  if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + " MB";
+  if (n >= 1 << 10) return (n / (1 << 10)).toFixed(1) + " kB";
+  return n + " B";
+}
+
+// expiresIn renders a coarse countdown ("in 5 days", "in 8 hours") — upload
+// retention is day-grained, so minute precision would be false accuracy.
+function expiresIn(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return "soon";
+  const hours = Math.round(ms / 3_600_000);
+  if (hours < 48) return `in ${hours} hour${hours === 1 ? "" : "s"}`;
+  const days = Math.round(hours / 24);
+  return `in ${days} days`;
+}
 
 async function enableNotifications() {
   pushMsg.value = "requesting…";
@@ -287,6 +314,23 @@ async function enableNotifications() {
         <span class="hint">{{ aliasSaved ? "Saved ✓" : "" }}</span>
         <button @click="saveAliases">Save aliases</button>
       </div>
+
+      <!-- Stored uploads: everything this user has uploaded that is still on
+           the server, with when each file expires. Retention is 3–7 days,
+           skewed so small files live longest. -->
+      <template v-if="hasUploads">
+        <h3 class="section">Uploads</h3>
+        <p class="hint">
+          Uploaded files are kept between 3 and 7 days — the larger the file,
+          the sooner it expires.
+        </p>
+        <p v-if="uploadList === null" class="hint">Loading…</p>
+        <p v-else-if="!uploadList.length" class="hint">No stored uploads.</p>
+        <div v-for="u in uploadList" :key="u.url" class="upload-row">
+          <a :href="u.url" target="_blank" rel="noopener">{{ u.name || u.url.slice(u.url.lastIndexOf("/") + 1) }}</a>
+          <span class="upload-info">{{ fmtSize(u.size) }} · expires {{ expiresIn(u.expires) }}</span>
+        </div>
+      </template>
 
       <div v-if="authState.authEnabled" class="row">
         <span>Signed in as {{ authState.user }}</span>

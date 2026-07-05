@@ -1471,6 +1471,24 @@ body {
   color: #fff;
   border: none;
 }
+.settings .upload-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+}
+.settings .upload-row a {
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings .upload-info {
+  color: var(--fg-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
 .settings .spacer {
   flex: 1;
 }

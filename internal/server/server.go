@@ -191,6 +191,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/proxy", s.requireUser(s.handleProxy))
 	if s.uploadDir != "" {
 		mux.HandleFunc("/api/upload", s.requireUser(s.handleUpload))
+		mux.HandleFunc("/api/uploads", s.requireUser(s.handleUploadList))
 		mux.Handle("/uploads/", s.uploadFileServer())
 	}
 	if s.push != nil {
@@ -262,6 +263,9 @@ func (s *Server) magicGranted(r *http.Request) bool {
 
 // ListenAndServe serves until ctx is cancelled, then shuts down gracefully.
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
+	if s.uploadDir != "" {
+		go s.sweepUploadsLoop(ctx)
+	}
 	srv := &http.Server{Addr: addr, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()

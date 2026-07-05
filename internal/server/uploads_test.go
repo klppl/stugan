@@ -9,7 +9,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/klippelism/stugan/internal/core"
 )
@@ -152,6 +156,158 @@ func TestUploadStripsEXIFEndToEnd(t *testing.T) {
 	}
 	if !bytes.Contains(stored, scan) {
 		t.Error("served upload lost its image scan data")
+	}
+}
+
+func TestUploadTTL(t *testing.T) {
+	s := &Server{maxUpload: 10 << 20}
+	day := 24 * time.Hour
+	cases := []struct {
+		size int64
+		want time.Duration
+	}{
+		{0, 7 * day},        // empty file → maximum age
+		{10 << 20, 3 * day}, // at MAX_SIZE → minimum age
+		{5 << 20, 4 * day},  // half size → 3d + 4d*(0.5)^2 = 4d
+		{20 << 20, 3 * day}, // over MAX_SIZE clamps to minimum
+		{1 << 20, 3*day + time.Duration(0.81*float64(4*day))}, // 3d + 4d*(0.9)^2
+	}
+	for _, c := range cases {
+		if got := s.uploadTTL(c.size); got != c.want {
+			t.Errorf("uploadTTL(%d) = %v, want %v", c.size, got, c.want)
+		}
+	}
+}
+
+// uploadFile posts one multipart upload and returns the served URL.
+func uploadFile(t *testing.T, base, filename string, content []byte) string {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, _ := mw.CreateFormFile("file", filename)
+	fw.Write(content)
+	mw.Close()
+	resp, err := http.Post(base+"/api/upload", mw.FormDataContentType(), &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("upload status = %d", resp.StatusCode)
+	}
+	var out struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.URL
+}
+
+func TestUploadListAndSweep(t *testing.T) {
+	dir := t.TempDir()
+	eng := core.New(core.Options{Sink: noopSink{}})
+	srv := New(SingleUser(&Tenant{Engine: eng}), Options{UploadDir: dir, MaxUpload: 1 << 20})
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	url := uploadFile(t, hs.URL, "notes.txt", []byte("hello there"))
+	stored := strings.TrimPrefix(url, "/uploads/")
+
+	// The sidecar with the owner id must never be served.
+	if r, err := http.Get(hs.URL + "/uploads/.meta/" + stored + ".json"); err != nil {
+		t.Fatal(err)
+	} else if r.Body.Close(); r.StatusCode != http.StatusNotFound {
+		t.Errorf("sidecar served with status %d, want 404", r.StatusCode)
+	}
+
+	// The listing shows the upload, owned by the implicit user.
+	r, err := http.Get(hs.URL + "/api/uploads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []struct {
+		URL      string    `json:"url"`
+		Name     string    `json:"name"`
+		Size     int64     `json:"size"`
+		Uploaded time.Time `json:"uploaded"`
+		Expires  time.Time `json:"expires"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	if len(list) != 1 {
+		t.Fatalf("listed %d uploads, want 1", len(list))
+	}
+	if list[0].URL != url || list[0].Name != "notes.txt" || list[0].Size != int64(len("hello there")) {
+		t.Errorf("listing entry = %+v", list[0])
+	}
+	ttl := list[0].Expires.Sub(list[0].Uploaded)
+	if ttl < 3*24*time.Hour || ttl > 7*24*time.Hour {
+		t.Errorf("listed ttl = %v, want within [3d, 7d]", ttl)
+	}
+
+	// A fresh file survives a sweep.
+	srv.sweepUploads(time.Now())
+	if _, err := os.Stat(filepath.Join(dir, stored)); err != nil {
+		t.Fatalf("fresh upload swept: %v", err)
+	}
+
+	// Backdate the file past 7 days: even the smallest file must be gone.
+	old := time.Now().Add(-8 * 24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, stored), old, old); err != nil {
+		t.Fatal(err)
+	}
+	srv.sweepUploads(time.Now())
+	if _, err := os.Stat(filepath.Join(dir, stored)); !os.IsNotExist(err) {
+		t.Error("expired upload still on disk after sweep")
+	}
+	if _, err := os.Stat(filepath.Join(dir, uploadMetaDir, stored+".json")); !os.IsNotExist(err) {
+		t.Error("sidecar of expired upload still on disk after sweep")
+	}
+
+	// And it no longer appears in the listing.
+	r2, err := http.Get(hs.URL + "/api/uploads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list = list[:0]
+	if err := json.NewDecoder(r2.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	r2.Body.Close()
+	if len(list) != 0 {
+		t.Errorf("listed %d uploads after sweep, want 0", len(list))
+	}
+}
+
+func TestSweepUsesSizeDependentTTL(t *testing.T) {
+	dir := t.TempDir()
+	eng := core.New(core.Options{Sink: noopSink{}})
+	srv := New(SingleUser(&Tenant{Engine: eng}), Options{UploadDir: dir, MaxUpload: 1 << 20})
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	// A max-size file only gets the 3-day minimum; a tiny one keeps ~7 days.
+	bigURL := uploadFile(t, hs.URL, "big.bin", bytes.Repeat([]byte{0xAB}, 1<<20))
+	smallURL := uploadFile(t, hs.URL, "small.txt", []byte("x"))
+	big := strings.TrimPrefix(bigURL, "/uploads/")
+	small := strings.TrimPrefix(smallURL, "/uploads/")
+
+	// At 4 days old the big file is past its TTL, the small one is not.
+	old := time.Now().Add(-4 * 24 * time.Hour)
+	for _, f := range []string{big, small} {
+		if err := os.Chtimes(filepath.Join(dir, f), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv.sweepUploads(time.Now())
+	if _, err := os.Stat(filepath.Join(dir, big)); !os.IsNotExist(err) {
+		t.Error("large file survived past its shortened TTL")
+	}
+	if _, err := os.Stat(filepath.Join(dir, small)); err != nil {
+		t.Errorf("small file swept before its 7-day TTL: %v", err)
 	}
 }
 

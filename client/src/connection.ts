@@ -119,6 +119,18 @@ export interface Jump {
   fetched: boolean;
 }
 
+// UploadEntry is one stored file in the per-user upload listing
+// (GET /api/uploads): its served URL, original filename, size in bytes,
+// and RFC3339 upload/expiry times. The server keeps uploads 3–7 days by
+// size, so every entry carries the moment it will be deleted.
+export interface UploadEntry {
+  url: string;
+  name: string;
+  size: number;
+  uploaded: string;
+  expires: string;
+}
+
 // MentionContext is the inline chat surrounding one mention or search hit,
 // fetched on demand when its row is expanded and keyed by the anchor message
 // id. open drives the disclosure; loading is true while the context:fetch is
@@ -1348,6 +1360,19 @@ export class Connection {
   activeBuffer(): Buffer | null {
     if (!this.store.active) return null;
     return this.buf(this.store.active.network, this.store.active.buffer) ?? null;
+  }
+
+  // listUploads fetches the signed-in user's stored uploads. Files are kept
+  // 3–7 days depending on size (larger files expire sooner); expires reports
+  // when each one will be deleted.
+  async listUploads(): Promise<UploadEntry[]> {
+    try {
+      const r = await fetch("/api/uploads");
+      if (!r.ok) return [];
+      return (await r.json()) as UploadEntry[];
+    } catch {
+      return [];
+    }
   }
 
   // upload posts a file and returns its served URL.

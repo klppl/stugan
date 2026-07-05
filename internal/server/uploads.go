@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
@@ -11,8 +12,59 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
+
+// Upload retention: files are kept for a minimum of 3 and a maximum of 7
+// days. How long depends on the file's size — larger files are deleted
+// earlier than small ones, skewed in favour of small files:
+//
+//	MIN_AGE + (MAX_AGE - MIN_AGE) * (1 - FILE_SIZE/MAX_SIZE)^2
+const (
+	minUploadAge = 3 * 24 * time.Hour
+	maxUploadAge = 7 * 24 * time.Hour
+)
+
+// uploadTTL returns how long a file of the given size is kept.
+func (s *Server) uploadTTL(size int64) time.Duration {
+	ratio := float64(size) / float64(s.maxUpload)
+	if ratio > 1 {
+		ratio = 1
+	}
+	if ratio < 0 {
+		ratio = 0
+	}
+	return minUploadAge + time.Duration(float64(maxUploadAge-minUploadAge)*(1-ratio)*(1-ratio))
+}
+
+// uploadMetaDir is the subdirectory of uploadDir holding one sidecar JSON
+// per stored file (ownership + original filename). It starts with a dot so
+// noListFS refuses to serve anything inside it.
+const uploadMetaDir = ".meta"
+
+// uploadMeta is the sidecar record written next to each stored upload.
+type uploadMeta struct {
+	Owner    string    `json:"owner"`
+	Name     string    `json:"name"` // original filename as uploaded
+	Uploaded time.Time `json:"uploaded"`
+}
+
+func (s *Server) uploadMetaPath(stored string) string {
+	return filepath.Join(s.uploadDir, uploadMetaDir, stored+".json")
+}
+
+func (s *Server) writeUploadMeta(stored string, m uploadMeta) error {
+	if err := os.MkdirAll(filepath.Join(s.uploadDir, uploadMetaDir), 0o755); err != nil {
+		return err
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.uploadMetaPath(stored), b, 0o644)
+}
 
 // handleUpload accepts a multipart file upload (field "file"), stores it
 // under uploadDir with a random name, and returns its served URL.
@@ -67,11 +119,128 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "write failed", http.StatusInternalServerError)
 		return
 	}
+
+	// Record who uploaded it (for the per-user listing) and when. A failed
+	// sidecar write doesn't fail the upload: the file is stored and served
+	// fine, it just won't appear in the owner's list, and the sweep expires
+	// it from its mtime regardless.
+	user, _ := s.userOf(r) // requireUser already vetted the request
+	now := time.Now().UTC()
+	if err := s.writeUploadMeta(name, uploadMeta{Owner: user, Name: hdr.Filename, Uploaded: now}); err != nil {
+		s.log.Warn("upload sidecar write failed", "file", name, "err", err)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
-		"url":  "/uploads/" + name,
-		"name": hdr.Filename,
+		"url":     "/uploads/" + name,
+		"name":    hdr.Filename,
+		"expires": now.Add(s.uploadTTL(int64(len(data)))).Format(time.RFC3339),
 	})
+}
+
+// uploadEntry is one row of the per-user upload listing.
+type uploadEntry struct {
+	URL      string    `json:"url"`
+	Name     string    `json:"name"` // original filename
+	Size     int64     `json:"size"`
+	Uploaded time.Time `json:"uploaded"`
+	Expires  time.Time `json:"expires"`
+}
+
+// handleUploadList returns the requesting user's stored uploads, newest
+// first, with each file's computed expiry.
+// GET /api/uploads
+func (s *Server) handleUploadList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, _ := s.userOf(r)
+	entries := []uploadEntry{}
+	sidecars, err := os.ReadDir(filepath.Join(s.uploadDir, uploadMetaDir))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		http.Error(w, "server error", http.StatusInternalServerError)
+		return
+	}
+	for _, de := range sidecars {
+		stored, ok := strings.CutSuffix(de.Name(), ".json")
+		if !ok || de.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(s.uploadMetaPath(stored))
+		if err != nil {
+			continue
+		}
+		var m uploadMeta
+		if json.Unmarshal(b, &m) != nil || m.Owner != user {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(s.uploadDir, stored))
+		if err != nil {
+			continue // already swept (or sidecar orphaned by a failed write)
+		}
+		entries = append(entries, uploadEntry{
+			URL:      "/uploads/" + stored,
+			Name:     m.Name,
+			Size:     info.Size(),
+			Uploaded: m.Uploaded,
+			Expires:  m.Uploaded.Add(s.uploadTTL(info.Size())),
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Uploaded.After(entries[j].Uploaded) })
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(entries)
+}
+
+// sweepUploads deletes every stored file older than its size-dependent TTL
+// (measured from mtime, so uploads that predate sidecar records expire too),
+// plus any sidecar left without a file.
+func (s *Server) sweepUploads(now time.Time) {
+	files, err := os.ReadDir(s.uploadDir)
+	if err != nil {
+		return
+	}
+	for _, de := range files {
+		if de.IsDir() {
+			continue
+		}
+		info, err := de.Info()
+		if err != nil {
+			continue
+		}
+		if now.Sub(info.ModTime()) > s.uploadTTL(info.Size()) {
+			os.Remove(filepath.Join(s.uploadDir, de.Name()))
+			os.Remove(s.uploadMetaPath(de.Name()))
+		}
+	}
+	sidecars, err := os.ReadDir(filepath.Join(s.uploadDir, uploadMetaDir))
+	if err != nil {
+		return
+	}
+	for _, de := range sidecars {
+		stored, ok := strings.CutSuffix(de.Name(), ".json")
+		if !ok {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(s.uploadDir, stored)); errors.Is(err, os.ErrNotExist) {
+			os.Remove(s.uploadMetaPath(stored))
+		}
+	}
+}
+
+// sweepUploadsLoop sweeps once immediately, then hourly until ctx ends.
+func (s *Server) sweepUploadsLoop(ctx context.Context) {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	s.sweepUploads(time.Now())
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.sweepUploads(time.Now())
+		}
+	}
 }
 
 // uploadFileServer serves stored uploads with sniffing disabled so a stored
@@ -89,10 +258,17 @@ func (s *Server) uploadFileServer() http.Handler {
 
 // noListFS wraps an http.FileSystem so directories report as nonexistent.
 // http.FileServer renders an HTML index for any directory request; making
-// Open fail for directories turns those requests into 404s instead.
+// Open fail for directories turns those requests into 404s instead. Dotted
+// path segments are refused too: the .meta sidecars (which record who
+// uploaded each file) live inside the upload dir and must never be served.
 type noListFS struct{ fs http.FileSystem }
 
 func (n noListFS) Open(name string) (http.File, error) {
+	for seg := range strings.SplitSeq(name, "/") {
+		if strings.HasPrefix(seg, ".") {
+			return nil, os.ErrNotExist
+		}
+	}
 	f, err := n.fs.Open(name)
 	if err != nil {
 		return nil, err

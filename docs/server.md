@@ -18,7 +18,8 @@ HTTP endpoints (auth, uploads, previews, push). It imports `core`, `proto`, and
 | `/api/magicword/logout` | POST | clears the magic cookie |
 | `/api/preview` | GET | fetch a URL and return Open Graph metadata |
 | `/api/proxy` | GET | proxy a remote image/video (hides client IP, avoids mixed content) |
-| `/api/upload` | POST | multipart upload → stored file URL |
+| `/api/upload` | POST | multipart upload → stored file URL + expiry |
+| `/api/uploads` | GET | list the requesting user's stored uploads (url, name, size, uploaded, expires) |
 | `/uploads/*` | GET | serve uploaded files (with `nosniff` + restrictive CSP) |
 | `/api/push/vapid` | GET | VAPID public key for push subscription |
 | `/api/push/subscribe` | POST | store a browser push subscription |
@@ -128,7 +129,13 @@ hash for a `[[users]]` `password_hash`).
 - **Image/video proxy (`fetch.go`, `previews.go`)** — stream remote media back
   through the daemon to hide the client IP and avoid mixed-content warnings.
 - **Uploads (`uploads.go`)** — multipart `POST /api/upload` → a served
-  `/uploads/<random>.<ext>` URL.
+  `/uploads/<random>.<ext>` URL. Each upload gets a sidecar record under
+  `uploads/.meta/` (owner, original name, upload time; never served — the
+  file server refuses dotted path segments) that backs the per-user
+  `GET /api/uploads` listing. Files are retained between 3 and 7 days by
+  size — `MIN_AGE + (MAX_AGE − MIN_AGE) × (1 − size/max_size)²`, so larger
+  files are deleted earlier — enforced by an hourly sweep (plus one at
+  startup) that also removes orphaned sidecars.
 - **Web Push (`push.go`)** — a VAPID keypair (persisted under the data dir) and
   per-user subscriptions. When a highlight arrives for a user with no attached
   browser, a push is sent; dead subscriptions are pruned on 404/410.
