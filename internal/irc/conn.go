@@ -85,6 +85,8 @@ type multilineBatch struct {
 	target string
 	source *girc.Source
 	tags   girc.Tags
+	ts     time.Time // server-time of the opening BATCH (zero if untagged)
+	echo   bool      // any member line was an echo-message of our own send
 	lines  []string
 	concat []bool // concat[i]: join line i to the previous with no newline
 }
@@ -203,7 +205,7 @@ func (c *Conn) registerHandlers() {
 	})
 
 	cmds := []string{
-		girc.PRIVMSG, girc.NOTICE, girc.JOIN, girc.PART,
+		girc.PRIVMSG, girc.NOTICE, girc.JOIN, girc.PART, girc.KICK,
 		girc.QUIT, girc.NICK, girc.TOPIC, girc.RPL_TOPIC, girc.RPL_NAMREPLY, girc.AWAY,
 		girc.RPL_LIST, girc.RPL_LISTEND, girc.CAP_TAGMSG,
 		// IRCv3 message-redaction (REDACT) and standard-replies (FAIL/WARN/NOTE).
@@ -445,6 +447,7 @@ func (c *Conn) handleBatch(gc *girc.Client, e *girc.Event) {
 				target: e.Params[2],
 				source: e.Source,
 				tags:   e.Tags,
+				ts:     e.Timestamp,
 			}
 		}
 	case '-':
@@ -467,6 +470,7 @@ func (c *Conn) absorbMultiline(e *girc.Event) bool {
 		return false
 	}
 	b.notice = e.Command == girc.NOTICE
+	b.echo = b.echo || e.Echo
 	b.lines = append(b.lines, e.Last())
 	// draft/multiline-concat is a value-less tag, so test presence, not value.
 	concat := false
@@ -486,10 +490,15 @@ func (c *Conn) finishBatch(gc *girc.Client, b *multilineBatch) {
 		cmd = girc.NOTICE
 	}
 	syn := &girc.Event{
-		Command: cmd,
-		Source:  b.source,
-		Params:  []string{b.target, joinMultiline(b.lines, b.concat)},
-		Tags:    b.tags,
+		Command:   cmd,
+		Source:    b.source,
+		Params:    []string{b.target, joinMultiline(b.lines, b.concat)},
+		Tags:      b.tags,
+		Timestamp: b.ts,
+		// The member lines carried the echo flag, not the BATCH commands;
+		// without it the engine would treat our own paste as someone else's
+		// message (unread + highlight against our own text).
+		Echo: b.echo,
 	}
 	if ev, ok := toEvent(c.opts.Network, syn, gc.GetNick()); ok {
 		c.emit(ev)

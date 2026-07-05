@@ -54,8 +54,11 @@ stugan.hook_topic(fn)
 -- nick/channel/emoji/command menu.
 stugan.hook_completion(fn)
 
--- Listen to signals. event is "join","part","quit","nick","connect",
--- "disconnect","topic","mode", ... fn(signal) -> ignored (notify-only)
+-- Listen to signals. event is "join","part","kick","quit","nick","connect",
+-- "disconnect","topic","mode". fn(signal) -> ignored (notify-only). The
+-- signal table carries network/nick/new_nick/channel/account/text, plus
+-- kicker for "kick" (nick is the kicked member). For "mode", nick is the
+-- setter and text the raw mode string.
 stugan.hook_signal(event, fn)
 
 -- Periodic timer. fn() called every `ms` milliseconds until unhooked.

@@ -222,6 +222,19 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			Nick: from, Buffer: ch, Text: reason,
 		}, true
 
+	case girc.KICK:
+		if len(e.Params) < 2 {
+			return core.Event{}, false
+		}
+		reason := ""
+		if len(e.Params) > 2 {
+			reason = e.Last()
+		}
+		return core.Event{
+			Type: core.EvKick, Network: network, Time: when,
+			Nick: e.Params[1], Kicker: from, Buffer: e.Params[0], Text: reason,
+		}, true
+
 	case girc.QUIT:
 		return core.Event{
 			Type: core.EvQuit, Network: network, Time: when,

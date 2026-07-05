@@ -1422,6 +1422,26 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		line(MsgPart, ev.Buffer, ev.Nick, text)
 		netChanged = true
 
+	case EvKick:
+		// Unlike a self-part, a self-kick keeps the buffer (so the reason
+		// stays visible) and the auto-join entry (a kick is not the user
+		// choosing to leave; the next reconnect or /join takes them back).
+		// The member list is no longer valid either way.
+		text := fmt.Sprintf("%s was kicked from %s by %s", ev.Nick, ev.Buffer, ev.Kicker)
+		if eqFold(ev.Nick, n.Nick) {
+			text = fmt.Sprintf("you were kicked from %s by %s", ev.Buffer, ev.Kicker)
+			if c := n.Channel(ev.Buffer); c != nil {
+				clear(c.Members)
+			}
+		} else if c := n.Channel(ev.Buffer); c != nil {
+			delete(c.Members, lower(ev.Nick))
+		}
+		if ev.Text != "" {
+			text += " (" + ev.Text + ")"
+		}
+		line(MsgPart, ev.Buffer, ev.Nick, text)
+		netChanged = true
+
 	case EvQuit:
 		text := ev.Nick + " has quit"
 		if ev.Text != "" {

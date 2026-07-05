@@ -1284,3 +1284,38 @@ func TestParamsIsolation(t *testing.T) {
 		t.Fatalf("UpdateNetwork aliased caller params into the tree: %+v", final)
 	}
 }
+
+func TestKick(t *testing.T) {
+	e, sink := newTestEngine(t)
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Buffer: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Buffer: "#go"})
+
+	// Someone else kicked: just drop the member, with a system line.
+	e.apply(Event{Type: EvKick, Network: "net", Nick: "alice", Kicker: "op", Buffer: "#go", Text: "spam"})
+	c := net0(e).Channel("#go")
+	if _, ok := c.Members["alice"]; ok {
+		t.Error("alice still a member after kick")
+	}
+	last := sink.msgs[len(sink.msgs)-1]
+	if last.Kind != MsgPart || last.Text != "alice was kicked from #go by op (spam)" {
+		t.Errorf("kick line = %q (%s)", last.Text, last.Kind)
+	}
+
+	// Self-kick: buffer and autojoin survive (unlike a self-part), members
+	// are cleared, and the reason lands in the buffer.
+	net0(e).Params.Channels = []string{"#go"}
+	e.apply(Event{Type: EvKick, Network: "net", Nick: "ME", Kicker: "op", Buffer: "#go", Text: "bye"})
+	if net0(e).Channel("#go") == nil {
+		t.Fatal("self-kick removed the buffer")
+	}
+	if len(net0(e).Channel("#go").Members) != 0 {
+		t.Error("members not cleared on self-kick")
+	}
+	if len(net0(e).Params.Channels) != 1 {
+		t.Error("self-kick dropped the autojoin entry")
+	}
+	last = sink.msgs[len(sink.msgs)-1]
+	if last.Text != "you were kicked from #go by op (bye)" {
+		t.Errorf("self-kick line = %q", last.Text)
+	}
+}

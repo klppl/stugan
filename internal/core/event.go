@@ -15,6 +15,8 @@ const (
 	EvMessageOut EventType = "message_out"
 	EvJoin       EventType = "join"
 	EvPart       EventType = "part"
+	// EvKick is a forced part: Nick was removed from Buffer by Kicker.
+	EvKick       EventType = "kick"
 	EvQuit       EventType = "quit"
 	EvNick       EventType = "nick"
 	EvTopic      EventType = "topic"
@@ -69,6 +71,7 @@ const (
 //
 //	EvMessageIn/Out      → Message
 //	EvJoin/EvPart        → Nick, Buffer, Account, Text(reason)
+//	EvKick               → Nick(kicked), Kicker, Buffer, Text(reason)
 //	EvQuit               → Nick, Text(reason)
 //	EvNick               → Nick(old), NewNick
 //	EvTopic              → Buffer, Text(topic), Nick(setter)
@@ -92,6 +95,8 @@ type Event struct {
 	State   ConnState
 	// Target is a message id the event refers to (EvReact / EvRedact).
 	Target string
+	// Kicker is who issued an EvKick (Nick is the removed member).
+	Kicker string
 
 	Command     string       // EvCommand: the command name (without leading slash)
 	Args        []string     // EvCommand: whitespace-split arguments

@@ -3,6 +3,7 @@ package irc
 import (
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/lrstanley/girc"
@@ -559,5 +560,61 @@ func TestSplitAddr(t *testing.T) {
 		if host != tt.wantHost || port != tt.wantPort {
 			t.Errorf("splitAddr(%q) = %q,%d; want %q,%d", tt.addr, host, port, tt.wantHost, tt.wantPort)
 		}
+	}
+}
+
+// TestMultilineBatchEcho: an echoed multiline (our own paste bounced back via
+// echo-message) must keep Self — the member lines carry e.Echo, not the BATCH
+// commands — and the reassembled message must keep the batch's server-time.
+// Without Self the engine highlight-matches and unread-counts our own paste.
+func TestMultilineBatchEcho(t *testing.T) {
+	h := &recordHandler{}
+	c, err := New(Options{Network: "n", Addr: "a:6667", Nick: "me"}, h)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	gc := c.client
+
+	c.handleBatch(gc, girc.ParseEvent("@time=2026-01-02T03:04:05.000Z;msgid=abc :me!u@h BATCH +1 draft/multiline #go"))
+	for _, raw := range []string{
+		"@batch=1 :me!u@h PRIVMSG #go :first",
+		"@batch=1 :me!u@h PRIVMSG #go :second",
+	} {
+		e := girc.ParseEvent(raw)
+		e.Echo = true // girc marks echo-message deliveries this way
+		if !c.absorbMultiline(e) {
+			t.Fatalf("line not absorbed: %q", raw)
+		}
+	}
+	c.handleBatch(gc, girc.ParseEvent(":me!u@h BATCH -1"))
+
+	if len(h.evs) != 1 {
+		t.Fatalf("emitted %d events, want 1", len(h.evs))
+	}
+	msg := h.evs[0].Message
+	if msg == nil || !msg.Self {
+		t.Fatalf("echoed multiline lost Self: %+v", msg)
+	}
+	if want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC); !msg.Time.Equal(want) {
+		t.Fatalf("Time = %v, want batch server-time %v", msg.Time, want)
+	}
+}
+
+func TestToEventKick(t *testing.T) {
+	ev, ok := toEvent("n", girc.ParseEvent(":op!u@h KICK #go alice :flooding"), "me")
+	if !ok || ev.Type != core.EvKick {
+		t.Fatalf("event = %+v, ok=%v", ev, ok)
+	}
+	if ev.Nick != "alice" || ev.Kicker != "op" || ev.Buffer != "#go" || ev.Text != "flooding" {
+		t.Fatalf("fields wrong: %+v", ev)
+	}
+	// No reason param.
+	ev, ok = toEvent("n", girc.ParseEvent(":op!u@h KICK #go alice"), "me")
+	if !ok || ev.Text != "" || ev.Nick != "alice" {
+		t.Fatalf("no-reason kick = %+v, ok=%v", ev, ok)
+	}
+	// Malformed (missing target) is dropped, not panicking.
+	if _, ok := toEvent("n", girc.ParseEvent(":op!u@h KICK #go"), "me"); ok {
+		t.Fatal("malformed KICK produced an event")
 	}
 }

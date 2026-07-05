@@ -74,6 +74,7 @@ func signalTable(L *lua.LState, ev core.Event) *lua.LTable {
 	t.RawSetString("channel", lua.LString(ev.Buffer))
 	t.RawSetString("account", lua.LString(ev.Account))
 	t.RawSetString("text", lua.LString(ev.Text))
+	t.RawSetString("kicker", lua.LString(ev.Kicker))
 	return t
 }
 
@@ -106,6 +107,8 @@ func signalName(t core.EventType) (string, bool) {
 		return "join", true
 	case core.EvPart:
 		return "part", true
+	case core.EvKick:
+		return "kick", true
 	case core.EvQuit:
 		return "quit", true
 	case core.EvNick:
@@ -116,6 +119,8 @@ func signalName(t core.EventType) (string, bool) {
 		return "connect", true
 	case core.EvDisconnect:
 		return "disconnect", true
+	case core.EvMode:
+		return "mode", true
 	default:
 		return "", false
 	}
