@@ -1,5 +1,6 @@
 import { reactive } from "vue";
-import { settings } from "./settings";
+import { settings, LEGACY_MUTES_KEY } from "./settings";
+import { stripFormatting } from "./links";
 import {
   T,
   type Envelope,
@@ -69,6 +70,12 @@ export interface Buffer {
   // published by server-side plugins. Today the only consumer is the
   // sidebar's lock indicator, which checks state.encrypted.
   state: Record<string, string>;
+  // local is true for a query buffer opened client-side (member-list "DM")
+  // that the server has no state for yet — the server only learns about a
+  // query when a message is sent. applyNetwork preserves local buffers when
+  // rebuilding from a snapshot (they'd otherwise vanish on the next
+  // net:update) and clears the flag once the server starts reporting them.
+  local?: boolean;
   // unreadMarker references the first live message that arrived while this
   // buffer wasn't focused — the chat view renders a "new messages" divider
   // just above it. It's a reference into messages[] (compared by identity),
@@ -346,7 +353,20 @@ export class Connection {
   private onClose() {
     this.store.status = "closed";
     this.stopHeartbeat();
+    this.clearPendingReplies();
     this.scheduleReconnect();
+  }
+
+  // clearPendingReplies resets in-flight request state whose reply died with
+  // the socket. Without this, search stays "searching…" and an expanded
+  // mention context spins on "loading…" forever (its keyed entry was never
+  // removed, and toggleContext only fetches when the entry is absent).
+  private clearPendingReplies() {
+    this.store.search.busy = false;
+    this.store.channelList.busy = false;
+    for (const [id, c] of Object.entries(this.store.context)) {
+      if (c.loading) delete this.store.context[id];
+    }
   }
 
   // bindLifecycle wires the tab-visibility and network-online events once, so
@@ -358,7 +378,12 @@ export class Connection {
     this.lifecycleBound = true;
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") this.checkLiveness();
+        if (document.visibilityState === "visible") {
+          this.checkLiveness();
+          // A hidden-tab reconnect deferred its read-marker ack (see
+          // applyInit); the user is looking at the buffer now.
+          this.ackActiveBuffer();
+        }
       });
     }
     if (typeof window !== "undefined") {
@@ -418,6 +443,7 @@ export class Connection {
   private reconnectNow() {
     this.clearReconnect();
     this.stopHeartbeat();
+    this.clearPendingReplies();
     const ws = this.ws;
     this.ws = null;
     if (ws) {
@@ -619,28 +645,36 @@ export class Connection {
     }
     this.ensureActive();
     // The buffer we land on is being viewed now — clear its seeded count and
-    // tell the server, so it doesn't reappear as unread on the next reload.
-    const a = this.store.active;
-    if (a) {
-      const buf = this.activeBuffer();
-      if (buf) {
-        // We're landing on this buffer now, but it may carry a seeded unread
-        // count from messages that arrived while the tab was closed. Capture
-        // it as a pending divider anchor before zeroing, so the "new messages"
-        // line and the jump bar still mark where the user left off. Messages
-        // aren't loaded yet on first login — anchorPendingMarker no-ops until
-        // the backlog reply lands and calls it again.
-        if (buf.unread > 0 && !buf.unreadMarker) buf.markerPending = buf.unread;
-        buf.unread = 0;
-        buf.highlight = 0;
-        this.anchorPendingMarker(buf);
-      }
-      this.markRead(a.network, a.buffer);
+    // tell the server — but only if it is actually visible: a hidden tab
+    // reconnecting (heartbeat, overnight phone) must not advance the read
+    // marker, or every other device's badges clear for messages nobody saw.
+    // The visibilitychange handler acks once the tab is shown again.
+    if (typeof document === "undefined" || document.visibilityState === "visible") {
+      this.ackActiveBuffer();
     }
     // Fetch the "what you missed" digest last, so it runs after the active
     // buffer's marker has been advanced above — the buffer you land on isn't
     // something you "missed", so its mentions are excluded from the digest.
     this.fetchMissed();
+  }
+
+  // ackActiveBuffer marks the visible active buffer as read: it captures a
+  // seeded unread count as a pending divider anchor (so the "new messages"
+  // line still marks where the user left off), zeroes the badge, and
+  // advances the server-side read marker.
+  private ackActiveBuffer() {
+    const a = this.store.active;
+    if (!a || this.store.view !== "chat") return;
+    const buf = this.activeBuffer();
+    if (buf) {
+      // Messages aren't loaded yet on first login — anchorPendingMarker
+      // no-ops until the backlog reply lands and calls it again.
+      if (buf.unread > 0 && !buf.unreadMarker) buf.markerPending = buf.unread;
+      buf.unread = 0;
+      buf.highlight = 0;
+      this.anchorPendingMarker(buf);
+    }
+    this.markRead(a.network, a.buffer);
   }
 
   // fetchMissed requests the highlight lines accumulated since the user's read
@@ -720,6 +754,7 @@ export class Connection {
         prev.topic = c.topic;
         prev.members = c.members ?? [];
         prev.state = c.state ?? {};
+        prev.local = false; // the server reports it now
       }
       // Only the init snapshot carries real unread counts; adopt them so
       // badges survive a reload. A muted buffer never shows a count (it shows
@@ -731,6 +766,13 @@ export class Connection {
       }
       return buf;
     });
+    // Keep locally-opened queries the snapshot doesn't know about — without
+    // this, opening a DM and not sending yet meant any net:update (someone
+    // joining a channel, say) deleted the buffer out from under the user.
+    const inDto = new Set(dto.channels.map((c) => c.name.toLowerCase()));
+    for (const b of existing.values()) {
+      if (b.local && !inDto.has(b.name.toLowerCase())) net.buffers.push(b);
+    }
     // ensureActive is called by our callers (applyInit after the whole network
     // loop; the NetUpdate handler after a live change), NOT here: during init
     // applyNetwork runs once per network, and selecting before the later
@@ -796,6 +838,16 @@ export class Connection {
     // plugin (it drops the message in the engine, so it is never stored,
     // counted, or highlighted). Nothing to filter here.
     const buf = this.ensureBuf(net, m.buffer);
+    // Dedupe against the recent tail: during the connect handshake a line
+    // can arrive both inside the init snapshot and as a live frame that was
+    // queued while the snapshot was being built. Same message, same msgid —
+    // drop the second copy before it double-counts anything.
+    if (m.id) {
+      const msgs = buf.messages;
+      for (let i = msgs.length - 1, end = Math.max(0, msgs.length - 100); i >= end; i--) {
+        if (msgs[i].id === m.id) return;
+      }
+    }
     // While reading a jumped-to window, don't append live messages: they
     // would appear directly below the window with an invisible gap of
     // un-fetched messages between them. Counters (unread/highlight/
@@ -997,7 +1049,9 @@ export class Connection {
   openQuery(network: string, nick: string) {
     const net = this.net(network);
     if (!net) return;
+    const existed = !!this.buf(network, nick);
     const buf = this.ensureBuf(net, nick, "query");
+    if (!existed) buf.local = true; // server learns about it on first send
     this.select(network, buf.name);
   }
 
@@ -1032,8 +1086,14 @@ export class Connection {
     });
   }
 
-  send(network: string, buffer: string, text: string) {
-    this.sendFrame<MsgSend>(T.MsgSend, { network, buffer, text });
+  // send returns false (with a toast) when the socket is down, so the input
+  // can keep the draft instead of eating the message.
+  send(network: string, buffer: string, text: string): boolean {
+    if (!this.sendFrame<MsgSend>(T.MsgSend, { network, buffer, text })) {
+      this.pushToast({ code: "offline", message: "Not connected — message not sent" });
+      return false;
+    }
+    return true;
   }
 
   // addNetwork asks the server to add and connect a network at runtime.
@@ -1056,6 +1116,18 @@ export class Connection {
   // it here and re-selects an active buffer, converging every tab. Channels are
   // left via /part instead, so this is only wired up for query buffers.
   closeBuffer(network: string, buffer: string) {
+    // A local-only query never reached the server (no message sent), so
+    // there is nothing to close there — remove it directly.
+    const buf = this.buf(network, buffer);
+    if (buf?.local) {
+      const net = this.net(network);
+      if (net) net.buffers = net.buffers.filter((b) => b !== buf);
+      if (this.store.active?.network === network && this.store.active.buffer.toLowerCase() === buffer.toLowerCase()) {
+        this.store.active = null;
+        this.ensureActive();
+      }
+      return;
+    }
     this.sendFrame<BufClose>(T.BufClose, { network, buffer });
   }
 
@@ -1085,8 +1157,11 @@ export class Connection {
   // a no-op here and brings other tabs/devices into sync.
   toggleMute(network: string, buffer: string) {
     const muted = !this.isMuted(bufKey(network, buffer));
+    // Send before the optimistic flip: if the socket is down the frame is
+    // dropped, and flipping locally anyway would desync from the server
+    // until some other tab converged it.
+    if (!this.sendFrame<MuteSet>(T.Mute, { network, buffer, muted })) return;
     this.applyMute({ network, buffer, muted });
-    this.sendFrame<MuteSet>(T.Mute, { network, buffer, muted });
   }
 
   // applyMute sets a buffer's muted state to an absolute value (not a toggle),
@@ -1125,36 +1200,39 @@ export class Connection {
   }
 
   // migrateLegacyMutes carries forward per-channel mutes that older builds
-  // stored in localStorage (under stugan.settings.muted) to the server, once.
-  // It runs after the server-authoritative set is seeded, so it only adds
-  // entries the server doesn't already have, then drops the local copy.
+  // stored in localStorage to the server, once. settings.ts parks them under
+  // LEGACY_MUTES_KEY at module load (its own watcher rewrites stugan.settings
+  // immediately, so reading the original field here would always find it
+  // gone). Runs after the server-authoritative set is seeded, so it only adds
+  // entries the server doesn't already have; the key is kept until every
+  // entry was actually sent, so a mid-migration disconnect retries next init.
   private migrateLegacyMutes() {
     let raw: string | null;
     try {
-      raw = localStorage.getItem("stugan.settings");
+      raw = localStorage.getItem(LEGACY_MUTES_KEY);
     } catch {
       return;
     }
     if (!raw) return;
-    let parsed: { muted?: unknown };
+    let old: unknown;
     try {
-      parsed = JSON.parse(raw);
+      old = JSON.parse(raw);
     } catch {
-      return;
+      old = [];
     }
-    const old = Array.isArray(parsed.muted) ? (parsed.muted as string[]) : [];
-    for (const key of old) {
-      if (this.store.muted.includes(key)) continue;
+    for (const key of Array.isArray(old) ? (old as string[]) : []) {
+      if (typeof key !== "string" || this.store.muted.includes(key)) continue;
       // bufKey is `network + " " + buffer`; IRC targets never contain spaces,
       // so the buffer is the final token and the network is everything before.
       const i = key.lastIndexOf(" ");
       if (i <= 0) continue;
-      this.toggleMute(key.slice(0, i), key.slice(i + 1));
+      if (!this.sendFrame<MuteSet>(T.Mute, { network: key.slice(0, i), buffer: key.slice(i + 1), muted: true })) {
+        return; // socket died mid-migration — keep the key and retry next init
+      }
+      this.applyMute({ network: key.slice(0, i), buffer: key.slice(i + 1), muted: true });
     }
-    // Drop the migrated field so this only happens once.
     try {
-      delete parsed.muted;
-      localStorage.setItem("stugan.settings", JSON.stringify(parsed));
+      localStorage.removeItem(LEGACY_MUTES_KEY);
     } catch {
       /* best-effort */
     }
@@ -1281,7 +1359,7 @@ export class Connection {
       // A DM's buffer name is just the sender's nick, so "alice in alice" reads
       // badly — title it with the sender alone.
       const title = isChannel(m.buffer) ? `${m.from} in ${m.buffer}` : m.from;
-      new Notification(title, { body: m.text, tag: m.network + "/" + m.buffer });
+      new Notification(title, { body: stripFormatting(m.text), tag: m.network + "/" + m.buffer });
     } catch {
       /* notifications may be unavailable */
     }
@@ -1352,9 +1430,13 @@ export class Connection {
     this.store.networks = ordered;
   }
 
-  private sendFrame<D>(t: string, d: D) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+  // sendFrame reports whether the frame was actually handed to an open
+  // socket, so state-changing callers can refuse (and tell the user) instead
+  // of silently dropping input during a reconnect window.
+  private sendFrame<D>(t: string, d: D): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
     this.ws.send(JSON.stringify({ t, d } as Envelope<D>));
+    return true;
   }
 
   activeBuffer(): Buffer | null {
@@ -1381,10 +1463,16 @@ export class Connection {
     fd.append("file", file);
     try {
       const r = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!r.ok) return null;
+      if (!r.ok) {
+        // Pasted/dropped files failing silently looks like nothing happened.
+        const why = r.status === 413 ? "too large" : `server said ${r.status}`;
+        this.pushToast({ code: "upload", message: `Upload of ${file.name || "file"} failed — ${why}` });
+        return null;
+      }
       const j = (await r.json()) as { url: string };
       return location.origin + j.url;
     } catch {
+      this.pushToast({ code: "upload", message: `Upload of ${file.name || "file"} failed — network error` });
       return null;
     }
   }

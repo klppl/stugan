@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from "vue";
 import type { MessageDTO } from "../proto/events";
-import { segments, extractURLs, isImage, isVideo, proxied } from "../links";
+import { segments, extractURLs, isImage, isVideo, proxied, stripFormatting } from "../links";
 import { getPreview, fetchPreview, type Preview } from "../previews";
 import { settings } from "../settings";
 import { nickColor } from "../nickColor";
@@ -70,6 +70,9 @@ function fromColor(nick: string): string {
 }
 
 const segs = computed(() => segments(props.msg.text));
+// Raw-text render paths (system lines, /me) strip mIRC formatting codes the
+// same way segments() does for the normal body.
+const cleanText = computed(() => stripFormatting(props.msg.text));
 const urls = computed(() => extractURLs(props.msg.text));
 const media = computed(() => urls.value.filter((u) => isImage(u) || isVideo(u)).slice(0, 4));
 const links = computed(() => urls.value.filter((u) => !isImage(u) && !isVideo(u)).slice(0, 2));
@@ -124,7 +127,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
     <span v-if="showBuffer" class="loc">{{ msg.buffer }}</span>
 
     <template v-if="isSystemLine">
-      <span class="sys" :class="msg.kind"><span class="sys-pre">—</span> {{ msg.text }}</span>
+      <span class="sys" :class="msg.kind"><span class="sys-pre">—</span> {{ cleanText }}</span>
     </template>
     <template v-else-if="msg.kind === 'action'">
       <span class="body">*
@@ -138,7 +141,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
           @touchmove.passive="nickCtx.onTouchMove($event)"
           @touchend="nickCtx.cancelLp"
           @touchcancel="nickCtx.cancelLp"
-        >{{ msg.from }}</span> <span class="seg">{{ msg.text }}</span></span>
+        >{{ msg.from }}</span> <span class="seg">{{ cleanText }}</span></span>
     </template>
     <template v-else>
       <span

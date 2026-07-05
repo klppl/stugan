@@ -259,7 +259,9 @@ function onInput() {
 function submit() {
   const t = text.value.trim();
   if (!t || !props.buffer) return;
-  connection.send(props.network, props.buffer.name, replaceEmoji(t));
+  // A failed send (socket down mid-reconnect) keeps the draft in the box —
+  // clearing it would silently destroy the message.
+  if (!connection.send(props.network, props.buffer.name, replaceEmoji(t))) return;
   connection.sendTyping(props.network, props.buffer.name, "done");
   if (history[history.length - 1] !== t) {
     history.push(t);

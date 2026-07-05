@@ -294,7 +294,13 @@ function backToLatest() {
 }
 
 watch(
-  () => buffer.value?.messages.length,
+  // Watch identity AND length AND the in-flight flag, not length alone: an
+  // around-window reply *replaces* messages with an equally-long array (both
+  // pages use limit 100, so in a busy channel the length never changes and a
+  // length-only watch left jumps un-scrolled), and a fully-deduplicated older
+  // page changes nothing at all (only backlogPending flips), which must still
+  // run this handler to disarm prependHeight.
+  () => [buffer.value?.messages, buffer.value?.messages.length, buffer.value?.backlogPending] as const,
   async () => {
     await nextTick();
     const el = listEl.value;
@@ -306,7 +312,9 @@ watch(
       return;
     }
     if (prependHeight > 0) {
-      el.scrollTop = el.scrollHeight - prependHeight;
+      // Only reposition if content actually grew — an empty (all-duplicate)
+      // older page must just disarm, or we'd teleport the viewport.
+      if (el.scrollHeight > prependHeight) el.scrollTop = el.scrollHeight - prependHeight;
       prependHeight = 0;
     } else if (stick) {
       scrollToBottom();

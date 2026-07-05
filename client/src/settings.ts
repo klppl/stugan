@@ -122,9 +122,20 @@ interface Settings {
 
 const KEY = "stugan.settings";
 
+// LEGACY_MUTES_KEY parks per-channel mutes that older builds stored inside
+// stugan.settings. They must be captured here, at module load, because the
+// settings watcher below immediately rewrites stugan.settings with only the
+// known keys — by the time the connection's migration runs, the muted field
+// is gone. The connection reads and removes this key once the server has
+// adopted the entries.
+export const LEGACY_MUTES_KEY = "stugan.legacy-mutes";
+
 function load(): Settings {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) || "{}");
+    if (Array.isArray(s.muted) && s.muted.length && !localStorage.getItem(LEGACY_MUTES_KEY)) {
+      localStorage.setItem(LEGACY_MUTES_KEY, JSON.stringify(s.muted));
+    }
     return {
       theme: typeof s.theme === "string" ? s.theme : "dark",
       customThemes: Array.isArray(s.customThemes) ? s.customThemes : [],
@@ -152,13 +163,21 @@ export const settings = reactive<Settings>(load());
 // applyTheme reflects the selected theme onto the document. Built-in themes
 // match a CSS rule via data-theme; a custom theme falls back to the default
 // rule and layers its variables as inline overrides on :root.
+// appliedCustomKeys remembers which inline properties the last custom theme
+// set, so switching themes removes ALL of them — parseTheme accepts any
+// --variable, not just THEME_VARS, and strays would otherwise stick to :root
+// until reload.
+let appliedCustomKeys: string[] = [];
+
 function applyTheme() {
   const root = document.documentElement;
-  for (const v of THEME_VARS) root.style.removeProperty(v);
+  for (const v of new Set([...THEME_VARS, ...appliedCustomKeys])) root.style.removeProperty(v);
+  appliedCustomKeys = [];
   root.dataset.theme = settings.theme;
   const custom = settings.customThemes.find((t) => t.name === settings.theme);
   if (custom) {
     for (const [k, val] of Object.entries(custom.vars)) root.style.setProperty(k, val);
+    appliedCustomKeys = Object.keys(custom.vars);
   }
 }
 
@@ -182,14 +201,16 @@ export function isBuiltin(name: string): boolean {
 
 // parseTheme extracts `--var: value` declarations from pasted CSS, ignoring
 // anything that isn't a custom property and rejecting values that could
-// smuggle in markup or scripts.
+// smuggle in markup, scripts, or remote fetches — url()/image-set() in a
+// shared theme would ping an attacker's server on every page load (an
+// IP/user-agent leak, exactly what the image proxy exists to prevent).
 function parseTheme(css: string): Record<string, string> {
   const vars: Record<string, string> = {};
   const re = /(--[\w-]+)\s*:\s*([^;\n}]+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(css)) !== null) {
     const value = m[2].trim();
-    if (value && !/[<>}]|javascript:/i.test(value)) vars[m[1]] = value;
+    if (value && !/[<>}]|javascript:|url\s*\(|image-set\s*\(|src\s*\(/i.test(value)) vars[m[1]] = value;
   }
   return vars;
 }
