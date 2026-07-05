@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS messages (
   tags      TEXT NOT NULL DEFAULT ''     -- JSON object
 );
 CREATE INDEX IF NOT EXISTS idx_messages_buffer ON messages(network, buffer, id);
+CREATE INDEX IF NOT EXISTS idx_messages_buffer_ts ON messages(network, buffer, ts);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   text, content='messages', content_rowid='id'
@@ -112,6 +113,20 @@ func Open(path string, log *slog.Logger) (*Store, error) {
 			return nil, fmt.Errorf("migrate: %w", err)
 		}
 	}
+	// Deduplicate rows persisted before msgid uniqueness was enforced
+	// (chathistory playback re-inserted the same messages on every run),
+	// then add the unique index that makes replays no-ops in Print.
+	for _, stmt := range []string{
+		`DELETE FROM messages WHERE msgid <> '' AND id NOT IN (
+		   SELECT MIN(id) FROM messages WHERE msgid <> '' GROUP BY network, buffer, msgid)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_msgid
+		   ON messages(network, buffer, msgid) WHERE msgid <> ''`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate msgid dedup: %w", err)
+		}
+	}
 	return &Store{db: db, log: log}, nil
 }
 
@@ -130,8 +145,10 @@ func (s *Store) Print(m core.Message) {
 	if ts.IsZero() {
 		ts = time.Now()
 	}
+	// OR IGNORE: a message with a msgid we already hold (chathistory or
+	// bouncer replay of a line stored live) must not duplicate the row.
 	_, err := s.db.Exec(
-		`INSERT INTO messages(msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags)
+		`INSERT OR IGNORE INTO messages(msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.Network, m.Buffer, ts.UnixMilli(), m.From, m.Account,
 		string(m.Kind), m.Text, boolToInt(m.Self), boolToInt(m.Highlight), tags,

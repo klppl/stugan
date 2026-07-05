@@ -485,3 +485,73 @@ func TestMissedHighlights(t *testing.T) {
 		t.Errorf("limit=1 should keep newest (#go/second), got %+v", got)
 	}
 }
+
+// TestMsgidDedup: replaying a message we already hold (chathistory playback,
+// bouncer replay) must not duplicate the row.
+func TestMsgidDedup(t *testing.T) {
+	s := openTest(t)
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	m := msg("n", "#c", "alice", "hello", core.MsgPrivmsg, base)
+	m.ID = "msgid-1"
+	s.Print(m)
+	s.Print(m) // replay
+	// Same msgid in another buffer is a different logical line (kept), and
+	// id-less lines are never deduped against each other.
+	other := m
+	other.Buffer = "#other"
+	s.Print(other)
+	noID := msg("n", "#c", "serv", "motd", core.MsgSystem, base)
+	s.Print(noID)
+	s.Print(noID)
+
+	got, _, err := s.Backlog(context.Background(), "n", "#c", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 { // hello once + motd twice
+		t.Fatalf("got %d rows, want 3: %+v", len(got), got)
+	}
+}
+
+// TestMsgidDedupMigration: a database written before the unique msgid index
+// existed (with duplicate rows) must be deduplicated on open.
+func TestMsgidDedupMigration(t *testing.T) {
+	path := t.TempDir() + "/legacy.db"
+	s, err := Open(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Recreate the legacy state: drop the unique index, insert duplicates.
+	if _, err := s.db.Exec(`DROP INDEX idx_messages_msgid`); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if _, err := s.db.Exec(
+			`INSERT INTO messages(msgid, network, buffer, ts, kind, text) VALUES ('dup', 'n', '#c', 1, 'privmsg', 'hi')`,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+
+	s2, err := Open(path, nil)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+	got, _, err := s2.Backlog(context.Background(), "n", "#c", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d rows after migration, want 1", len(got))
+	}
+	// FTS must have been kept in sync by the delete trigger.
+	hits, err := s2.Search(context.Background(), "hi", "n", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("FTS returned %d hits after dedup, want 1", len(hits))
+	}
+}
