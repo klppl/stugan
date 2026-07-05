@@ -282,7 +282,7 @@ func (e *Engine) SetPluginSetting(script, key, value string) error {
 func (e *Engine) AddNetwork(p NetworkParams, conn IRCConn) {
 	e.mu.Lock()
 	e.user.Networks = append(e.user.Networks, &Network{
-		ID: p.ID, Name: p.Name, Nick: p.Nick, State: StateDisconnected, Params: p,
+		ID: p.ID, Name: p.Name, Nick: p.Nick, State: StateDisconnected, Params: p.clone(),
 	})
 	e.conns[p.ID] = conn
 	e.mu.Unlock()
@@ -317,7 +317,7 @@ func (e *Engine) AddNetworkLive(p NetworkParams) error {
 		return err
 	}
 	e.user.Networks = append(e.user.Networks, &Network{
-		ID: p.ID, Name: p.Name, Nick: p.Nick, State: StateDisconnected, Params: p,
+		ID: p.ID, Name: p.Name, Nick: p.Nick, State: StateDisconnected, Params: p.clone(),
 	})
 	e.conns[p.ID] = conn
 	if e.running {
@@ -440,7 +440,10 @@ func (e *Engine) UpdateNetwork(p NetworkParams) error {
 			delete(e.connCancels, p.ID)
 		}
 		oldConn := e.conns[p.ID]
-		n.Params, n.Name, n.Nick = p, p.Name, p.Nick
+		// Clone into the tree so p stays private to this goroutine: it is
+		// read below (persistAndNotify) after e.mu is released, while the
+		// loop goroutine may already be mutating the live Params.
+		n.Params, n.Name, n.Nick = p.clone(), p.Name, p.Nick
 		e.conns[p.ID] = conn
 		if e.running {
 			e.startConnLocked(p.ID, conn)
@@ -458,7 +461,8 @@ func (e *Engine) UpdateNetwork(p NetworkParams) error {
 	registered := n.State == StateRegistered
 	nickChanged := old.Nick != p.Nick
 	added, removed := diffChannels(old.Channels, p.Channels)
-	n.Params, n.Name = p, p.Name
+	// Clone for the same reason as the reconnect branch above.
+	n.Params, n.Name = p.clone(), p.Name
 	e.mu.Unlock()
 
 	if conn != nil && registered {
@@ -635,7 +639,9 @@ func (e *Engine) NetworkConfig(id string) (NetworkParams, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	if n := e.user.Network(id); n != nil {
-		return n.Params, true
+		// Clone: the caller reads this outside e.mu while the loop goroutine
+		// keeps mutating the live Params (autojoin edits, channel keys).
+		return n.Params.clone(), true
 	}
 	return NetworkParams{}, false
 }

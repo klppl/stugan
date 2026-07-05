@@ -1241,3 +1241,46 @@ func TestHandleEventAfterShutdown(t *testing.T) {
 		t.Fatal("HandleEvent blocked after shutdown")
 	}
 }
+
+// TestParamsIsolation guards the clone discipline around NetworkParams: values
+// crossing the Engine boundary (in via AddNetwork*/UpdateNetwork, out via
+// NetworkConfig) must not share slice/map backing with the live tree, or a
+// server goroutine reads them racily while the loop goroutine mutates them.
+func TestParamsIsolation(t *testing.T) {
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn, Networks: &recordingNetStore{}})
+	in := NetworkParams{
+		ID: "net", Name: "net", Addr: "a:6697", Nick: "me",
+		Channels: []string{"#a", "#b"}, ChannelKeys: map[string]string{"#a": "k"},
+	}
+	if err := e.AddNetworkLive(in); err != nil {
+		t.Fatal(err)
+	}
+	// Mutating the caller's params after the call must not reach the engine.
+	in.Channels[0] = "#hacked"
+	in.ChannelKeys["#a"] = "hacked"
+	got, _ := e.NetworkConfig("net")
+	if got.Channels[0] != "#a" || got.ChannelKeys["#a"] != "k" {
+		t.Fatalf("AddNetworkLive aliased caller params into the tree: %+v", got)
+	}
+	// Mutating a returned config must not reach the engine either.
+	got.Channels[0] = "#hacked"
+	got.ChannelKeys["#a"] = "hacked"
+	again, _ := e.NetworkConfig("net")
+	if again.Channels[0] != "#a" || again.ChannelKeys["#a"] != "k" {
+		t.Fatalf("NetworkConfig returned a live alias: %+v", again)
+	}
+	// Same for the live-update path of UpdateNetwork (no reconnect).
+	upd := NetworkParams{
+		ID: "net", Name: "net", Addr: "a:6697", Nick: "me",
+		Channels: []string{"#a", "#c"},
+	}
+	if err := e.UpdateNetwork(upd); err != nil {
+		t.Fatal(err)
+	}
+	upd.Channels[1] = "#hacked"
+	final, _ := e.NetworkConfig("net")
+	if final.Channels[1] != "#c" {
+		t.Fatalf("UpdateNetwork aliased caller params into the tree: %+v", final)
+	}
+}
