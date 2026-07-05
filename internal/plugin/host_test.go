@@ -616,3 +616,59 @@ func TestHookTimer(t *testing.T) {
 		}
 	}
 }
+
+// TestTimerAfterReload reproduces the tick-vs-reload race: a timer job that
+// was already queued when its script got reloaded (closing the old LState)
+// must no-op instead of calling into the closed state, which would panic
+// outside PCall's recover and kill the daemon.
+func TestTimerAfterReload(t *testing.T) {
+	api := &fakeAPI{}
+	h := newHost(t, api, map[string]string{
+		"tick.lua": `stugan.hook_timer(60000, function() stugan.send("n", "TICK") end)`,
+	}, nil)
+
+	var tm *timerHook
+	h.do(func() {
+		if len(h.timers) != 1 {
+			t.Fatalf("timers = %d, want 1", len(h.timers))
+		}
+		tm = h.timers[0]
+	})
+
+	if err := h.ReloadPlugin("tick"); err != nil {
+		t.Fatalf("ReloadPlugin: %v", err)
+	}
+	// Fire the stale timer's job the way the ticker goroutine would.
+	h.do(func() { h.runTimer(tm) })
+
+	// The reloaded script (new LState) must still be alive and registered.
+	h.do(func() {
+		if s := h.scripts["tick"]; s == nil || s.disabled {
+			t.Error("reloaded script missing or disabled after stale tick")
+		}
+	})
+}
+
+// TestUnloadClearsUnhookers guards the unhooker map against growing on every
+// hot-reload: unloadScript must drop the entries owned by the departing script.
+func TestUnloadClearsUnhookers(t *testing.T) {
+	api := &fakeAPI{}
+	h := newHost(t, api, map[string]string{
+		"hooks.lua": `
+			stugan.hook_command("x", function() end)
+			stugan.hook_message(function(m) return m end)
+			stugan.hook_signal("join", function() end)
+			stugan.hook_timer(60000, function() end)`,
+	}, nil)
+
+	for i := 0; i < 3; i++ {
+		if err := h.ReloadPlugin("hooks"); err != nil {
+			t.Fatalf("ReloadPlugin #%d: %v", i, err)
+		}
+	}
+	h.do(func() {
+		if n := len(h.unhookers); n != 4 {
+			t.Errorf("unhookers = %d after reloads, want 4", n)
+		}
+	})
+}

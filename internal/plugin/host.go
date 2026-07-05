@@ -108,7 +108,14 @@ type Host struct {
 	cmdHooks        map[string]*hook
 	timers          []*timerHook
 	nextID          int
-	unhookers       map[int]func()
+	unhookers       map[int]unhooker
+}
+
+// unhooker undoes one hook/timer registration. The owning script is recorded
+// so unloadScript can drop a script's entries without invoking them.
+type unhooker struct {
+	script *script
+	fn     func()
 }
 
 type script struct {
@@ -175,7 +182,7 @@ func New(opts Options) (*Host, error) {
 		kv:          map[string]map[string]string{},
 		signalHooks: map[string][]*hook{},
 		cmdHooks:    map[string]*hook{},
-		unhookers:   map[int]func(){},
+		unhookers:   map[int]unhooker{},
 	}
 	h.ctx, h.cancel = context.WithCancel(context.Background())
 	if h.httpClient != nil {
@@ -701,7 +708,10 @@ func (h *Host) runSignalHooks(name string, ev core.Event) {
 
 // runTimer fires a timer's callback (plugin goroutine).
 func (h *Host) runTimer(t *timerHook) {
-	if t.script.disabled {
+	// The script may have been unloaded or reloaded (LState closed) between
+	// the tick and this job running; calling into a closed LState panics
+	// outside PCall's recover and would take the daemon down.
+	if h.scripts[t.script.name] != t.script || t.script.disabled {
 		return
 	}
 	h.call(t.script, t.fn, func(*lua.LState) {}, 0)

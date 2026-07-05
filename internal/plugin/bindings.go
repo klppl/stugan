@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"time"
@@ -35,7 +36,14 @@ func (h *Host) loadScript(path string) {
 
 	s := &script{name: name, path: path, L: h.newState()}
 	s.L.SetGlobal("stugan", h.buildAPI(s))
-	if err := s.L.DoFile(path); err != nil {
+	// Top-level code gets a timeout like any hook call: an infinite loop at
+	// file scope would otherwise wedge the plugin goroutine (and, via
+	// Dispatch, the engine loop) forever. Loads are allowed extra headroom.
+	ctx, cancel := context.WithTimeout(context.Background(), max(4*h.timeout, 10*time.Second))
+	s.L.SetContext(ctx)
+	err := s.L.DoFile(path)
+	cancel()
+	if err != nil {
 		h.log.Error("plugin load failed", "script", name, "err", err)
 		s.L.Close()
 		return
@@ -72,6 +80,11 @@ func (h *Host) unloadScript(name string) {
 		}
 	}
 	h.timers = kept
+	for id, u := range h.unhookers {
+		if u.script == s {
+			delete(h.unhookers, id)
+		}
+	}
 	delete(h.scripts, name)
 	s.L.Close()
 	h.log.Info("plugin unloaded", "script", name)
@@ -102,11 +115,11 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 		hk := &hook{script: s, fn: fn, prio: optPriority(L, 3), id: h.newID()}
 		key := lc(name)
 		h.cmdHooks[key] = hk
-		h.unhookers[hk.id] = func() {
+		h.unhookers[hk.id] = unhooker{s, func() {
 			if h.cmdHooks[key] == hk {
 				delete(h.cmdHooks, key)
 			}
-		}
+		}}
 		L.Push(lua.LNumber(hk.id))
 		return 1
 	}))
@@ -128,7 +141,7 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 		hk := &hook{script: s, fn: fn, prio: optPriority(L, 3), id: h.newID()}
 		h.signalHooks[event] = append(h.signalHooks[event], hk)
 		sortHooks(h.signalHooks[event])
-		h.unhookers[hk.id] = func() { h.signalHooks[event] = removeHook(h.signalHooks[event], hk) }
+		h.unhookers[hk.id] = unhooker{s, func() { h.signalHooks[event] = removeHook(h.signalHooks[event], hk) }}
 		L.Push(lua.LNumber(hk.id))
 		return 1
 	}))
@@ -137,8 +150,8 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 	}))
 	t.RawSetString("unhook", s.L.NewFunction(func(L *lua.LState) int {
 		id := L.CheckInt(1)
-		if u := h.unhookers[id]; u != nil {
-			u()
+		if u, ok := h.unhookers[id]; ok {
+			u.fn()
 			delete(h.unhookers, id)
 		}
 		return 0
@@ -316,7 +329,7 @@ func (h *Host) registerListHook(L *lua.LState, s *script, list *[]*hook) int {
 	*list = append(*list, hk)
 	sortHooks(*list)
 	captured := list
-	h.unhookers[hk.id] = func() { *captured = removeHook(*captured, hk) }
+	h.unhookers[hk.id] = unhooker{s, func() { *captured = removeHook(*captured, hk) }}
 	L.Push(lua.LNumber(hk.id))
 	return 1
 }
@@ -334,7 +347,7 @@ func (h *Host) registerTimer(L *lua.LState, s *script) int {
 		stop:   make(chan struct{}),
 	}
 	h.timers = append(h.timers, t)
-	h.unhookers[t.id] = func() { h.stopTimer(t) }
+	h.unhookers[t.id] = unhooker{s, func() { h.stopTimer(t) }}
 
 	h.wg.Go(func() {
 		for {
