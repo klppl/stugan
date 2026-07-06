@@ -1,8 +1,10 @@
 import { reactive } from "vue";
 import { settings, LEGACY_MUTES_KEY } from "./settings";
 import { stripFormatting } from "./links";
+import { refresh, canEnter } from "./auth";
 import {
   T,
+  PROTOCOL,
   type Envelope,
   type InitState,
   type MessageDTO,
@@ -229,7 +231,20 @@ const CONVERSATIONAL = new Set(["privmsg", "notice", "action"]);
 // grep keep working. It is never persisted in this form — server state is
 // always {network, buffer} pairs, rebuilt through bufKey on each load.
 function bufKey(network: string, buffer: string): string {
-  return network + "\x1f" + buffer.toLowerCase();
+  return network + "\x1f" + foldTarget(buffer);
+}
+
+// foldTarget folds an IRC channel/nick for case-insensitive comparison using
+// rfc1459 casemapping: besides A–Z, the bytes []\~ fold to {}|^ (they count
+// as uppercase in IRC), matching the server-side fold in internal/core. A
+// plain toLowerCase would treat nick[m] and nick{m} as different users.
+export function foldTarget(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\[/g, "{")
+    .replace(/\]/g, "}")
+    .replace(/\\/g, "|")
+    .replace(/~/g, "^");
 }
 
 // The last buffer the user had open, persisted per-browser so reopening stugan
@@ -262,11 +277,18 @@ function saveLastActive(active: { network: string; buffer: string } | null) {
 
 // Heartbeat timing. While the socket is open the client sends an app-level
 // ping every PING_INTERVAL_MS and expects any frame back within PONG_TIMEOUT_MS;
-// continued silence means the link is dead and it reconnects. RECONNECT_DELAY_MS
-// is the backoff after a clean close before retrying.
+// continued silence means the link is dead and it reconnects. Reconnects back
+// off exponentially with jitter from RECONNECT_BASE_MS up to RECONNECT_MAX_MS
+// (a down server isn't helped by a fixed 1.5s hammer), resetting once a
+// connection actually delivers frames again.
 const PING_INTERVAL_MS = 20000;
 const PONG_TIMEOUT_MS = 10000;
-const RECONNECT_DELAY_MS = 1500;
+const RECONNECT_BASE_MS = 1500;
+const RECONNECT_MAX_MS = 30000;
+// After this many consecutive connection attempts that die without a hello
+// frame, re-check /api/me — the usual cause is an expired session cookie,
+// and endlessly retrying the socket would never surface the login screen.
+const AUTH_RECHECK_AFTER = 3;
 
 export class Connection {
   readonly store: Store = reactive({
@@ -311,6 +333,10 @@ export class Connection {
   // buffer may have missed messages while we were away. resyncPending carries
   // that across to applyInit, which arrives just after onopen.
   private everConnected = false;
+  // sawHello flips when the current socket delivers its hello frame;
+  // consecutive closes without one drive the backoff and the auth re-check.
+  private sawHello = false;
+  private failedAttempts = 0;
   private resyncPending = false;
   // digestAutoShown gates the "what you missed" auto-open to once per page
   // session: a reconnect re-fetches the digest (counts may have changed) but
@@ -332,6 +358,7 @@ export class Connection {
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${scheme}://${location.host}/ws`);
     this.ws = ws;
+    this.sawHello = false;
     this.store.status = "connecting";
     ws.onopen = () => this.onOpen();
     ws.onclose = () => this.onClose();
@@ -354,6 +381,18 @@ export class Connection {
     this.store.status = "closed";
     this.stopHeartbeat();
     this.clearPendingReplies();
+    if (this.sawHello) {
+      this.failedAttempts = 0;
+    } else {
+      this.failedAttempts++;
+      if (this.failedAttempts % AUTH_RECHECK_AFTER === 0) {
+        // Repeated instant deaths: possibly an expired session, not a flaky
+        // network. refresh() re-resolves /api/me — if the session is gone it
+        // shows the login screen; if we're still allowed it reconnects.
+        void refresh();
+        return;
+      }
+    }
     this.scheduleReconnect();
   }
 
@@ -484,10 +523,15 @@ export class Connection {
 
   private scheduleReconnect() {
     if (this.reconnectTimer != null) return;
+    // Full jitter on an exponential curve: attempt n waits in
+    // [base/2, base] * 2^n, capped. Keeps a fleet of tabs from stampeding
+    // the daemon the moment it comes back.
+    const ceiling = Math.min(RECONNECT_BASE_MS * 2 ** Math.min(this.failedAttempts, 6), RECONNECT_MAX_MS);
+    const delay = ceiling / 2 + Math.random() * (ceiling / 2);
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
-      this.connect();
-    }, RECONNECT_DELAY_MS);
+      if (canEnter()) this.connect();
+    }, delay);
   }
 
   private onFrame(env: Envelope) {
@@ -498,9 +542,27 @@ export class Connection {
       case T.Pong:
         break; // liveness only; the disarm above is the whole effect
       case T.Hello: {
-        const d = env.d as { server: string; caps?: string[] };
+        const d = env.d as { server: string; protocol?: number; caps?: string[] };
+        this.sawHello = true;
+        this.failedAttempts = 0;
         this.store.server = d.server;
         this.store.caps = d.caps ?? [];
+        // A protocol bump means this (likely cached) client build predates
+        // the daemon: reload once to pick up matching assets instead of
+        // failing obscurely on unknown frames. The sessionStorage guard
+        // prevents a reload loop if the served bundle is itself stale.
+        if (d.protocol && d.protocol !== PROTOCOL) {
+          try {
+            if (!sessionStorage.getItem("stugan.proto-reloaded")) {
+              sessionStorage.setItem("stugan.proto-reloaded", "1");
+              location.reload();
+              return;
+            }
+          } catch {
+            /* storage unavailable — fall through to the toast */
+          }
+          this.pushToast({ code: "proto", message: `Protocol mismatch (server v${d.protocol}, client v${PROTOCOL}) — force-reload the page` });
+        }
         break;
       }
       case T.Init:
@@ -583,7 +645,7 @@ export class Connection {
           buf.highlight = 0;
           const a = this.store.active;
           const isActive =
-            !!a && a.network === d.network && a.buffer.toLowerCase() === d.buffer.toLowerCase();
+            !!a && a.network === d.network && foldTarget(a.buffer) === foldTarget(d.buffer);
           if (!isActive) buf.unreadMarker = null;
         }
         break;
@@ -736,18 +798,18 @@ export class Connection {
     }
     // Friends (MONITOR): adopt the new list + presence. On a live update (not
     // the init snapshot), toast any friend that just transitioned to online.
-    const wasOnline = new Map(net.friends.map((f) => [f.nick.toLowerCase(), f.online]));
+    const wasOnline = new Map(net.friends.map((f) => [foldTarget(f.nick), f.online]));
     net.friends = dto.friends ?? [];
     if (!adoptUnread) {
       for (const f of net.friends) {
-        if (f.online && !wasOnline.get(f.nick.toLowerCase())) {
+        if (f.online && !wasOnline.get(foldTarget(f.nick))) {
           this.pushToast({ code: "friend", message: `${f.nick} is online on ${net.name}` });
         }
       }
     }
-    const existing = new Map(net.buffers.map((b) => [b.name.toLowerCase(), b]));
+    const existing = new Map(net.buffers.map((b) => [foldTarget(b.name), b]));
     net.buffers = dto.channels.map((c) => {
-      const prev = existing.get(c.name.toLowerCase());
+      const prev = existing.get(foldTarget(c.name));
       const buf = prev ?? emptyBuffer(c);
       if (prev) {
         prev.kind = c.kind;
@@ -769,9 +831,9 @@ export class Connection {
     // Keep locally-opened queries the snapshot doesn't know about — without
     // this, opening a DM and not sending yet meant any net:update (someone
     // joining a channel, say) deleted the buffer out from under the user.
-    const inDto = new Set(dto.channels.map((c) => c.name.toLowerCase()));
+    const inDto = new Set(dto.channels.map((c) => foldTarget(c.name)));
     for (const b of existing.values()) {
-      if (b.local && !inDto.has(b.name.toLowerCase())) net.buffers.push(b);
+      if (b.local && !inDto.has(foldTarget(b.name))) net.buffers.push(b);
     }
     // ensureActive is called by our callers (applyInit after the whole network
     // loop; the NetUpdate handler after a live change), NOT here: during init
@@ -815,15 +877,15 @@ export class Connection {
   // case-insensitively (IRC buffer names fold case, so #Chan and #chan are the
   // same buffer), or undefined if either is unknown.
   private buf(network: string, buffer: string): Buffer | undefined {
-    const lc = buffer.toLowerCase();
-    return this.net(network)?.buffers.find((b) => b.name.toLowerCase() === lc);
+    const lc = foldTarget(buffer);
+    return this.net(network)?.buffers.find((b) => foldTarget(b.name) === lc);
   }
 
   // ensureBuf returns the named buffer in net, creating an empty one (of kind,
   // else inferred from the name) and appending it when absent.
   private ensureBuf(net: Network, name: string, kind?: string): Buffer {
-    const lc = name.toLowerCase();
-    let buf = net.buffers.find((b) => b.name.toLowerCase() === lc);
+    const lc = foldTarget(name);
+    let buf = net.buffers.find((b) => foldTarget(b.name) === lc);
     if (!buf) {
       buf = emptyBuffer(kind ? { name, kind } : { name });
       net.buffers.push(buf);
@@ -852,14 +914,17 @@ export class Connection {
     // would appear directly below the window with an invisible gap of
     // un-fetched messages between them. Counters (unread/highlight/
     // mentions) still update so the user knows new activity arrived.
-    if (!buf.windowed) buf.messages.push(m);
+    if (!buf.windowed) {
+      buf.messages.push(m);
+      this.trimBuffer(buf);
+    }
     if (!m.self) this.clearTyping(bufKey(net.id, buf.name), m.from); // they sent → not typing
 
     const muted = this.isMuted(bufKey(net.id, buf.name));
     const focused =
       this.store.view === "chat" &&
       this.store.active?.network === net.id &&
-      this.store.active?.buffer.toLowerCase() === buf.name.toLowerCase();
+      foldTarget(this.store.active?.buffer ?? "") === foldTarget(buf.name);
 
     if (!focused && !m.self && CONVERSATIONAL.has(m.kind) && !muted) {
       // First unread since last read → anchor the "new messages" divider just
@@ -886,6 +951,21 @@ export class Connection {
       this.desktopNotify(m);
     }
     if (!this.store.active) this.store.active = { network: net.id, buffer: buf.name };
+  }
+
+  // trimBuffer caps a buffer's in-memory tail. A tab left open for days on a
+  // busy network otherwise accumulates tens of thousands of reactive rows and
+  // DOM nodes per buffer; anything trimmed is still one "Load older" away
+  // (the pages come back from the server), so `more` flips on.
+  private trimBuffer(buf: Buffer) {
+    const CAP = 2000;
+    const KEEP = 1500;
+    if (buf.messages.length <= CAP) return;
+    buf.messages.splice(0, buf.messages.length - KEEP);
+    buf.more = true;
+    if (buf.unreadMarker && !buf.messages.includes(buf.unreadMarker)) {
+      buf.unreadMarker = buf.messages[0] ?? null; // divider clamps to the top
+    }
   }
 
   private applyBacklog(resp: BacklogResp) {
@@ -939,7 +1019,7 @@ export class Connection {
     // off; once we navigate away it's read. The buffer we're switching TO
     // keeps any divider set while it was unfocused, so we land on it.
     const prev = this.activeBuffer();
-    if (prev && (prev.name.toLowerCase() !== buffer.toLowerCase() || this.store.active?.network !== network)) {
+    if (prev && (foldTarget(prev.name) !== foldTarget(buffer) || this.store.active?.network !== network)) {
       prev.unreadMarker = null;
     }
     this.store.view = "chat";
@@ -1122,7 +1202,7 @@ export class Connection {
     if (buf?.local) {
       const net = this.net(network);
       if (net) net.buffers = net.buffers.filter((b) => b !== buf);
-      if (this.store.active?.network === network && this.store.active.buffer.toLowerCase() === buffer.toLowerCase()) {
+      if (this.store.active?.network === network && foldTarget(this.store.active.buffer) === foldTarget(buffer)) {
         this.store.active = null;
         this.ensureActive();
       }
@@ -1276,7 +1356,7 @@ export class Connection {
 
   private clearTyping(key: string, nick: string) {
     const list = this.store.typing[key];
-    if (list) this.store.typing[key] = list.filter((n) => n.toLowerCase() !== nick.toLowerCase());
+    if (list) this.store.typing[key] = list.filter((n) => foldTarget(n) !== foldTarget(nick));
     clearTimeout(this.typingTimers[key + "\0" + nick]);
   }
 
@@ -1287,7 +1367,7 @@ export class Connection {
     if (!r.target || !r.reaction || !r.nick) return;
     const byEmoji = (this.store.reactions[r.target] ??= {});
     const nicks = byEmoji[r.reaction] ?? [];
-    const i = nicks.findIndex((n) => n.toLowerCase() === r.nick!.toLowerCase());
+    const i = nicks.findIndex((n) => foldTarget(n) === foldTarget(r.nick!));
     if (i >= 0) {
       nicks.splice(i, 1);
       if (nicks.length) byEmoji[r.reaction] = nicks;

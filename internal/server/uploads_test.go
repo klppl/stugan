@@ -354,3 +354,37 @@ func TestUploadOverLimitRejected(t *testing.T) {
 		t.Errorf("file exactly at cap: status = %d, want 200", resp.StatusCode)
 	}
 }
+
+// TestStripJPEGTrailingData: bytes after EOI (e.g. a phone "motion photo"
+// MP4 carrying GPS) must not survive; a progressive file's post-scan marker
+// segments must (including a stray FF D9 inside a table payload, which a
+// naive EOI byte-search would mistake for the end of image).
+func TestStripJPEGTrailingData(t *testing.T) {
+	scan := []byte{0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x3F, 0x00, 0x42}
+	var b bytes.Buffer
+	b.Write([]byte{0xFF, 0xD8})
+	b.Write(jpegSeg(0xDB, bytes.Repeat([]byte{0x10}, 4))) // DQT
+	b.Write(scan)
+	// Progressive: a DHT between scans whose payload contains FF D9.
+	b.Write(jpegSeg(0xC4, []byte{0x00, 0xFF, 0xD9, 0x01}))
+	b.Write(scan)
+	b.Write([]byte{0xFF, 0xD9})
+	b.Write([]byte("....ftypmp42 GPS COORDS HIDING IN TRAILING MP4"))
+
+	out, err := stripImageMetadata(b.Bytes())
+	if err != nil {
+		t.Fatalf("stripImageMetadata: %v", err)
+	}
+	if !bytes.HasSuffix(out, []byte{0xFF, 0xD9}) {
+		t.Errorf("output does not end at EOI: % x", out[len(out)-8:])
+	}
+	if bytes.Contains(out, []byte("ftypmp42")) {
+		t.Error("trailing motion-photo payload survived the strip")
+	}
+	if !bytes.Contains(out, []byte{0xFF, 0xC4, 0x00, 0x06, 0x00, 0xFF, 0xD9, 0x01}) {
+		t.Error("progressive DHT between scans was mangled")
+	}
+	if bytes.Count(out, []byte{0x3F, 0x00, 0x42}) != 2 {
+		t.Error("scan data not preserved across both scans")
+	}
+}

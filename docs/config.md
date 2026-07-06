@@ -30,6 +30,12 @@ are optional — a missing config file is fine. A ready-to-edit example lives at
 | `level` | string | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `format` | string | `text` | `text` \| `json` |
 
+## `[history]`
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `retention_days` | int | `0` | Prune messages older than this many days from every user's history (search index included), hourly. `0` keeps history forever. |
+
 ## `[plugins]`
 
 | Key | Type | Default | Meaning |

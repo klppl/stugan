@@ -358,16 +358,21 @@ end)
 
 ### highlight_reply.lua — auto-reply when a word is mentioned
 
-The trigger word lives in `kv` with a built-in default and a `/hlreply`
-command, so it's set from inside stugan rather than config.toml:
+The trigger word is declared with `stugan.setting()` (so it shows up in the
+GUI plugin manager with a live `apply` callback) and stays adjustable via a
+`/hlreply` command — never config.toml:
 
 ```lua
 local DEFAULT_WORD = "ping"
-local word = stugan.kv.get("word") or DEFAULT_WORD
+local word
+local function apply_word(v) word = (v or ""):lower() end
+apply_word(stugan.setting("word", {
+  default = DEFAULT_WORD, label = "Trigger word", apply = apply_word,
+}))
 
 stugan.hook_message(function(msg)
   if msg.kind == "privmsg" and not msg.self
-     and msg.text:lower():find(word, 1, true) then
+      and msg.text:lower():find(word, 1, true) then
     stugan.message(msg.network, msg.buffer, msg.from .. ": pong")
   end
   return msg
@@ -378,11 +383,14 @@ stugan.hook_command("hlreply", function(args, ctx)
     stugan.print(ctx, "hlreply: trigger word is '" .. word .. "'")
     return
   end
-  word = args[1]:lower()
-  stugan.kv.set("word", word)
+  stugan.kv.set("word", args[1]:lower())
+  apply_word(args[1])
   stugan.print(ctx, "hlreply: trigger word is now '" .. word .. "'")
 end)
 ```
+
+(The shipped file adds a `/hlreply default` reset; see
+`docs/examples/highlight_reply.lua` for the full version.)
 
 ### team_mentions.lua — extend tab-completion
 

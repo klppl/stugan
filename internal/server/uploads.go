@@ -315,8 +315,11 @@ func stripImageMetadata(data []byte) ([]byte, error) {
 
 // stripJPEG drops every APPn (0xE0–0xEF, which holds EXIF/GPS, XMP, ICC, JFIF
 // thumbnails) and COM comment segment, keeping the frame, tables, and the
-// entropy-coded scan. A JPEG is SOI followed by length-prefixed marker
-// segments until SOS, after which the compressed scan runs unframed to EOI.
+// entropy-coded scans. A JPEG is SOI followed by length-prefixed marker
+// segments; each SOS starts an unframed entropy-coded scan (progressive files
+// have several), and EOI ends the image. Everything after EOI is dropped:
+// it is not image data, and phone "motion photos" append a whole MP4 (with
+// GPS) there that must not survive the metadata strip.
 func stripJPEG(data []byte) ([]byte, error) {
 	if len(data) < 2 || data[0] != 0xFF || data[1] != 0xD8 {
 		return nil, errBadImage
@@ -339,13 +342,50 @@ func stripJPEG(data []byte) ([]byte, error) {
 		marker := data[i]
 		i++
 		switch {
-		case marker == 0xD9: // EOI
+		case marker == 0xD9: // EOI: done; trailing bytes are dropped
 			out = append(out, 0xFF, marker)
 			return out, nil
-		case marker == 0xDA: // SOS: copy marker + the rest (scan data) verbatim
+		case marker == 0xDA:
+			// SOS: copy its length-prefixed header, then the entropy-coded
+			// scan. Within the scan 0xFF is followed only by 0x00 (stuffing),
+			// fill 0xFFs, or RSTn — anything else is a real marker that ends
+			// the scan and hands control back to this loop (so a progressive
+			// file's later DHT/SOS segments are parsed, not pattern-matched,
+			// and a stray FF D9 inside a table can't truncate the image).
+			if i+2 > len(data) {
+				return nil, errBadImage
+			}
+			segLen := int(binary.BigEndian.Uint16(data[i:]))
+			if segLen < 2 || i+segLen > len(data) {
+				return nil, errBadImage
+			}
 			out = append(out, 0xFF, marker)
-			out = append(out, data[i:]...)
-			return out, nil
+			out = append(out, data[i:i+segLen]...)
+			i += segLen
+			start := i
+			for i < len(data) {
+				if data[i] != 0xFF {
+					i++
+					continue
+				}
+				k := i
+				for k < len(data) && data[k] == 0xFF {
+					k++
+				}
+				if k >= len(data) {
+					i = len(data)
+					break
+				}
+				if m := data[k]; m == 0x00 || (m >= 0xD0 && m <= 0xD7) {
+					i = k + 1 // stuffing or restart marker: scan continues
+					continue
+				}
+				break // real marker at i (kept for the outer loop)
+			}
+			out = append(out, data[start:i]...)
+			if i >= len(data) {
+				return out, nil // truncated scan; nothing trails it anyway
+			}
 		case marker >= 0xD0 && marker <= 0xD7, marker == 0x01:
 			// Standalone markers (RSTn, TEM) carry no payload.
 			out = append(out, 0xFF, marker)

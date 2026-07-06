@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { connection, bufKey, type Buffer, type Network } from "../connection";
+import { connection, bufKey, foldTarget, type Buffer, type Network } from "../connection";
 import { useContextMenu } from "../contextMenu";
 import { ui, closeDrawers } from "../ui";
 import { toggleMircTheme } from "../settings";
@@ -78,7 +78,13 @@ function channelBuffers(net: Network): Buffer[] {
 }
 
 function isActive(network: string, buffer: string): boolean {
-  return store.view === "chat" && store.active?.network === network && store.active?.buffer === buffer;
+  // Fold the buffer name: a saved lastActive or ?buf= deep link may differ
+  // in case from the sidebar row, and everything else compares folded.
+  return (
+    store.view === "chat" &&
+    store.active?.network === network &&
+    foldTarget(store.active?.buffer ?? "") === foldTarget(buffer)
+  );
 }
 
 function selectBuffer(network: string, buffer: string) {

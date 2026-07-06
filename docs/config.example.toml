@@ -16,6 +16,9 @@ listen = "127.0.0.1:8080"
 level  = "info"   # debug | info | warn | error
 format = "text"   # text | json
 
+[history]
+# retention_days = 90   # prune messages older than N days (0 = keep forever)
+
 [plugins]
 enabled = true
 # sandbox = true   # default. Restricts the Lua stdlib (no os.execute/io/etc).
