@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -336,4 +337,32 @@ func userDirs(cfg *config.Config, name string) (dataDir, scriptsDir string) {
 	}
 	base := filepath.Join(cfg.Home(), "users", name)
 	return filepath.Join(base, "data"), filepath.Join(base, "scripts")
+}
+
+// pruneHistoryLoop deletes messages older than the retention window from
+// every user's store: once at startup, then hourly until ctx ends. Runs
+// only when [history] retention_days > 0.
+func (h *hub) pruneHistoryLoop(ctx context.Context, days int, log *slog.Logger) {
+	prune := func() {
+		before := time.Now().AddDate(0, 0, -days)
+		for _, db := range h.stores {
+			n, err := db.Prune(ctx, before)
+			if err != nil {
+				log.Warn("history prune failed", "err", err)
+			} else if n > 0 {
+				log.Info("history pruned", "rows", n, "older_than_days", days)
+			}
+		}
+	}
+	prune()
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			prune()
+		}
+	}
 }

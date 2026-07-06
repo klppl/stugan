@@ -27,6 +27,7 @@ type Config struct {
 	Server  ServerConfig  `toml:"server"`
 	Log     LogConfig     `toml:"log"`
 	Plugins PluginsConfig `toml:"plugins"`
+	History HistoryConfig `toml:"history"`
 
 	// Networks is the static list of IRC networks to connect on startup.
 	// In multi-user mode this moves into per-user state; for now it is a
@@ -47,6 +48,14 @@ type Config struct {
 
 	// Auth tunes session behavior (only relevant when Users is set).
 	Auth AuthConfig `toml:"auth"`
+}
+
+// HistoryConfig controls message-history retention.
+type HistoryConfig struct {
+	// RetentionDays prunes messages older than this many days, hourly,
+	// from every user's history (search index included). 0 (the default)
+	// keeps history forever.
+	RetentionDays int `toml:"retention_days"`
 }
 
 // UserConfig is one account in multi-user mode.

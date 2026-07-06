@@ -133,6 +133,9 @@ func run() error {
 		wg.Go(func() { defer cancel(); fail(eng.Run(ctx)) })
 	}
 	wg.Go(func() { defer cancel(); fail(srv.ListenAndServe(ctx, cfg.Server.Listen)) })
+	if days := cfg.History.RetentionDays; days > 0 {
+		wg.Go(func() { hub.pruneHistoryLoop(ctx, days, log) })
+	}
 	wg.Wait()
 
 	log.Info("shutdown complete")

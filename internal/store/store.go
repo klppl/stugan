@@ -175,9 +175,35 @@ func (s *Store) ChannelList(string, []core.ChannelListItem) {}
 // Typing is a no-op for the store (ephemeral).
 func (s *Store) Typing(string, string, string, string) {}
 
-// React and Redact are ephemeral overlays the store does not persist.
-func (s *Store) React(string, string, string, string, string)  {}
-func (s *Store) Redact(string, string, string, string, string) {}
+// React is an ephemeral overlay the store does not persist.
+func (s *Store) React(string, string, string, string, string) {}
+
+// Redact removes the target line from history: the message-redaction spec's
+// intent is removal, and a line that only disappears live but resurfaces in
+// backlog/search after a reload isn't redacted. The server only relays
+// REDACTs it accepted (author or op), so no authorship check here.
+func (s *Store) Redact(network, buffer, target, _, _ string) {
+	if target == "" {
+		return
+	}
+	if _, err := s.db.Exec(
+		`DELETE FROM messages WHERE network = ? AND buffer = ? AND msgid = ?`,
+		network, buffer, target,
+	); err != nil {
+		s.log.Error("redact message", "network", network, "buffer", buffer, "msgid", target, "err", err)
+	}
+}
+
+// Prune deletes messages older than before, in every buffer. The FTS delete
+// trigger keeps the search index in sync. Returns the number of rows removed.
+func (s *Store) Prune(ctx context.Context, before time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM messages WHERE ts < ?`, before.UnixMilli())
+	if err != nil {
+		return 0, fmt.Errorf("prune messages: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
 
 // SaveNetwork upserts a persisted network (core.NetworkStore).
 func (s *Store) SaveNetwork(p core.NetworkParams) error {

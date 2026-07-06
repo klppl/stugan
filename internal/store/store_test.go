@@ -555,3 +555,48 @@ func TestMsgidDedupMigration(t *testing.T) {
 		t.Fatalf("FTS returned %d hits after dedup, want 1", len(hits))
 	}
 }
+
+func TestPrune(t *testing.T) {
+	s := openTest(t)
+	old := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	fresh := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	s.Print(msg("n", "#c", "alice", "ancient history", core.MsgPrivmsg, old))
+	s.Print(msg("n", "#c", "alice", "recent enough", core.MsgPrivmsg, fresh))
+
+	ctx := context.Background()
+	n, err := s.Prune(ctx, time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil || n != 1 {
+		t.Fatalf("Prune = (%d, %v), want (1, nil)", n, err)
+	}
+	got, _, err := s.Backlog(ctx, "n", "#c", 0, 10)
+	if err != nil || len(got) != 1 || got[0].Text != "recent enough" {
+		t.Fatalf("backlog after prune = %+v, %v", got, err)
+	}
+	// FTS stays in sync via the delete trigger.
+	if hits, _ := s.Search(ctx, "ancient", "n", "", 10); len(hits) != 0 {
+		t.Errorf("pruned row still searchable: %+v", hits)
+	}
+}
+
+func TestRedactPersists(t *testing.T) {
+	s := openTest(t)
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	m := msg("n", "#c", "alice", "delete me", core.MsgPrivmsg, base)
+	m.ID = "gone-1"
+	s.Print(m)
+	s.Print(msg("n", "#c", "bob", "keep me", core.MsgPrivmsg, base))
+
+	s.Redact("n", "#c", "gone-1", "alice", "typo")
+	got, _, err := s.Backlog(context.Background(), "n", "#c", 0, 10)
+	if err != nil || len(got) != 1 || got[0].Text != "keep me" {
+		t.Fatalf("backlog after redact = %+v, %v", got, err)
+	}
+	if hits, _ := s.Search(context.Background(), "delete", "n", "", 10); len(hits) != 0 {
+		t.Errorf("redacted row still searchable: %+v", hits)
+	}
+	// Empty target is a no-op, not a wildcard delete.
+	s.Redact("n", "#c", "", "x", "")
+	if got, _, _ = s.Backlog(context.Background(), "n", "#c", 0, 10); len(got) != 1 {
+		t.Errorf("empty-target redact deleted rows: %+v", got)
+	}
+}
