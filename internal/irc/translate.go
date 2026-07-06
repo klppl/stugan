@@ -16,13 +16,65 @@ import (
 const membershipPrefixes = "~&@%+"
 
 // splitPrefixes separates leading membership prefixes from the rest of a
-// NAMES token, e.g. "@+nick" → ("@+", "nick").
-func splitPrefixes(tok string) (modes, rest string) {
+// NAMES token, e.g. "@+nick" → ("@+", "nick"). prefixes is the server's
+// symbol set (from ISUPPORT PREFIX; membershipPrefixes as fallback).
+func splitPrefixes(tok, prefixes string) (modes, rest string) {
 	i := 0
-	for i < len(tok) && strings.IndexByte(membershipPrefixes, tok[i]) >= 0 {
+	for i < len(tok) && strings.IndexByte(prefixes, tok[i]) >= 0 {
 		i++
 	}
 	return tok[:i], tok[i:]
+}
+
+// prefixSymbols extracts the symbol half of an ISUPPORT PREFIX value,
+// e.g. "(qaohv)~&@%+" → "~&@%+". Falls back to the standard set when the
+// value is malformed.
+func prefixSymbols(prefix string) string {
+	if i := strings.IndexByte(prefix, ')'); i >= 0 && i+1 < len(prefix) {
+		return prefix[i+1:]
+	}
+	return membershipPrefixes
+}
+
+// namesEvent translates a 353 NAMES reply into an EvNames carrying the
+// member list. prefixes is the server's membership symbol set, so a
+// nonstandard prefix (e.g. InspIRCd founder '!') is split off the nick
+// instead of staying glued to it.
+// 353: <me> <=|*|@> <channel> :[prefix]nick[!user@host] ...
+// (multi-prefix and userhost-in-names may both be active).
+func namesEvent(network string, e *girc.Event, prefixes string) (core.Event, bool) {
+	if len(e.Params) < 4 {
+		return core.Event{}, false
+	}
+	when := e.Timestamp
+	if when.IsZero() {
+		when = time.Now()
+	}
+	channel := e.Params[2]
+	var members []core.Member
+	for tok := range strings.FieldsSeq(e.Last()) {
+		modes, rest := splitPrefixes(tok, prefixes)
+		nick := rest
+		if i := strings.IndexByte(nick, '!'); i >= 0 {
+			nick = nick[:i] // strip userhost-in-names hostmask
+		}
+		if nick != "" {
+			members = append(members, core.Member{Nick: nick, Modes: modes})
+		}
+	}
+	if len(members) == 0 {
+		return core.Event{}, false
+	}
+	return core.Event{Type: core.EvNames, Network: network, Time: when, Buffer: channel, Members: members}, true
+}
+
+// isServerSource reports whether a message source is the server itself (vs a
+// user). girc's IsServer only checks for a missing ident/host, which also
+// matches nick-only prefixes some services and bouncers send — those must
+// route to a query, not the status buffer. Server names contain dots;
+// nicks cannot.
+func isServerSource(s *girc.Source) bool {
+	return s.IsServer() && (s.Name == "" || strings.ContainsRune(s.Name, '.'))
 }
 
 // channelModeEvent translates a channel MODE line into an EvMode carrying the
@@ -151,12 +203,16 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		if e.IsAction() {
 			kind = core.MsgAction
 			text = e.StripAction()
-		} else if ok, _ := e.IsCTCP(); ok {
-			// A non-ACTION CTCP request or reply (VERSION, PING, TIME,
-			// CLIENTINFO, …). girc's built-in CTCP handler already answers the
-			// standard requests; we drop the message here so the raw \x01-framed
-			// payload never surfaces in a buffer as garbled text.
-			return core.Event{}, false
+		} else if ok, ctcp := e.IsCTCP(); ok {
+			// A non-ACTION CTCP. Requests (PRIVMSG) are answered by girc's
+			// built-in handler and dropped here so the \x01-framed payload
+			// never surfaces as garbled text. Replies (NOTICE) are answers
+			// to our own /ctcp queries — surface them readably.
+			if e.Command != girc.NOTICE {
+				return core.Event{}, false
+			}
+			kind = core.MsgSystem
+			text = strings.TrimSpace("CTCP " + ctcp.Command + " reply: " + ctcp.Text)
 		}
 
 		// Channel target → channel buffer. A message from the server itself
@@ -167,7 +223,7 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		switch {
 		case isChannel(target):
 			buffer = target
-		case e.Source != nil && e.Source.IsServer():
+		case e.Source != nil && isServerSource(e.Source):
 			buffer = core.StatusBuffer
 		default:
 			outbound := e.Echo || (self != "" && from == self)
@@ -254,6 +310,31 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			Nick: from, Away: e.Last() != "",
 		}, true
 
+	case girc.CAP_ACCOUNT:
+		// account-notify: the source logged in to services ("*" = logged out).
+		if len(e.Params) == 0 {
+			return core.Event{}, false
+		}
+		account := e.Params[0]
+		if account == "*" {
+			account = ""
+		}
+		return core.Event{
+			Type: core.EvAccount, Network: network, Time: when,
+			Nick: from, Account: account,
+		}, true
+
+	case girc.INVITE:
+		// :inviter INVITE <target> <channel> — target is us, or (with
+		// invite-notify) another user whose invite ops get to see.
+		if len(e.Params) < 2 {
+			return core.Event{}, false
+		}
+		return core.Event{
+			Type: core.EvInvite, Network: network, Time: when,
+			Nick: from, NewNick: e.Params[0], Buffer: e.Last(),
+		}, true
+
 	case girc.RPL_LIST:
 		// 322: <me> <channel> <#users> :<topic>
 		if len(e.Params) < 3 {
@@ -333,27 +414,10 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		}, true
 
 	case girc.RPL_NAMREPLY:
-		// 353: <me> <=|*|@> <channel> :[prefix]nick[!user@host] ...
-		// (multi-prefix and userhost-in-names may both be active).
-		if len(e.Params) < 4 {
-			return core.Event{}, false
-		}
-		channel := e.Params[2]
-		var members []core.Member
-		for tok := range strings.FieldsSeq(e.Last()) {
-			modes, rest := splitPrefixes(tok)
-			nick := rest
-			if i := strings.IndexByte(nick, '!'); i >= 0 {
-				nick = nick[:i] // strip userhost-in-names hostmask
-			}
-			if nick != "" {
-				members = append(members, core.Member{Nick: nick, Modes: modes})
-			}
-		}
-		if len(members) == 0 {
-			return core.Event{}, false
-		}
-		return core.Event{Type: core.EvNames, Network: network, Time: when, Buffer: channel, Members: members}, true
+		// Handled by the dedicated conn handler (namesEvent), which has
+		// access to the server's ISUPPORT PREFIX symbols. Kept here only as
+		// a fallback with the standard prefix set for direct toEvent use.
+		return namesEvent(network, e, membershipPrefixes)
 
 	case girc.TOPIC:
 		ch := ""

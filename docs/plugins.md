@@ -55,10 +55,12 @@ stugan.hook_topic(fn)
 stugan.hook_completion(fn)
 
 -- Listen to signals. event is "join","part","kick","quit","nick","connect",
--- "disconnect","topic","mode". fn(signal) -> ignored (notify-only). The
--- signal table carries network/nick/new_nick/channel/account/text, plus
--- kicker for "kick" (nick is the kicked member). For "mode", nick is the
--- setter and text the raw mode string.
+-- "disconnect","topic","mode","invite","account". fn(signal) -> ignored
+-- (notify-only). The signal table carries network/nick/new_nick/channel/
+-- account/text, plus kicker for "kick" (nick is the kicked member). For
+-- "mode", nick is the setter and text the raw mode string. For "invite",
+-- nick is the inviter and new_nick the invitee (possibly you). For
+-- "account", nick logged in to services account (account "" = logged out).
 stugan.hook_signal(event, fn)
 
 -- Periodic timer. fn() called every `ms` milliseconds until unhooked.

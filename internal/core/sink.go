@@ -49,6 +49,26 @@ func (s logSink) Typing(string, string, string, string) {}
 func (s logSink) React(string, string, string, string, string)  {}
 func (s logSink) Redact(string, string, string, string, string) {}
 
-// toLowerASCII lowercases a string for case-insensitive map keys. IRC
-// casemapping is server-defined; rfc1459 mapping arrives with ISUPPORT.
-func toLowerASCII(s string) string { return strings.ToLower(s) }
+// toLowerASCII folds a string for case-insensitive map keys using rfc1459
+// casemapping: ASCII A–Z plus []\~ fold to {}|^ (RFC 1459 §2.2 — those
+// bytes are "uppercase" in IRC because Scandinavian charsets mapped them to
+// letters). Virtually every server uses rfc1459 or its ascii subset, for
+// which this is also correct; honoring an explicit ISUPPORT CASEMAPPING
+// would need per-network folding and hasn't been worth the plumbing.
+func toLowerASCII(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			return r + ('a' - 'A')
+		case r == '[':
+			return '{'
+		case r == ']':
+			return '}'
+		case r == '\\':
+			return '|'
+		case r == '~':
+			return '^'
+		}
+		return r
+	}, s)
+}

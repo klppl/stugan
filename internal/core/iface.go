@@ -5,6 +5,12 @@ import (
 	"errors"
 )
 
+// ErrAuthFailed marks a Connect error as an authentication failure (bad
+// SASL credentials, services-enforced nick, …). Unlike a network error,
+// retrying won't fix it — the engine stops the reconnect loop instead of
+// hammering the server with bad credentials until the user edits them.
+var ErrAuthFailed = errors.New("authentication failed")
+
 // IRCConn is core's view of a single network connection. It is implemented
 // in internal/irc; the underlying IRC library never leaks past that
 // package, so the implementation can be swapped without touching core.

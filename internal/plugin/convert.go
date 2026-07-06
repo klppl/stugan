@@ -121,6 +121,10 @@ func signalName(t core.EventType) (string, bool) {
 		return "disconnect", true
 	case core.EvMode:
 		return "mode", true
+	case core.EvInvite:
+		return "invite", true
+	case core.EvAccount:
+		return "account", true
 	default:
 		return "", false
 	}

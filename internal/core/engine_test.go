@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -1317,5 +1318,111 @@ func TestKick(t *testing.T) {
 	last = sink.msgs[len(sink.msgs)-1]
 	if last.Text != "you were kicked from #go by op (bye)" {
 		t.Errorf("self-kick line = %q", last.Text)
+	}
+}
+
+// authFailConn fails Connect with ErrAuthFailed and counts the attempts.
+type authFailConn struct {
+	fakeRuntimeConn
+	mu       sync.Mutex
+	attempts int
+}
+
+func (c *authFailConn) Connect(context.Context) error {
+	c.mu.Lock()
+	c.attempts++
+	c.mu.Unlock()
+	return fmt.Errorf("irc test: %w: SASL PLAIN failed", ErrAuthFailed)
+}
+
+func (c *authFailConn) tries() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.attempts
+}
+
+// TestAuthFailureStopsRetrying: bad credentials must park the network (one
+// dial, no reconnect loop hammering services with the same wrong password),
+// with a status line telling the user what to fix.
+func TestAuthFailureStopsRetrying(t *testing.T) {
+	sink := &captureSink{}
+	e := New(Options{Sink: sink})
+	conn := &authFailConn{}
+	e.AddNetwork(NetworkParams{ID: "net", Name: "net", Nick: "me"}, conn)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { _ = e.Run(ctx); close(done) }()
+
+	deadline := time.After(3 * time.Second)
+	for {
+		if s := e.SnapshotNetwork("net"); s != nil && s.State == StateDisconnected && conn.tries() == 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("network not parked: tries=%d", conn.tries())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	// Give a would-be retry loop time to strike, then confirm it didn't.
+	time.Sleep(150 * time.Millisecond)
+	if got := conn.tries(); got != 1 {
+		t.Errorf("Connect attempts = %d, want 1 (no retries on auth failure)", got)
+	}
+	cancel()
+	<-done // engine stopped — sink is safe to read now
+	found := false
+	for _, m := range sink.msgs {
+		if strings.Contains(m.Text, "authentication failed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no explanatory status line emitted")
+	}
+}
+
+func TestApplyInviteAndAccount(t *testing.T) {
+	e, sink := newTestEngine(t)
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "me", Buffer: "#go"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Buffer: "#go"})
+
+	// account-notify: login/logout updates the member entry silently.
+	e.apply(Event{Type: EvAccount, Network: "net", Nick: "alice", Account: "svc-alice"})
+	if got := net0(e).Channel("#go").Members["alice"].Account; got != "svc-alice" {
+		t.Errorf("account after login = %q", got)
+	}
+	e.apply(Event{Type: EvAccount, Network: "net", Nick: "alice", Account: ""})
+	if got := net0(e).Channel("#go").Members["alice"].Account; got != "" {
+		t.Errorf("account after logout = %q", got)
+	}
+
+	// An invite addressed to us lands in the status buffer.
+	e.apply(Event{Type: EvInvite, Network: "net", Nick: "op", NewNick: "ME", Buffer: "#secret"})
+	last := sink.msgs[len(sink.msgs)-1]
+	if last.Buffer != StatusBuffer || !strings.Contains(last.Text, "op invited you to #secret") {
+		t.Errorf("self-invite line = %q in %q", last.Text, last.Buffer)
+	}
+	// invite-notify for someone else lands in the shared channel.
+	e.apply(Event{Type: EvInvite, Network: "net", Nick: "op", NewNick: "bob", Buffer: "#go"})
+	last = sink.msgs[len(sink.msgs)-1]
+	if last.Buffer != "#go" || !strings.Contains(last.Text, "op invited bob") {
+		t.Errorf("invite-notify line = %q in %q", last.Text, last.Buffer)
+	}
+}
+
+// TestRFC1459Fold: []\~ fold to {}|^ — nick[m] and nick{m} are one member.
+func TestRFC1459Fold(t *testing.T) {
+	e, _ := newTestEngine(t)
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "nick[m]", Buffer: "#go"})
+	e.apply(Event{Type: EvAway, Network: "net", Nick: "nick{m}", Away: true})
+	m := net0(e).Channel("#go").Members[lower("NICK[M]")]
+	if m == nil || !m.Away {
+		t.Fatalf("rfc1459 fold broken: %+v", net0(e).Channel("#go").Members)
+	}
+	if !eqFold(`ABC[]\~`, `abc{}|^`) {
+		t.Error(`eqFold(ABC[]\~, abc{}|^) = false`)
 	}
 }

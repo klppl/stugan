@@ -1,7 +1,6 @@
 package core
 
 import (
-	"strings"
 	"time"
 )
 
@@ -28,6 +27,11 @@ const (
 	EvNames EventType = "names"
 	// EvAway is an away-notify update: Nick changed away state to Away.
 	EvAway EventType = "away"
+	// EvAccount is an account-notify update: Nick logged in to services
+	// Account ("" = logged out).
+	EvAccount EventType = "account"
+	// EvInvite: Nick invited NewNick (the invitee — possibly us) to Buffer.
+	EvInvite EventType = "invite"
 	// EvMode is a channel MODE change. MemberModes carries the membership
 	// prefix changes (op/voice/...) it makes; Buffer is the target, Nick the
 	// setter, Text the raw mode string (flags + args) for the system line.
@@ -73,6 +77,8 @@ const (
 //	EvJoin/EvPart        → Nick, Buffer, Account, Text(reason)
 //	EvKick               → Nick(kicked), Kicker, Buffer, Text(reason)
 //	EvQuit               → Nick, Text(reason)
+//	EvAccount            → Nick, Account("" = logged out)
+//	EvInvite             → Nick(inviter), NewNick(invitee), Buffer(channel)
 //	EvNick               → Nick(old), NewNick
 //	EvTopic              → Buffer, Text(topic), Nick(setter)
 //	EvConnect            → Nick(our nick)
@@ -115,7 +121,7 @@ type MemberMode struct {
 	Add    bool
 }
 
-// eqFold is a small ASCII case-insensitive compare used for channel/nick
-// matching. (IRC casemapping is server-defined; rfc1459 mapping lands with
-// ISUPPORT handling in a later phase.)
-func eqFold(a, b string) bool { return strings.EqualFold(a, b) }
+// eqFold compares channel/nick names case-insensitively under rfc1459
+// casemapping (same fold the member-map keys use), so nick[m] and nick{m}
+// are the same user everywhere.
+func eqFold(a, b string) bool { return toLowerASCII(a) == toLowerASCII(b) }

@@ -75,6 +75,10 @@ type Conn struct {
 	// batchSeq names outbound multiline batches; atomic since Message may be
 	// called from the engine loop or a plugin goroutine.
 	batchSeq atomic.Uint64
+	// authFailed is set by the SASL-failure numeric handlers (girc's read
+	// goroutine) and consumed by Connect (engine reconnect loop) to turn
+	// the generic disconnect error into core.ErrAuthFailed.
+	authFailed atomic.Bool
 }
 
 // multilineBatch accumulates the lines of one inbound draft/multiline message
@@ -122,6 +126,7 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		SupportedCaps: map[string][]string{
 			"echo-message":      nil,
 			"draft/chathistory": nil,
+			"chathistory":       nil, // the ratified name some servers use
 			// account-tag stamps the sender's account on every message (not
 			// just JOINs); labeled-response correlates replies; standard-replies
 			// gives structured FAIL/WARN/NOTE; message-redaction enables
@@ -206,7 +211,8 @@ func (c *Conn) registerHandlers() {
 
 	cmds := []string{
 		girc.PRIVMSG, girc.NOTICE, girc.JOIN, girc.PART, girc.KICK,
-		girc.QUIT, girc.NICK, girc.TOPIC, girc.RPL_TOPIC, girc.RPL_NAMREPLY, girc.AWAY,
+		girc.QUIT, girc.NICK, girc.TOPIC, girc.RPL_TOPIC, girc.AWAY,
+		girc.INVITE, girc.CAP_ACCOUNT,
 		girc.RPL_LIST, girc.RPL_LISTEND, girc.CAP_TAGMSG,
 		// IRCv3 message-redaction (REDACT) and standard-replies (FAIL/WARN/NOTE).
 		"REDACT", "FAIL", "WARN", "NOTE",
@@ -228,6 +234,26 @@ func (c *Conn) registerHandlers() {
 				c.emit(ev)
 			}
 		})
+	}
+
+	// NAMES replies need the server's PREFIX symbols so nonstandard
+	// membership prefixes are split off nicks; like MODE below, that lives
+	// in a dedicated handler with access to the server options.
+	h.Add(girc.RPL_NAMREPLY, func(gc *girc.Client, e girc.Event) {
+		prefix, ok := gc.GetServerOption("PREFIX")
+		if !ok {
+			prefix = girc.DefaultPrefixes
+		}
+		if ev, ok := namesEvent(c.opts.Network, &e, prefixSymbols(prefix)); ok {
+			c.emit(ev)
+		}
+	})
+
+	// SASL failures: girc turns these into an ERROR + disconnect; remember
+	// that the drop was an auth failure so Connect can report it as such
+	// (the engine then parks the network instead of retrying bad creds).
+	for _, num := range []string{girc.ERR_SASLFAIL, girc.ERR_SASLTOOLONG, girc.ERR_SASLABORTED, girc.RPL_NICKLOCKED} {
+		h.Add(num, func(_ *girc.Client, _ girc.Event) { c.authFailed.Store(true) })
 	}
 
 	// Channel MODE needs the server's PREFIX/CHANMODES to map mode letters to
@@ -365,9 +391,16 @@ func (c *Conn) Connect(ctx context.Context) error {
 	defer close(stop)
 
 	start := time.Now()
+	c.authFailed.Store(false)
 	err := c.client.Connect()
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	// An authentication failure is the credentials' fault, not the server's:
+	// don't rotate fallbacks (that would spray the bad password across every
+	// server) and mark the error so the engine stops retrying.
+	if c.authFailed.Load() {
+		return fmt.Errorf("irc %s: %w: %v", c.opts.Network, core.ErrAuthFailed, err)
 	}
 	// Rotate to the next fallback only when the connection didn't stay up — a
 	// stable session that merely dropped should retry the same server first.
@@ -523,7 +556,7 @@ func joinMultiline(lines []string, concat []bool) string {
 var knownCaps = []string{
 	"echo-message", "server-time", "away-notify", "account-notify",
 	"message-tags", "multi-prefix", "extended-join", "userhost-in-names",
-	"chghost", "setname", "invite-notify", "draft/chathistory", "chathistory",
+	"invite-notify", "draft/chathistory", "chathistory",
 	"account-tag", "labeled-response", "standard-replies",
 	"draft/message-redaction", "draft/multiline",
 }

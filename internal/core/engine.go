@@ -911,6 +911,18 @@ func (e *Engine) runConn(ctx context.Context, id string, conn IRCConn) {
 		if ctx.Err() != nil {
 			return
 		}
+		if errors.Is(err, ErrAuthFailed) {
+			// Bad credentials don't heal with retries — they hammer the
+			// server (and services) with the same wrong password. Park the
+			// network; editing it or /connect dials a fresh connection.
+			e.log.Warn("authentication failed; not retrying", "network", id, "err", err)
+			e.HandleEvent(Event{Type: evSetState, Network: id, State: StateDisconnected})
+			e.HandleEvent(Event{
+				Type: EvNumeric, Network: id,
+				Text: "authentication failed — check the network's SASL credentials, then save or /connect to retry",
+			})
+			return
+		}
 		var sleep time.Duration
 		sleep, backoff = reconnectDelay(backoff, time.Since(start))
 		e.log.Warn("connection ended; will retry", "network", id, "err", err, "backoff", sleep)
@@ -1366,6 +1378,24 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 				m.Away = ev.Away
 				netChanged = true
 			}
+		}
+
+	case EvAccount:
+		// account-notify: update the member's services account in every
+		// channel we share, without a system line.
+		for _, c := range n.Channels {
+			if m, ok := c.Members[lower(ev.Nick)]; ok {
+				m.Account = ev.Account
+				netChanged = true
+			}
+		}
+
+	case EvInvite:
+		if eqFold(ev.NewNick, n.Nick) {
+			sys(StatusBuffer, fmt.Sprintf("%s invited you to %s — /join %s to accept", ev.Nick, ev.Buffer, ev.Buffer))
+		} else if n.Channel(ev.Buffer) != nil {
+			// invite-notify: an op sees other people's invites to the channel.
+			sys(ev.Buffer, fmt.Sprintf("%s invited %s to %s", ev.Nick, ev.NewNick, ev.Buffer))
 		}
 
 	case EvMonitor:

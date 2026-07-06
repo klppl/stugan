@@ -129,10 +129,13 @@ func TestToEvent(t *testing.T) {
 			ok:   false,
 		},
 		{
-			// A CTCP reply (NOTICE) is likewise dropped, not shown as raw text.
-			name: "ctcp version reply dropped",
+			// A CTCP reply (NOTICE) — the answer to our own /ctcp query — is
+			// surfaced as a readable system line (see TestToEventCTCP).
+			name: "ctcp version reply surfaced",
 			raw:  ":alice!u@h NOTICE me :\x01VERSION stugan\x01",
-			ok:   false,
+			ok:   true,
+			want: core.Event{Type: core.EvMessageIn, Network: "n"},
+			text: "CTCP VERSION reply: stugan",
 		},
 		{
 			name: "join",
@@ -616,5 +619,72 @@ func TestToEventKick(t *testing.T) {
 	// Malformed (missing target) is dropped, not panicking.
 	if _, ok := toEvent("n", girc.ParseEvent(":op!u@h KICK #go"), "me"); ok {
 		t.Fatal("malformed KICK produced an event")
+	}
+}
+
+func TestToEventInviteAccount(t *testing.T) {
+	ev, ok := toEvent("n", girc.ParseEvent(":op!u@h INVITE me :#secret"), "me")
+	if !ok || ev.Type != core.EvInvite || ev.Nick != "op" || ev.NewNick != "me" || ev.Buffer != "#secret" {
+		t.Fatalf("invite = %+v, ok=%v", ev, ok)
+	}
+	ev, ok = toEvent("n", girc.ParseEvent(":alice!u@h ACCOUNT svc-alice"), "me")
+	if !ok || ev.Type != core.EvAccount || ev.Nick != "alice" || ev.Account != "svc-alice" {
+		t.Fatalf("account login = %+v, ok=%v", ev, ok)
+	}
+	ev, ok = toEvent("n", girc.ParseEvent(":alice!u@h ACCOUNT *"), "me")
+	if !ok || ev.Account != "" {
+		t.Fatalf("account logout = %+v, ok=%v", ev, ok)
+	}
+}
+
+// A CTCP reply (NOTICE) to our own /ctcp query must surface readably; a CTCP
+// request (PRIVMSG) stays dropped (girc auto-answers it).
+func TestToEventCTCP(t *testing.T) {
+	ev, ok := toEvent("n", girc.ParseEvent(":bob!u@h NOTICE me :\x01VERSION irssi v1.4\x01"), "me")
+	if !ok || ev.Message == nil {
+		t.Fatalf("CTCP reply dropped: %+v ok=%v", ev, ok)
+	}
+	if ev.Message.Kind != core.MsgSystem || ev.Message.Text != "CTCP VERSION reply: irssi v1.4" {
+		t.Fatalf("CTCP reply rendered as %q (%s)", ev.Message.Text, ev.Message.Kind)
+	}
+	if ev.Message.Buffer != "bob" {
+		t.Fatalf("CTCP reply buffer = %q, want query with bob", ev.Message.Buffer)
+	}
+	if _, ok := toEvent("n", girc.ParseEvent(":bob!u@h PRIVMSG me :\x01VERSION\x01"), "me"); ok {
+		t.Fatal("CTCP request surfaced; girc already answers those")
+	}
+}
+
+// A nick-only prefix (no ident/host, no dots) is a user, not the server —
+// the message must route to a query, not the status buffer.
+func TestToEventNickOnlySource(t *testing.T) {
+	ev, ok := toEvent("n", girc.ParseEvent(":SomeBot PRIVMSG me :hi"), "me")
+	if !ok || ev.Message.Buffer != "SomeBot" {
+		t.Fatalf("nick-only source buffer = %q, want SomeBot", ev.Message.Buffer)
+	}
+	// A dotted (real server) source still goes to status.
+	ev, ok = toEvent("n", girc.ParseEvent(":irc.example.net NOTICE me :MOTD done"), "me")
+	if !ok || ev.Message.Buffer != core.StatusBuffer {
+		t.Fatalf("server source buffer = %q, want status", ev.Message.Buffer)
+	}
+}
+
+// namesEvent honors the server's PREFIX symbols: a nonstandard prefix (e.g.
+// InspIRCd founder '!') is split off the nick instead of staying glued on.
+func TestNamesEventPrefixes(t *testing.T) {
+	e := girc.ParseEvent(":serv 353 me = #go :!founder @op plain")
+	ev, ok := namesEvent("n", e, prefixSymbols("(Yqaohv)!~&@%+"))
+	if !ok || len(ev.Members) != 3 {
+		t.Fatalf("members = %+v ok=%v", ev.Members, ok)
+	}
+	if ev.Members[0].Nick != "founder" || ev.Members[0].Modes != "!" {
+		t.Errorf("founder token split wrong: %+v", ev.Members[0])
+	}
+	// With the standard set '!' is not a prefix, so "!founder" reads as an
+	// empty nick with a hostmask and the member is dropped — exactly the
+	// lossy behavior the ISUPPORT-aware path fixes.
+	ev, _ = namesEvent("n", e, membershipPrefixes)
+	if len(ev.Members) != 2 || ev.Members[0].Nick != "op" {
+		t.Errorf("standard-set fallback = %+v", ev.Members)
 	}
 }
