@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -8,11 +9,15 @@ import (
 )
 
 // logSink is the default Sink: it renders each committed line to stdout in
-// a compact, human-readable form. Used in Phase 1 before the server bridge
-// and store sinks exist.
+// a compact, human-readable form. Chat traffic is debug-level noise once the
+// store and WebSocket sinks carry the real data, so Print only emits when
+// the logger has debug enabled (log.level = "debug").
 type logSink struct{ log *slog.Logger }
 
 func (s logSink) Print(m Message) {
+	if !s.log.Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
 	ts := m.Time.Format("15:04:05")
 	loc := fmt.Sprintf("[%s/%s]", m.Network, m.Buffer)
 	var line string
