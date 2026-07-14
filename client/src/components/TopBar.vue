@@ -11,6 +11,21 @@ const q = ref("");
 const browseNet = ref<string | null>(null);
 // On mobile we hide the search input behind a magnifier button; this toggles it.
 const searchOpen = ref(false);
+const searchEl = ref<HTMLInputElement | null>(null);
+
+// Opening search focuses the field so the user can type straight away. The
+// focus must wait a tick: the input is display:none until the mobile-open
+// class binding flushes, and hidden elements can't take focus.
+function toggleSearch() {
+  searchOpen.value = !searchOpen.value;
+  if (searchOpen.value) nextTick(() => searchEl.value?.focus());
+}
+
+// The topic row is hidden on phones (no room in the bar); tapping the channel
+// name reveals it on its own wrapped line. Desktop always shows the topic
+// inline, so the class this toggles only has effect inside the mobile
+// media query.
+const topicOpen = ref(false);
 
 const buffer = computed(() => connection.activeBuffer());
 
@@ -76,7 +91,9 @@ function saveTopic() {
     </button>
 
     <template v-if="showBufferHeader && buffer">
-      <span class="buffer-name">{{ bufferTitle }}</span>
+      <span class="buffer-name" @click="topicOpen = !topicOpen">
+        {{ bufferTitle }}<span v-if="buffer.kind === 'channel'" class="topic-caret" aria-hidden="true">▾</span>
+      </span>
       <input
         v-if="editingTopic"
         ref="topicInput"
@@ -89,7 +106,7 @@ function saveTopic() {
       <span
         v-else
         class="topic"
-        :class="{ editable: buffer.kind === 'channel' }"
+        :class="{ editable: buffer.kind === 'channel', 'mobile-open': topicOpen }"
         :title="buffer.kind === 'channel' ? 'click to edit topic' : ''"
         @click="startEditTopic"
       >{{ buffer.topic || (buffer.kind === "channel" ? "(set topic…)" : "") }}</span>
@@ -99,6 +116,7 @@ function saveTopic() {
 
     <input
       v-if="connection.hasCap('search')"
+      ref="searchEl"
       v-model="q"
       class="search"
       :class="{ 'mobile-open': searchOpen }"
@@ -111,7 +129,7 @@ function saveTopic() {
       class="ghost icon-btn search-toggle"
       aria-label="Search"
       title="Search"
-      @click="searchOpen = !searchOpen"
+      @click="toggleSearch"
     >🔍</button>
 
     <button class="ghost" :class="{ active: store.view === 'mentions' }" @click="connection.showMentions()">

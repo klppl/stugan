@@ -373,7 +373,9 @@ body,
 }
 body {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 14px;
+  /* Driven by the Text size setting (settings.ts sets --font-size on :root);
+     the fallback only covers the instant before the bundle runs. */
+  font-size: var(--font-size, 15px);
   color: var(--fg);
   background: var(--bg);
   /* Prevent iOS double-tap zoom and rubber-band side scroll. */
@@ -758,6 +760,10 @@ body {
   font-weight: 700;
   flex-shrink: 0;
 }
+/* The topic-reveal caret only exists on phones, where the topic is hidden. */
+.topic-caret {
+  display: none;
+}
 .topic {
   color: var(--fg-dim);
   font-size: 13px;
@@ -833,6 +839,11 @@ body {
   flex-shrink: 0;
 }
 .message .from.self {
+  color: var(--self);
+}
+/* Own lines tint the whole body, not just the nick — on narrow screens the
+   nick color alone is too subtle to pick out your own messages. */
+.message.self .body {
   color: var(--self);
 }
 .message .sys {
@@ -1807,10 +1818,6 @@ body {
    backdrop catches taps to close them.
    ──────────────────────────────────────────────────────────── */
 @media (max-width: 720px) {
-  body {
-    font-size: 14px;
-  }
-
   /* The sidebar becomes an off-canvas drawer. */
   .sidebar {
     position: fixed;
@@ -1878,9 +1885,25 @@ body {
     padding-right: max(8px, env(safe-area-inset-right));
     gap: 6px;
   }
-  /* No room for the topic on phones; keep just the channel name, truncated. */
+  /* No room for the topic on phones; keep just the channel name, truncated.
+     Tapping the name (see the caret) reveals the topic on its own wrapped
+     row, where it can breathe across multiple lines. */
   .topbar .topic {
     display: none;
+  }
+  .topbar .topic.mobile-open {
+    display: block;
+    flex-basis: 100%;
+    order: 98; /* below the button row, above a toggled-open search */
+    white-space: normal;
+    overflow-wrap: anywhere;
+    padding: 2px 0 4px;
+  }
+  .buffer-name .topic-caret {
+    display: inline;
+    margin-left: 4px;
+    font-size: 10px;
+    color: var(--fg-dim);
   }
   .topbar .buffer-name {
     flex: 0 1 auto;

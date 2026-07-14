@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
-import { settings, themeNames, installTheme, uninstallTheme, TEMPLATE, PRESET_THEMES } from "../settings";
+import { settings, themeNames, installTheme, uninstallTheme, TEMPLATE, PRESET_THEMES, FONT_SIZES } from "../settings";
 import type { PresetTheme } from "../settings";
 import { connection } from "../connection";
 import type { UploadEntry } from "../connection";
@@ -227,6 +227,13 @@ async function enableNotifications() {
         <p v-if="themeError" class="login-error">{{ themeError }}</p>
         <button @click="doInstall">Install</button>
       </div>
+
+      <label class="row">
+        <span>Text size</span>
+        <select v-model.number="settings.fontSize">
+          <option v-for="s in FONT_SIZES" :key="s" :value="s">{{ s }} px</option>
+        </select>
+      </label>
 
       <label class="row">
         <span>Fold join/part</span>

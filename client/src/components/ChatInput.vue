@@ -272,6 +272,10 @@ function submit() {
   text.value = "";
   ac.open = false;
   reqSeq++;
+  // Keep typing after a button-send: mousedown.prevent on the Send button
+  // stops the focus steal, and this covers any path where focus left anyway
+  // (without it the mobile keyboard collapses on every send).
+  inputEl.value?.focus();
   nextTick(autosize); // shrink the box back to one line
 }
 
@@ -379,6 +383,6 @@ defineExpose({ inputEl, appendText, focus, typeChar });
       </svg>
     </button>
     <input ref="fileEl" type="file" multiple hidden @change="onFilePicked" />
-    <button type="submit" :disabled="!buffer">Send</button>
+    <button type="submit" :disabled="!buffer" @mousedown.prevent>Send</button>
   </form>
 </template>

@@ -1061,8 +1061,11 @@ export class Connection {
     this.readMarkTimers[key] = setTimeout(() => this.markRead(network, buffer), 1000);
   }
 
+  // showMentions toggles: pressing the button while already on the mentions
+  // pane returns to the chat (store.active is untouched while viewing
+  // mentions, so "chat" lands back on the buffer the user came from).
   showMentions() {
-    this.store.view = "mentions";
+    this.store.view = this.store.view === "mentions" ? "chat" : "mentions";
   }
 
   // jumpToMessage navigates to the buffer that contains m and asks the

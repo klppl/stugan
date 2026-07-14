@@ -110,9 +110,16 @@ export const PRESET_THEMES: PresetTheme[] = [
   },
 ];
 
+// Base font size in px, applied to <body> as --font-size; everything under
+// the message list uses em units so the whole chat scales with it. 15 is the
+// default — early testers found the original 14 too small on phones.
+export const FONT_SIZES = [13, 14, 15, 16, 18] as const;
+export const DEFAULT_FONT_SIZE = 15;
+
 interface Settings {
   theme: string;
   customThemes: CustomTheme[];
+  fontSize: number; // base font size in px (one of FONT_SIZES)
   foldEvents: boolean; // collapse runs of join/part/quit/nick lines
   coloredNicks: boolean; // colorize nicks by a hash of the name
   reactions: boolean; // show emoji reactions (off by default; most servers don't support it)
@@ -139,6 +146,7 @@ function load(): Settings {
     return {
       theme: typeof s.theme === "string" ? s.theme : "dark",
       customThemes: Array.isArray(s.customThemes) ? s.customThemes : [],
+      fontSize: typeof s.fontSize === "number" ? s.fontSize : DEFAULT_FONT_SIZE,
       foldEvents: typeof s.foldEvents === "boolean" ? s.foldEvents : true,
       coloredNicks: typeof s.coloredNicks === "boolean" ? s.coloredNicks : true,
       reactions: typeof s.reactions === "boolean" ? s.reactions : false,
@@ -149,6 +157,7 @@ function load(): Settings {
     return {
       theme: "dark",
       customThemes: [],
+      fontSize: DEFAULT_FONT_SIZE,
       foldEvents: true,
       coloredNicks: true,
       reactions: false,
@@ -186,6 +195,9 @@ watch(
   (s) => {
     localStorage.setItem(KEY, JSON.stringify(s));
     applyTheme();
+    // Set after applyTheme so the user's picked size wins over a custom theme
+    // that also declares --font-size (parseTheme accepts any --variable).
+    document.documentElement.style.setProperty("--font-size", s.fontSize + "px");
   },
   { deep: true, immediate: true },
 );
