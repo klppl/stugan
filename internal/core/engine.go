@@ -106,10 +106,10 @@ type Engine struct {
 	conns       map[string]IRCConn
 	connCancels map[string]context.CancelFunc
 	listAccum   map[string][]ChannelListItem // in-progress LIST results
-	// pendingWhois records which buffer issued a WHOIS/WHOWAS/WHO so we
+	// pendingWhois records which buffer issued a WHOIS/WHOWAS/WHO/NAMES so we
 	// can route the server's numeric replies back to it. Key is
-	// "<network>\t<lowercase-nick>"; cleared on the matching end-of
-	// marker (318/369/315). Mutated only on the engine loop goroutine.
+	// "<network>\t<lowercase-target>"; cleared on the matching end-of
+	// marker (318/369/315/366). Mutated only on the engine loop goroutine.
 	pendingWhois map[string]string
 	// pendingKeys records the join key (+k password) supplied with a /join
 	// command, so it can be committed to the persisted auto-join list when the
@@ -1208,11 +1208,25 @@ func whoisKey(network, nick string) string {
 func (e *Engine) applyNumeric(ev Event) {
 	key := whoisKey(ev.Network, ev.Nick)
 	buf := StatusBuffer
-	if b, ok := e.pendingWhois[key]; ok && b != "" {
+	b, pending := e.pendingWhois[key]
+	if b != "" {
 		buf = b
+	}
+	// girc automatically issues WHO/WHOX after we join a channel to hydrate
+	// its internal member state. JOIN also naturally produces an end-of-NAMES
+	// reply. These are background protocol bookkeeping, not user lookups, so
+	// keep their numerics silent unless a matching /who or /names command was
+	// recorded by startNumeric/the names handler.
+	if !pending {
+		switch ev.Count {
+		case 352, 354, 315, 366: // WHO, WHOX, end-of-WHO, end-of-NAMES
+			return
+		}
 	}
 	switch ev.Count {
 	case 318, 369, 315: // RPL_ENDOFWHOIS / WHOWAS / WHO
+		delete(e.pendingWhois, key)
+	case 366: // RPL_ENDOFNAMES
 		delete(e.pendingWhois, key)
 	}
 	e.inject(Message{

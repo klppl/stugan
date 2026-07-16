@@ -1092,6 +1092,65 @@ func TestWhoisReplyFallsBackToStatus(t *testing.T) {
 	}
 }
 
+func TestBackgroundWhoAndNamesRepliesAreSilent(t *testing.T) {
+	// girc sends WHO/WHOX automatically after a self-JOIN, and every JOIN's
+	// NAMES burst ends in 366. With no user-issued lookup pending, none of
+	// that protocol bookkeeping should leak into the status buffer.
+	sink := &captureSink{}
+	e := New(Options{Sink: sink})
+	e.AddNetwork(NetworkParams{ID: "n", Name: "n", Nick: "me"}, nil)
+
+	for _, ev := range []Event{
+		{Type: EvNumeric, Network: "n", Nick: "#c", Text: "alice [H]", Count: 352},
+		{Type: EvNumeric, Network: "n", Nick: "1", Text: "1 #c alice", Count: 354},
+		{Type: EvNumeric, Network: "n", Nick: "#c", Text: "End of WHO for #c", Count: 315},
+		{Type: EvNumeric, Network: "n", Nick: "#c", Text: "End of NAMES for #c", Count: 366},
+	} {
+		e.apply(ev)
+	}
+
+	if len(sink.msgs) != 0 {
+		t.Fatalf("background WHO/NAMES replies leaked into output: %+v", sink.msgs)
+	}
+}
+
+func TestExplicitWhoRepliesRemainVisible(t *testing.T) {
+	conn := &fakeConnector{}
+	sink := &captureSink{}
+	e := New(Options{Sink: sink, Connector: conn})
+	if err := e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"}); err != nil {
+		t.Fatal(err)
+	}
+
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: "#request-buffer",
+		Command: "who", Args: []string{"#c"}, Text: "#c",
+	})
+	if !slices.Contains(conn.conns[0].raws, "WHO #c") {
+		t.Fatalf("/who did not send WHO line; raws=%v", conn.conns[0].raws)
+	}
+
+	for _, ev := range []Event{
+		{Type: EvNumeric, Network: "n", Time: time.Now(), Nick: "#c", Text: "alice [H]", Count: 352},
+		{Type: EvNumeric, Network: "n", Time: time.Now(), Nick: "#c", Text: "End of WHO for #c", Count: 315},
+	} {
+		e.apply(ev)
+	}
+
+	var visible []Message
+	for _, m := range sink.msgs {
+		if m.Buffer == "#request-buffer" {
+			visible = append(visible, m)
+		}
+	}
+	if len(visible) != 2 {
+		t.Fatalf("explicit WHO replies = %+v, want two lines in requesting buffer", sink.msgs)
+	}
+	if _, ok := e.pendingWhois["n\t#c"]; ok {
+		t.Fatalf("315 should clear pending WHO: %v", e.pendingWhois)
+	}
+}
+
 func TestModeShorthandCommands(t *testing.T) {
 	conn := &fakeConnector{}
 	e := New(Options{Sink: &captureSink{}, Connector: conn})
