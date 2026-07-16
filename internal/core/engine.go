@@ -997,8 +997,21 @@ func (e *Engine) runPerform(network string) {
 	e.mu.RLock()
 	n := e.user.Network(network)
 	var lines []string
+	var variables map[string]string
 	if n != nil && len(n.Params.Perform) > 0 {
 		lines = append(lines, n.Params.Perform...)
+		networkName := n.Name
+		if networkName == "" {
+			networkName = n.ID
+		}
+		variables = map[string]string{
+			"me":       n.Nick,
+			"nick":     n.Nick,
+			"network":  networkName,
+			"server":   n.Params.Addr,
+			"user":     n.Params.User,
+			"realname": n.Params.Realname,
+		}
 	}
 	e.mu.RUnlock()
 	if len(lines) == 0 {
@@ -1009,9 +1022,71 @@ func (e *Engine) runPerform(network string) {
 			if strings.TrimSpace(line) == "" {
 				continue
 			}
-			e.SendInput(network, StatusBuffer, line)
+			e.SendInput(network, StatusBuffer, expandPerformVariables(line, variables))
 		}
 	}()
+}
+
+// expandPerformVariables substitutes named $variables in a perform line.
+// ${variable} disambiguates a variable from adjacent text, and $$ emits a
+// literal dollar sign.
+// Unknown variables are deliberately preserved so adding variables later does
+// not silently corrupt existing commands (and literal IRC text containing a
+// dollar-prefixed word continues to work).
+func expandPerformVariables(line string, variables map[string]string) string {
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		if line[i] != '$' {
+			b.WriteByte(line[i])
+			i++
+			continue
+		}
+
+		if i+1 == len(line) {
+			b.WriteByte('$')
+			break
+		}
+		if line[i+1] == '$' {
+			b.WriteByte('$')
+			i += 2
+			continue
+		}
+		if line[i+1] == '{' {
+			closeOffset := strings.IndexByte(line[i+2:], '}')
+			if closeOffset < 0 {
+				b.WriteByte('$')
+				i++
+				continue
+			}
+			end := i + 2 + closeOffset
+			name := line[i+2 : end]
+			if value, ok := variables[name]; ok {
+				b.WriteString(value)
+			} else {
+				b.WriteString(line[i : end+1])
+			}
+			i = end + 1
+			continue
+		}
+
+		end := i + 1
+		for end < len(line) {
+			c := line[end]
+			if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') &&
+				(c < '0' || c > '9') && c != '_' {
+				break
+			}
+			end++
+		}
+		name := line[i+1 : end]
+		if value, ok := variables[name]; ok {
+			b.WriteString(value)
+		} else {
+			b.WriteString(line[i:end])
+		}
+		i = end
+	}
+	return b.String()
 }
 
 // apply commits an event: it mutates state under the write lock, then

@@ -77,6 +77,8 @@ connect  = true
 #
 # perform = [                     # commands run after registration, on every
 #   "/msg NickServ IDENTIFY hunter2",   # (re)connect — identify, set modes,
+#   "/mode $me +B",                    # variables: $me/$nick, $network,
+#                                         # $server, $user, and $realname
 #   "/join #private secretkey",         # join keyed channels, etc.
 # ]
 #

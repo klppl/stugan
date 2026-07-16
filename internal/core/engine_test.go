@@ -453,8 +453,12 @@ func TestRunPerformOnConnect(t *testing.T) {
 	conn := &fakeConnector{}
 	e := New(Options{Sink: &captureSink{}, Connector: conn})
 	if err := e.AddNetworkLive(NetworkParams{
-		ID: "n", Name: "n", Addr: "a:1", Nick: "me",
-		Perform: []string{"/join #ops opskey", "/msg NickServ IDENTIFY hunter2"},
+		ID: "n", Name: "TestNet", Addr: "irc.example:6697", Nick: "preferred-nick",
+		User: "alice", Realname: "Alice Example",
+		Perform: []string{
+			"/join #ops opskey",
+			"/raw TEST $me $nick $network $server $user :$realname",
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -462,19 +466,45 @@ func TestRunPerformOnConnect(t *testing.T) {
 	defer cancel()
 	go func() { _ = e.Run(ctx) }()
 
-	e.HandleEvent(Event{Type: EvConnect, Network: "n", Nick: "me"})
+	// The server may select a different nick from the configured preference.
+	// Perform variables must use that live nick.
+	e.HandleEvent(Event{Type: EvConnect, Network: "n", Nick: "server-nick"})
 
 	deadline := time.After(2 * time.Second)
 	for {
 		raws := conn.conns[0].rawsSnap()
 		if slices.Contains(raws, "JOIN #ops opskey") &&
-			slices.Contains(raws, "PRIVMSG NickServ :IDENTIFY hunter2") {
+			slices.Contains(raws, "TEST server-nick server-nick TestNet irc.example:6697 alice :Alice Example") {
 			return
 		}
 		select {
 		case <-deadline:
 			t.Fatalf("perform commands not sent; raws=%v", conn.conns[0].rawsSnap())
 		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestExpandPerformVariables(t *testing.T) {
+	variables := map[string]string{
+		"me": "alice_", "network": "Libera", "server": "irc.libera.chat:6697",
+	}
+	for _, tc := range []struct {
+		line string
+		want string
+	}{
+		{"/mode $me +B", "/mode alice_ +B"},
+		{"/msg $me hello, $me!", "/msg alice_ hello, alice_!"},
+		{"/raw TEST ${me}suffix", "/raw TEST alice_suffix"},
+		{"/raw TEST $network $server", "/raw TEST Libera irc.libera.chat:6697"},
+		{"/raw TEST $$me", "/raw TEST $me"},
+		{"/raw TEST $missing", "/raw TEST $missing"},
+		{"/raw TEST ${missing}", "/raw TEST ${missing}"},
+		{"/raw TEST $member", "/raw TEST $member"},
+		{"/raw TEST $", "/raw TEST $"},
+	} {
+		if got := expandPerformVariables(tc.line, variables); got != tc.want {
+			t.Errorf("expandPerformVariables(%q) = %q, want %q", tc.line, got, tc.want)
 		}
 	}
 }

@@ -36,7 +36,8 @@ type NetworkParams struct {
 	// (re)connect. Each is processed like user input (alias + /command +
 	// plugin hooks), e.g. "/msg NickServ IDENTIFY hunter2" or
 	// "/join #private secretkey". Use it to identify, ghost, set modes, or
-	// join keyed channels on networks without SASL.
+	// join keyed channels on networks without SASL. Variables describe the
+	// connection at execution time; see docs/config.md for the supported set.
 	Perform []string `json:"perform,omitempty"`
 	// SASLExternal authenticates with SASL EXTERNAL (CertFP) instead of
 	// PLAIN. Requires a client certificate (CertPEM) and TLS.
