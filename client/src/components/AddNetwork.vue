@@ -95,6 +95,7 @@ function submit() {
         </label>
         <p class="hint">
           Perform runs one command per line after connecting (every reconnect).
+          Variables: $me/$nick, $network, $server, $user, and $realname.
           A client cert enables CertFP; tick SASL EXTERNAL to authenticate with it.
           Allow self-signed skips TLS certificate checks — only for trusted LAN
           servers, never the public internet.

@@ -166,7 +166,8 @@ function remove() {
         <p class="hint">
           Nick and channel changes apply live. Server, TLS, user/realname,
           SASL, server-password, or client-certificate changes reconnect the
-          network. Perform runs on every reconnect.
+          network. Perform runs on every reconnect. Variables: $me/$nick,
+          $network, $server, $user, and $realname.
         </p>
 
         <div class="caps-section">

@@ -72,7 +72,7 @@ authoritative.
 | `sasl_external` | bool | Use SASL EXTERNAL (CertFP) instead of a password. |
 | `cert_file` | string | PEM with certificate **and** private key concatenated (for CertFP). |
 | `server_pass` | string | IRC `PASS` — for bouncers (ZNC/soju) or password-gated servers. |
-| `perform` | []string | Command lines run after registration on every (re)connect. |
+| `perform` | []string | Command lines run after registration on every (re)connect. Supports the variables listed below. |
 
 ```toml
 [[networks]]
@@ -81,8 +81,22 @@ addr     = "irc.libera.chat:6697"
 tls      = true
 nick     = "stuganuser"
 channels = ["#stugan"]
-# perform  = ["/msg NickServ IDENTIFY hunter2", "/join #private secretkey"]
+# perform  = ["/mode $me +B", "/msg NickServ IDENTIFY hunter2", "/join #private secretkey"]
 ```
+
+Perform variables are expanded when the command runs, after the server has
+confirmed the connection:
+
+| Variable | Value |
+|----------|-------|
+| `$me`, `$nick` | Your current nickname, including a fallback selected during registration. |
+| `$network` | The network's display name (or id when it has no display name). |
+| `$server` | The configured primary server address, including its port. |
+| `$user` | The configured IRC username. |
+| `$realname` | The configured IRC real name. |
+
+Use `${name}` when text immediately follows a variable, for example
+`${nick}_away`. Use `$$` for a literal `$`. Unknown variables are left unchanged.
 
 ## `[highlight]`
 
