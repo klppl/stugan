@@ -197,6 +197,7 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		target := e.Params[0]
 		text := e.Last()
 		kind := core.MsgPrivmsg
+		ctcpReply := false
 		if e.Command == girc.NOTICE {
 			kind = core.MsgNotice
 		}
@@ -211,22 +212,29 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			if e.Command != girc.NOTICE {
 				return core.Event{}, false
 			}
+			ctcpReply = true
 			kind = core.MsgSystem
 			text = strings.TrimSpace("CTCP " + ctcp.Command + " reply: " + ctcp.Text)
 		}
 
 		// Channel target → channel buffer. A message from the server itself
-		// (e.g. pre-registration notices) → the status buffer. Otherwise it
-		// is a query: keyed by the other party — the sender for an inbound
-		// DM, but the target for our own echoed outbound DM.
+		// (e.g. pre-registration notices) → the status buffer. Unsolicited
+		// direct NOTICEs also belong in status: services commonly send them
+		// from pseudoclients such as AUTH or SaslServ, and a notice should not
+		// create a conversation by itself. Otherwise it is a query, keyed by
+		// the other party — the sender for an inbound DM, but the target for our
+		// own echoed outbound DM. CTCP replies are the intentional exception for
+		// inbound notices: they answer a query the user initiated with /ctcp.
 		buffer := target
+		outbound := e.Echo || (self != "" && from == self)
 		switch {
 		case isChannel(target):
 			buffer = target
 		case e.Source != nil && isServerSource(e.Source):
 			buffer = core.StatusBuffer
+		case e.Command == girc.NOTICE && !outbound && !ctcpReply:
+			buffer = core.StatusBuffer
 		default:
-			outbound := e.Echo || (self != "" && from == self)
 			if !outbound && from != "" {
 				buffer = from
 			}

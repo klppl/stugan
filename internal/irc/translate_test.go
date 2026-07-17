@@ -537,6 +537,35 @@ func TestServerNoticeRoutesToStatus(t *testing.T) {
 	}
 }
 
+// Direct notices from service pseudoclients are network information, not
+// conversations. They must not create query buffers named AUTH, SaslServ, etc.
+// This applies whether the service has a full userhost or only a nick prefix.
+func TestServiceNoticesRouteToStatus(t *testing.T) {
+	for _, raw := range []string{
+		":AUTH NOTICE me :*** Looking up your hostname",
+		":SaslServ!service@services.example.net NOTICE me :SASL authentication successful",
+	} {
+		ev, ok := toEvent("n", girc.ParseEvent(raw), "me")
+		if !ok || ev.Message == nil {
+			t.Fatalf("service notice dropped: %q", raw)
+		}
+		if ev.Message.Buffer != core.StatusBuffer {
+			t.Errorf("%q: buffer = %q, want %q", raw, ev.Message.Buffer, core.StatusBuffer)
+		}
+	}
+}
+
+// An echoed /notice was deliberately sent to a peer, so it remains in that
+// peer's query instead of being folded into status like an unsolicited notice.
+func TestEchoedNoticeRoutesToQuery(t *testing.T) {
+	e := girc.ParseEvent(":me!u@h NOTICE bob :heads up")
+	e.Echo = true
+	ev, ok := toEvent("n", e, "me")
+	if !ok || ev.Message == nil || ev.Message.Buffer != "bob" {
+		t.Fatalf("echoed notice = %+v ok=%v, want bob query", ev.Message, ok)
+	}
+}
+
 func TestSplitAddr(t *testing.T) {
 	tests := []struct {
 		addr     string
