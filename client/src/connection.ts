@@ -976,10 +976,14 @@ export class Connection {
     buf.more = resp.more;
     buf.backlogPending = false; // a reply landed — release the auto-load guard
     if (resp.around) {
-      // Windowed reply: discard whatever was previously loaded (live tail
-      // or another window) and show the new context window in full.
+      // A centered reply is only a historical window when newer messages
+      // actually exist beyond it. Highlights near the live tail commonly fit
+      // in the centered page; keeping those in normal tail mode avoids a bogus
+      // "Back to latest" banner and lets subsequent live messages append.
       buf.messages = [...resp.messages];
-      buf.windowed = true;
+      // Missing means an older server that predates this hint; preserve its
+      // conservative historical-window behaviour during a rolling refresh.
+      buf.windowed = resp.more_newer ?? true;
       return;
     }
     // Normal paged-backward reply: prepend the older slice we didn't have.

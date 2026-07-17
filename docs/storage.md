@@ -64,7 +64,8 @@ Pragmas: `journal_mode=WAL` (concurrent reads alongside the writer),
   to compute the `more` flag, then reverses to oldest-first for the client.
 - **`BacklogAround(ctx, network, buffer, around, limit)`** — a window of
   `limit/2` older + `limit/2` newer messages around an anchor time, returned
-  oldest-first. Backs jump-to-message and search-result navigation.
+  oldest-first, with separate flags for history before and after the window.
+  Backs jump-to-message and search-result navigation.
 - **`Search(ctx, query, network, buffer, limit)`** — an FTS5 MATCH over
   `messages_fts`, newest matches first, optionally scoped to a network/buffer.
 

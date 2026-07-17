@@ -42,7 +42,7 @@ const magicWordTTL = 30 * 24 * time.Hour
 // plus the per-buffer read markers that let unread counts survive a reload.
 type History interface {
 	Backlog(ctx context.Context, network, buffer string, beforeSeq int64, limit int) ([]core.Message, bool, error)
-	BacklogAround(ctx context.Context, network, buffer string, around time.Time, limit int) ([]core.Message, bool, error)
+	BacklogAround(ctx context.Context, network, buffer string, around time.Time, limit int) ([]core.Message, bool, bool, error)
 	Search(ctx context.Context, query, network, buffer string, limit int) ([]core.Message, error)
 	// MarkRead advances a buffer's read marker to ts (zero = now).
 	MarkRead(ctx context.Context, network, buffer string, ts time.Time) error
@@ -850,7 +850,7 @@ func (s *Server) handleBacklog(ctx context.Context, c *client, env proto.Envelop
 		if t, err := time.Parse(time.RFC3339, d.Around); err == nil {
 			around = t
 		}
-		msgs, more, err := c.tenant.History.BacklogAround(ctx, d.Network, d.Buffer, around, limit)
+		msgs, more, moreNewer, err := c.tenant.History.BacklogAround(ctx, d.Network, d.Buffer, around, limit)
 		if err != nil {
 			s.log.Error("backlog around query", "err", err)
 			c.sendError(env.ID, "internal", "backlog query failed")
@@ -858,7 +858,7 @@ func (s *Server) handleBacklog(ctx context.Context, c *client, env proto.Envelop
 		}
 		s.reply(c, env.ID, proto.TBacklog, proto.BacklogResp{
 			Network: d.Network, Buffer: d.Buffer,
-			Messages: toMessageDTOs(msgs), More: more, Around: d.Around,
+			Messages: toMessageDTOs(msgs), More: more, MoreNewer: moreNewer, Around: d.Around,
 		})
 		return
 	}
@@ -893,7 +893,7 @@ func (s *Server) handleContext(ctx context.Context, c *client, env proto.Envelop
 	if t, err := time.Parse(time.RFC3339, d.Around); err == nil {
 		around = t
 	}
-	msgs, _, err := c.tenant.History.BacklogAround(ctx, d.Network, d.Buffer, around, clampLimit(d.Limit, 11))
+	msgs, _, _, err := c.tenant.History.BacklogAround(ctx, d.Network, d.Buffer, around, clampLimit(d.Limit, 11))
 	if err != nil {
 		s.log.Error("context around query", "err", err)
 		c.sendError(env.ID, "internal", "context query failed")

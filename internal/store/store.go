@@ -449,14 +449,15 @@ func (s *Store) Backlog(ctx context.Context, network, buffer string, beforeSeq i
 //
 // Used to land the user on the conversation surrounding a specific
 // message — e.g. clicking a mention — in a single round trip.
-func (s *Store) BacklogAround(ctx context.Context, network, buffer string, around time.Time, limit int) ([]core.Message, bool, error) {
+func (s *Store) BacklogAround(ctx context.Context, network, buffer string, around time.Time, limit int) ([]core.Message, bool, bool, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	if around.IsZero() {
 		// Equivalent to "give me the most recent page" — defer to Backlog
 		// so callers don't have to branch.
-		return s.Backlog(ctx, network, buffer, 0, limit)
+		msgs, more, err := s.Backlog(ctx, network, buffer, 0, limit)
+		return msgs, more, false, err
 	}
 	aroundMS := around.UnixMilli()
 	beforeHalf := max(limit/2, 1)
@@ -472,19 +473,19 @@ func (s *Store) BacklogAround(ctx context.Context, network, buffer string, aroun
 		network, buffer, aroundMS, beforeHalf+1,
 	)
 	if err != nil {
-		return nil, false, fmt.Errorf("backlog around (older): %w", err)
+		return nil, false, false, fmt.Errorf("backlog around (older): %w", err)
 	}
 	defer rowsA.Close()
 	var older []core.Message
 	for rowsA.Next() {
 		m, _, err := scanMessage(rowsA)
 		if err != nil {
-			return nil, false, err
+			return nil, false, false, err
 		}
 		older = append(older, m)
 	}
 	if err := rowsA.Err(); err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	more := false
 	if len(older) > beforeHalf {
@@ -495,29 +496,35 @@ func (s *Store) BacklogAround(ctx context.Context, network, buffer string, aroun
 	// half (which we already query in ascending order).
 	slices.Reverse(older)
 
-	// Newer half, oldest-first.
+	// Newer half, oldest-first. Fetch one extra so callers can distinguish a
+	// genuinely historical window from one that already reaches the live tail.
 	rowsB, err := s.db.QueryContext(ctx,
 		`SELECT `+msgCols+`
 		 FROM messages
 		 WHERE network = ? AND buffer = ? AND ts > ?
 		 ORDER BY id ASC LIMIT ?`,
-		network, buffer, aroundMS, afterHalf,
+		network, buffer, aroundMS, afterHalf+1,
 	)
 	if err != nil {
-		return nil, false, fmt.Errorf("backlog around (newer): %w", err)
+		return nil, false, false, fmt.Errorf("backlog around (newer): %w", err)
 	}
 	defer rowsB.Close()
+	var newer []core.Message
 	for rowsB.Next() {
 		m, _, err := scanMessage(rowsB)
 		if err != nil {
-			return nil, false, err
+			return nil, false, false, err
 		}
-		older = append(older, m)
+		newer = append(newer, m)
 	}
 	if err := rowsB.Err(); err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
-	return older, more, nil
+	moreNewer := len(newer) > afterHalf
+	if moreNewer {
+		newer = newer[:afterHalf]
+	}
+	return append(older, newer...), more, moreNewer, nil
 }
 
 // ftsQuery turns a user's free-text search into a safe FTS5 MATCH expression.

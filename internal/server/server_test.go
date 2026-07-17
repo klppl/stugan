@@ -48,8 +48,8 @@ type fakeHistory struct {
 func (f *fakeHistory) Backlog(_ context.Context, _, _ string, _ int64, _ int) ([]core.Message, bool, error) {
 	return f.msgs, f.more, nil
 }
-func (f *fakeHistory) BacklogAround(_ context.Context, _, _ string, _ time.Time, _ int) ([]core.Message, bool, error) {
-	return f.msgs, f.more, nil
+func (f *fakeHistory) BacklogAround(_ context.Context, _, _ string, _ time.Time, _ int) ([]core.Message, bool, bool, error) {
+	return f.msgs, f.more, false, nil
 }
 func (f *fakeHistory) Search(_ context.Context, _, _, _ string, _ int) ([]core.Message, error) {
 	return f.msgs, nil

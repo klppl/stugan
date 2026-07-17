@@ -225,7 +225,7 @@ func TestBacklogAround(t *testing.T) {
 
 	// Window of 6 centered on message index 5 (text "f"): expects
 	// roughly 3 ≤ around (indices 3,4,5) and 3 strictly newer (6,7,8).
-	got, more, err := s.BacklogAround(ctx, "n", "#c", base.Add(5*time.Minute), 6)
+	got, more, moreNewer, err := s.BacklogAround(ctx, "n", "#c", base.Add(5*time.Minute), 6)
 	if err != nil {
 		t.Fatalf("around: %v", err)
 	}
@@ -238,9 +238,12 @@ func TestBacklogAround(t *testing.T) {
 	if !more {
 		t.Errorf("more = false, want true (indices 0..2 still older than window)")
 	}
+	if !moreNewer {
+		t.Errorf("moreNewer = false, want true (index 9 is beyond the window)")
+	}
 
 	// Anchor at the very first message: nothing older, after-half fills out.
-	got, more, err = s.BacklogAround(ctx, "n", "#c", base, 6)
+	got, more, moreNewer, err = s.BacklogAround(ctx, "n", "#c", base, 6)
 	if err != nil {
 		t.Fatalf("around-first: %v", err)
 	}
@@ -254,9 +257,12 @@ func TestBacklogAround(t *testing.T) {
 	if more {
 		t.Errorf("more = true at oldest anchor, want false")
 	}
+	if !moreNewer {
+		t.Errorf("moreNewer = false, want true (newer history remains)")
+	}
 
 	// Anchor at the very last message: nothing newer, before-half fills out.
-	got, more, err = s.BacklogAround(ctx, "n", "#c", base.Add(9*time.Minute), 6)
+	got, more, moreNewer, err = s.BacklogAround(ctx, "n", "#c", base.Add(9*time.Minute), 6)
 	if err != nil {
 		t.Fatalf("around-last: %v", err)
 	}
@@ -266,14 +272,20 @@ func TestBacklogAround(t *testing.T) {
 	if !more {
 		t.Errorf("more = false at newest anchor, want true (older history exists)")
 	}
+	if moreNewer {
+		t.Errorf("moreNewer = true at the live tail, want false")
+	}
 
 	// Zero around → falls back to most-recent page semantics.
-	got, _, err = s.BacklogAround(ctx, "n", "#c", time.Time{}, 4)
+	got, _, moreNewer, err = s.BacklogAround(ctx, "n", "#c", time.Time{}, 4)
 	if err != nil {
 		t.Fatalf("around-zero: %v", err)
 	}
 	if len(got) != 4 || got[3].Text != text(9) {
 		t.Fatalf("zero-around = %+v", got)
+	}
+	if moreNewer {
+		t.Errorf("zero-around moreNewer = true, want false")
 	}
 }
 

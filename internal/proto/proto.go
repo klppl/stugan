@@ -186,15 +186,16 @@ type BacklogFetch struct {
 }
 
 // BacklogResp answers a BacklogFetch with a page of history, oldest-first.
-// More reports whether older history remains before this page. Around is
-// echoed when this page was produced by an Around-style request, so the
-// client can distinguish a centered window from a paged-backward reply.
+// More reports whether older history remains before this page. MoreNewer
+// reports whether an Around-style page stops before the live tail. Around is
+// echoed so the client can distinguish a centered window from a paged reply.
 type BacklogResp struct {
-	Network  string       `json:"network"`
-	Buffer   string       `json:"buffer"`
-	Messages []MessageDTO `json:"messages"`
-	More     bool         `json:"more"`
-	Around   string       `json:"around,omitempty"`
+	Network   string       `json:"network"`
+	Buffer    string       `json:"buffer"`
+	Messages  []MessageDTO `json:"messages"`
+	More      bool         `json:"more"`
+	MoreNewer bool         `json:"more_newer"`
+	Around    string       `json:"around,omitempty"`
 }
 
 // ContextFetch asks for a window of messages surrounding a single anchor

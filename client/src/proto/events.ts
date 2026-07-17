@@ -207,6 +207,9 @@ export interface BacklogResp {
   buffer: string;
   messages: MessageDTO[];
   more: boolean;
+  // True only when an Around-style result has messages beyond its newer edge.
+  // False means the centered result already reaches the live tail.
+  more_newer: boolean;
   // Echoed from the request when this page was an Around-style window,
   // so the client can tell a centered fetch apart from a paged-backward
   // reply (they're handled differently — see Connection.applyBacklog).
