@@ -13,9 +13,6 @@ const props = defineProps<{ msg: MessageDTO; showBuffer?: boolean }>();
 // toggle any reaction already present.
 const QUICK_REACTS = ["👍", "❤️", "😂", "🎉", "😮", "😢"];
 const showReactPicker = ref(false);
-// The setting supplies the initial state for each message. Keeping this local
-// lets one noisy preview be collapsed without changing the global preference.
-const previewsExpanded = ref(settings.expandLinkPreviews);
 
 // Reactions for this message (keyed globally by msgid). Returns one entry per
 // distinct emoji with its count and whether we reacted, sorted for stability.
@@ -79,6 +76,25 @@ const cleanText = computed(() => stripFormatting(props.msg.text));
 const urls = computed(() => extractURLs(props.msg.text));
 const media = computed(() => urls.value.filter((u) => isImage(u) || isVideo(u)).slice(0, 4));
 const links = computed(() => urls.value.filter((u) => !isImage(u) && !isVideo(u)).slice(0, 2));
+// The setting supplies the initial state for each link. A copied Set on each
+// change keeps Vue's reactivity explicit and lets previews in the same message
+// be expanded independently.
+const expandedPreviews = ref(new Set(settings.expandLinkPreviews ? links.value : []));
+
+function previewExpanded(u: string): boolean {
+  return expandedPreviews.value.has(u);
+}
+
+function togglePreview(u: string) {
+  const next = new Set(expandedPreviews.value);
+  if (next.has(u)) next.delete(u);
+  else next.add(u);
+  expandedPreviews.value = next;
+}
+
+function hasPreview(u: string): boolean {
+  return links.value.includes(u) && preview(u) !== null;
+}
 
 onMounted(() => {
   if (props.msg.kind === "privmsg" || props.msg.kind === "action") {
@@ -144,7 +160,22 @@ const nickCtx = inject<NickCtx>("nickCtx", {
           @touchmove.passive="nickCtx.onTouchMove($event)"
           @touchend="nickCtx.cancelLp"
           @touchcancel="nickCtx.cancelLp"
-        >{{ msg.from }}</span> <span class="seg">{{ cleanText }}</span></span>
+        >{{ msg.from }}</span>{{ " " }}
+        <template v-for="(s, i) in segs" :key="i">
+          <template v-if="s.type === 'link'">
+            <a :href="s.value" target="_blank" rel="noopener noreferrer">{{ s.value }}</a>
+            <button
+              v-if="hasPreview(s.value)"
+              type="button"
+              class="link-preview-toggle"
+              :aria-label="previewExpanded(s.value) ? 'Hide link preview' : 'Show link preview'"
+              :aria-expanded="previewExpanded(s.value)"
+              :title="previewExpanded(s.value) ? 'Hide preview' : 'Show preview'"
+              @click="togglePreview(s.value)"
+            ><span aria-hidden="true">{{ previewExpanded(s.value) ? "▴" : "▾" }}</span></button>
+          </template>
+          <span v-else class="seg">{{ s.value }}</span>
+        </template></span>
     </template>
     <template v-else>
       <span
@@ -160,7 +191,18 @@ const nickCtx = inject<NickCtx>("nickCtx", {
       >{{ msg.from }}</span>
       <span class="body">
         <template v-for="(s, i) in segs" :key="i">
-          <a v-if="s.type === 'link'" :href="s.value" target="_blank" rel="noopener noreferrer">{{ s.value }}</a>
+          <template v-if="s.type === 'link'">
+            <a :href="s.value" target="_blank" rel="noopener noreferrer">{{ s.value }}</a>
+            <button
+              v-if="hasPreview(s.value)"
+              type="button"
+              class="link-preview-toggle"
+              :aria-label="previewExpanded(s.value) ? 'Hide link preview' : 'Show link preview'"
+              :aria-expanded="previewExpanded(s.value)"
+              :title="previewExpanded(s.value) ? 'Hide preview' : 'Show preview'"
+              @click="togglePreview(s.value)"
+            ><span aria-hidden="true">{{ previewExpanded(s.value) ? "▴" : "▾" }}</span></button>
+          </template>
           <span v-else class="seg">{{ s.value }}</span>
         </template>
       </span>
@@ -176,27 +218,19 @@ const nickCtx = inject<NickCtx>("nickCtx", {
       </template>
     </div>
 
-    <!-- Link previews start from the saved default, then remain independently
-         expandable/collapsible for this message. -->
-    <div v-if="links.some((u) => preview(u))" class="previews">
-      <button
-        type="button"
-        class="preview-toggle"
-        :aria-expanded="previewsExpanded"
-        @click="previewsExpanded = !previewsExpanded"
-      >{{ previewsExpanded ? "▾ Hide preview" : "▸ Show preview" }}</button>
-      <div v-if="previewsExpanded" class="preview-cards">
-        <template v-for="u in links" :key="'p' + u">
-          <a v-if="preview(u)" :href="u" target="_blank" rel="noopener noreferrer" class="preview-card">
-            <img v-if="preview(u)!.image" :src="proxied(preview(u)!.image)" class="preview-img" loading="lazy" alt="" />
-            <span class="preview-text">
-              <span v-if="host(u)" class="preview-host">{{ host(u) }}</span>
-              <span class="preview-title">{{ preview(u)!.title }}</span>
-              <span v-if="preview(u)!.description" class="preview-desc">{{ preview(u)!.description }}</span>
-            </span>
-          </a>
-        </template>
-      </div>
+    <!-- Expanded cards sit below the message; their arrow controls live beside
+         the corresponding links above. -->
+    <div v-if="links.some((u) => preview(u) && previewExpanded(u))" class="previews">
+      <template v-for="u in links" :key="'p' + u">
+        <a v-if="preview(u) && previewExpanded(u)" :href="u" target="_blank" rel="noopener noreferrer" class="preview-card">
+          <img v-if="preview(u)!.image" :src="proxied(preview(u)!.image)" class="preview-img" loading="lazy" alt="" />
+          <span class="preview-text">
+            <span v-if="host(u)" class="preview-host">{{ host(u) }}</span>
+            <span class="preview-title">{{ preview(u)!.title }}</span>
+            <span v-if="preview(u)!.description" class="preview-desc">{{ preview(u)!.description }}</span>
+          </span>
+        </a>
+      </template>
     </div>
 
     <!-- reactions -->
