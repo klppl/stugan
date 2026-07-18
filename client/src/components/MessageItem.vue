@@ -76,10 +76,11 @@ const cleanText = computed(() => stripFormatting(props.msg.text));
 const urls = computed(() => extractURLs(props.msg.text));
 const media = computed(() => urls.value.filter((u) => isImage(u) || isVideo(u)).slice(0, 4));
 const links = computed(() => urls.value.filter((u) => !isImage(u) && !isVideo(u)).slice(0, 2));
+const previewURLs = computed(() => [...media.value, ...links.value]);
 // The setting supplies the initial state for each link. A copied Set on each
 // change keeps Vue's reactivity explicit and lets previews in the same message
 // be expanded independently.
-const expandedPreviews = ref(new Set(settings.expandLinkPreviews ? links.value : []));
+const expandedPreviews = ref(new Set(settings.expandLinkPreviews ? previewURLs.value : []));
 
 function previewExpanded(u: string): boolean {
   return expandedPreviews.value.has(u);
@@ -93,7 +94,7 @@ function togglePreview(u: string) {
 }
 
 function isPreviewLink(u: string): boolean {
-  return links.value.includes(u);
+  return previewURLs.value.includes(u);
 }
 
 onMounted(() => {
@@ -219,10 +220,10 @@ const nickCtx = inject<NickCtx>("nickCtx", {
     </template>
 
     <!-- inline media -->
-    <div v-if="media.length" class="embeds">
+    <div v-if="media.some((u) => previewExpanded(u))" class="embeds">
       <template v-for="u in media" :key="u">
-        <video v-if="isVideo(u)" :src="proxied(u)" controls preload="metadata" class="embed-media" />
-        <a v-else :href="u" target="_blank" rel="noopener noreferrer">
+        <video v-if="isVideo(u) && previewExpanded(u)" :src="proxied(u)" controls preload="metadata" class="embed-media" />
+        <a v-else-if="previewExpanded(u)" :href="u" target="_blank" rel="noopener noreferrer">
           <img :src="proxied(u)" loading="lazy" class="embed-media" alt="" />
         </a>
       </template>

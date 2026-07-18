@@ -121,7 +121,7 @@ interface Settings {
   customThemes: CustomTheme[];
   fontSize: number; // base font size in px (one of FONT_SIZES)
   foldEvents: boolean; // collapse runs of join/part/quit/nick lines
-  expandLinkPreviews: boolean; // show link-preview cards without requiring a click
+  expandLinkPreviews: boolean; // show link cards and direct media without requiring a click
   coloredNicks: boolean; // colorize nicks by a hash of the name
   reactions: boolean; // show emoji reactions (off by default; most servers don't support it)
   sendTyping: boolean; // broadcast our own +typing notifications (opt-in: others can see when you type)
