@@ -92,8 +92,8 @@ function togglePreview(u: string) {
   expandedPreviews.value = next;
 }
 
-function hasPreview(u: string): boolean {
-  return links.value.includes(u) && preview(u) !== null;
+function isPreviewLink(u: string): boolean {
+  return links.value.includes(u);
 }
 
 onMounted(() => {
@@ -165,14 +165,19 @@ const nickCtx = inject<NickCtx>("nickCtx", {
           <template v-if="s.type === 'link'">
             <a :href="s.value" target="_blank" rel="noopener noreferrer">{{ s.value }}</a>
             <button
-              v-if="hasPreview(s.value)"
+              v-if="isPreviewLink(s.value)"
               type="button"
               class="link-preview-toggle"
+              :class="{ expanded: previewExpanded(s.value) }"
               :aria-label="previewExpanded(s.value) ? 'Hide link preview' : 'Show link preview'"
               :aria-expanded="previewExpanded(s.value)"
               :title="previewExpanded(s.value) ? 'Hide preview' : 'Show preview'"
               @click="togglePreview(s.value)"
-            ><span aria-hidden="true">{{ previewExpanded(s.value) ? "▴" : "▾" }}</span></button>
+            >
+              <svg aria-hidden="true" viewBox="0 0 16 16" focusable="false">
+                <path d="m3 6 5 5 5-5" />
+              </svg>
+            </button>
           </template>
           <span v-else class="seg">{{ s.value }}</span>
         </template></span>
@@ -194,14 +199,19 @@ const nickCtx = inject<NickCtx>("nickCtx", {
           <template v-if="s.type === 'link'">
             <a :href="s.value" target="_blank" rel="noopener noreferrer">{{ s.value }}</a>
             <button
-              v-if="hasPreview(s.value)"
+              v-if="isPreviewLink(s.value)"
               type="button"
               class="link-preview-toggle"
+              :class="{ expanded: previewExpanded(s.value) }"
               :aria-label="previewExpanded(s.value) ? 'Hide link preview' : 'Show link preview'"
               :aria-expanded="previewExpanded(s.value)"
               :title="previewExpanded(s.value) ? 'Hide preview' : 'Show preview'"
               @click="togglePreview(s.value)"
-            ><span aria-hidden="true">{{ previewExpanded(s.value) ? "▴" : "▾" }}</span></button>
+            >
+              <svg aria-hidden="true" viewBox="0 0 16 16" focusable="false">
+                <path d="m3 6 5 5 5-5" />
+              </svg>
+            </button>
           </template>
           <span v-else class="seg">{{ s.value }}</span>
         </template>

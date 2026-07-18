@@ -1012,6 +1012,19 @@ body {
   vertical-align: middle;
   cursor: pointer;
 }
+.link-preview-toggle svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.15s ease;
+}
+.link-preview-toggle.expanded svg {
+  transform: rotate(180deg);
+}
 .link-preview-toggle:hover,
 .link-preview-toggle:focus-visible {
   color: var(--accent);
