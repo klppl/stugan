@@ -241,6 +241,11 @@ async function enableNotifications() {
       </label>
 
       <label class="row">
+        <span>Expand link previews</span>
+        <input v-model="settings.expandLinkPreviews" type="checkbox" />
+      </label>
+
+      <label class="row">
         <span>Colored nicks</span>
         <input v-model="settings.coloredNicks" type="checkbox" />
       </label>

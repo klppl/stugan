@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -295,6 +297,7 @@ func TestSearch(t *testing.T) {
 	s.Print(msg("n", "#c", "alice", "the quick brown fox", core.MsgPrivmsg, now))
 	s.Print(msg("n", "#c", "bob", "lazy dog sleeps", core.MsgPrivmsg, now))
 	s.Print(msg("n", "#d", "carol", "another quick note", core.MsgPrivmsg, now))
+	s.Print(msg("n", "#d", "dave", "Vilket antiklimax", core.MsgPrivmsg, now))
 
 	ctx := context.Background()
 	res, err := s.Search(ctx, "quick", "", "", 10)
@@ -320,11 +323,63 @@ func TestSearch(t *testing.T) {
 		t.Fatalf("search 'quick fox' = %d results err=%v, want 1", len(res), err)
 	}
 
+	// Trigram search matches a case-insensitive substring within a word.
+	res, err = s.Search(ctx, "KLIMAX", "", "", 10)
+	if err != nil || len(res) != 1 || res[0].From != "dave" {
+		t.Fatalf("substring search 'KLIMAX' = %+v err=%v, want dave's message", res, err)
+	}
+
+	// Terms shorter than one trigram still work via the substring fallback.
+	res, err = s.Search(ctx, "do", "", "", 10)
+	if err != nil || len(res) != 1 || res[0].From != "bob" {
+		t.Fatalf("short search 'do' = %+v err=%v, want bob's message", res, err)
+	}
+
 	// FTS5-special input must not error — it's matched literally, not parsed.
 	for _, q := range []string{`"`, "quick AND", "fox:", "c++", "(quick", "*", "  "} {
 		if _, err := s.Search(ctx, q, "", "", 10); err != nil {
 			t.Errorf("search %q errored: %v", q, err)
 		}
+	}
+}
+
+func TestSearchMigratesWordIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE messages (
+		  id INTEGER PRIMARY KEY, msgid TEXT NOT NULL DEFAULT '', network TEXT NOT NULL,
+		  buffer TEXT NOT NULL, ts INTEGER NOT NULL, from_nick TEXT NOT NULL DEFAULT '',
+		  account TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, text TEXT NOT NULL,
+		  self INTEGER NOT NULL DEFAULT 0, highlight INTEGER NOT NULL DEFAULT 0,
+		  tags TEXT NOT NULL DEFAULT ''
+		);
+		CREATE VIRTUAL TABLE messages_fts USING fts5(
+		  text, content='messages', content_rowid='id'
+		);
+		INSERT INTO messages(network, buffer, ts, kind, text)
+		VALUES ('n', '#c', 1, 'privmsg', 'Antiklimax');
+		INSERT INTO messages_fts(messages_fts) VALUES('rebuild');
+	`)
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	res, err := s.Search(context.Background(), "klimax", "", "", 10)
+	if err != nil || len(res) != 1 {
+		t.Fatalf("search after index migration = %+v err=%v, want one result", res, err)
 	}
 }
 

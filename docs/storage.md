@@ -66,8 +66,10 @@ Pragmas: `journal_mode=WAL` (concurrent reads alongside the writer),
   `limit/2` older + `limit/2` newer messages around an anchor time, returned
   oldest-first, with separate flags for history before and after the window.
   Backs jump-to-message and search-result navigation.
-- **`Search(ctx, query, network, buffer, limit)`** — an FTS5 MATCH over
-  `messages_fts`, newest matches first, optionally scoped to a network/buffer.
+- **`Search(ctx, query, network, buffer, limit)`** — a case-insensitive,
+  substring-capable FTS5 trigram MATCH over `messages_fts`, newest matches
+  first, optionally scoped to a network/buffer. One- and two-character terms
+  use a substring scan because they are shorter than a trigram.
 
 These feed the server's `backlog`, `backlog` (windowed), and `search:result`
 frames (see [protocol.md](protocol.md)).

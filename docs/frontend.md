@@ -48,7 +48,7 @@ a "new messages" line above it, cleared on navigation.
 | Module | Holds |
 |--------|-------|
 | `connection.store` | networks, buffers, messages, active buffer, reactions, typing — ephemeral, re-synced on reconnect |
-| `settings.ts` | theme, custom themes, muted buffers, fold-events, colored-nicks — **persisted to localStorage** (per-nick ignore is server-side, see the bundled `ignore.lua`) |
+| `settings.ts` | theme, custom themes, link-preview default, muted buffers, fold-events, colored-nicks — **persisted to localStorage** (per-nick ignore is server-side, see the bundled `ignore.lua`) |
 | `auth.ts` | auth-enabled/authenticated, user, magic-word required/granted; `refresh()`, `login()`, `logout()`, `submitMagicWord()` |
 | `ui.ts` | `sidebarOpen`, `membersOpen`, `isMobile` (responsive drawers, 720px breakpoint) |
 

@@ -121,6 +121,7 @@ interface Settings {
   customThemes: CustomTheme[];
   fontSize: number; // base font size in px (one of FONT_SIZES)
   foldEvents: boolean; // collapse runs of join/part/quit/nick lines
+  expandLinkPreviews: boolean; // show link-preview cards without requiring a click
   coloredNicks: boolean; // colorize nicks by a hash of the name
   reactions: boolean; // show emoji reactions (off by default; most servers don't support it)
   sendTyping: boolean; // broadcast our own +typing notifications (opt-in: others can see when you type)
@@ -148,6 +149,7 @@ function load(): Settings {
       customThemes: Array.isArray(s.customThemes) ? s.customThemes : [],
       fontSize: typeof s.fontSize === "number" ? s.fontSize : DEFAULT_FONT_SIZE,
       foldEvents: typeof s.foldEvents === "boolean" ? s.foldEvents : true,
+      expandLinkPreviews: typeof s.expandLinkPreviews === "boolean" ? s.expandLinkPreviews : true,
       coloredNicks: typeof s.coloredNicks === "boolean" ? s.coloredNicks : true,
       reactions: typeof s.reactions === "boolean" ? s.reactions : false,
       sendTyping: typeof s.sendTyping === "boolean" ? s.sendTyping : false,
@@ -159,6 +161,7 @@ function load(): Settings {
       customThemes: [],
       fontSize: DEFAULT_FONT_SIZE,
       foldEvents: true,
+      expandLinkPreviews: true,
       coloredNicks: true,
       reactions: false,
       sendTyping: false,

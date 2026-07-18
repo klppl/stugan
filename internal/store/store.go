@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 
@@ -50,7 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_buffer ON messages(network, buffer, id);
 CREATE INDEX IF NOT EXISTS idx_messages_buffer_ts ON messages(network, buffer, ts);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-  text, content='messages', content_rowid='id'
+  text, content='messages', content_rowid='id', tokenize='trigram'
 );
 CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
   INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
@@ -104,6 +105,10 @@ func Open(path string, log *slog.Logger) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migrateSearchIndex(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate search index: %w", err)
+	}
 	// Tolerant migrations for databases created by earlier versions.
 	for _, alter := range []string{
 		`ALTER TABLE messages ADD COLUMN highlight INTEGER NOT NULL DEFAULT 0`,
@@ -128,6 +133,49 @@ func Open(path string, log *slog.Logger) (*Store, error) {
 		}
 	}
 	return &Store{db: db, log: log}, nil
+}
+
+// migrateSearchIndex replaces the original word-tokenized FTS table with a
+// trigram index. Trigrams retain indexed full-text search while allowing a
+// query such as "klimax" to match inside "Antiklimax". CREATE TABLE IF NOT
+// EXISTS cannot change the tokenizer of databases created by older builds, so
+// detect those databases from sqlite_schema and rebuild their index once.
+func migrateSearchIndex(db *sql.DB) error {
+	var ddl string
+	if err := db.QueryRow(
+		`SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'messages_fts'`,
+	).Scan(&ddl); err != nil {
+		return err
+	}
+	if strings.Contains(strings.ToLower(ddl), "trigram") {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, stmt := range []string{
+		`DROP TRIGGER IF EXISTS messages_ai`,
+		`DROP TRIGGER IF EXISTS messages_ad`,
+		`DROP TABLE messages_fts`,
+		`CREATE VIRTUAL TABLE messages_fts USING fts5(
+		  text, content='messages', content_rowid='id', tokenize='trigram'
+		)`,
+		`CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
+		  INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
+		END`,
+		`CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+		  INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.id, old.text);
+		END`,
+		`INSERT INTO messages_fts(messages_fts) VALUES('rebuild')`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Close closes the database.
@@ -527,22 +575,21 @@ func (s *Store) BacklogAround(ctx context.Context, network, buffer string, aroun
 	return append(older, newer...), more, moreNewer, nil
 }
 
-// ftsQuery turns a user's free-text search into a safe FTS5 MATCH expression.
-// Each whitespace-separated term is wrapped as a quoted FTS5 string literal
-// (embedded quotes doubled), so input like "c++", a stray quote, a trailing
-// "AND", or a "key:value" is matched literally instead of being parsed as FTS5
-// syntax (which would surface to the user as an opaque error). Terms are joined
-// by spaces, preserving FTS5's implicit-AND across words. Returns "" when the
-// query has no usable terms.
-func ftsQuery(raw string) string {
+// searchQuery turns free text into an FTS5 MATCH expression plus any terms too
+// short for the trigram index. Each term is quoted so FTS syntax is always
+// treated literally. Terms remain implicit-AND: every long term must match the
+// trigram index and every one/two-character term must occur in the message.
+func searchQuery(raw string) (match string, short []string) {
 	fields := strings.Fields(raw)
-	if len(fields) == 0 {
-		return ""
+	quoted := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if utf8.RuneCountInString(f) < 3 {
+			short = append(short, f)
+			continue
+		}
+		quoted = append(quoted, `"`+strings.ReplaceAll(f, `"`, `""`)+`"`)
 	}
-	for i, f := range fields {
-		fields[i] = `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
-	}
-	return strings.Join(fields, " ")
+	return strings.Join(quoted, " "), short
 }
 
 // Search runs a full-text query over message text, newest matches first.
@@ -551,14 +598,25 @@ func (s *Store) Search(ctx context.Context, query, network, buffer string, limit
 	if limit <= 0 {
 		limit = 50
 	}
-	match := ftsQuery(query)
-	if match == "" {
+	match, short := searchQuery(query)
+	if match == "" && len(short) == 0 {
 		return nil, nil // no usable search terms
 	}
-	q := `SELECT ` + msgColsM + `
-	      FROM messages_fts f JOIN messages m ON m.id = f.rowid
-	      WHERE messages_fts MATCH ?`
-	args := []any{match}
+	q := `SELECT ` + msgColsM + ` FROM messages m`
+	var args []any
+	if match != "" {
+		q += ` JOIN messages_fts f ON m.id = f.rowid WHERE messages_fts MATCH ?`
+		args = append(args, match)
+	} else {
+		q += ` WHERE 1 = 1`
+	}
+	// FTS5 trigrams cannot match terms shorter than three characters. Preserve
+	// useful searches such as "go" with a case-insensitive substring fallback;
+	// longer terms still narrow the candidate rows through the index first.
+	for _, term := range short {
+		q += ` AND instr(lower(m.text), lower(?)) > 0`
+		args = append(args, term)
+	}
 	if network != "" {
 		q += " AND m.network = ?"
 		args = append(args, network)

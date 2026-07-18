@@ -13,6 +13,9 @@ const props = defineProps<{ msg: MessageDTO; showBuffer?: boolean }>();
 // toggle any reaction already present.
 const QUICK_REACTS = ["👍", "❤️", "😂", "🎉", "😮", "😢"];
 const showReactPicker = ref(false);
+// The setting supplies the initial state for each message. Keeping this local
+// lets one noisy preview be collapsed without changing the global preference.
+const previewsExpanded = ref(settings.expandLinkPreviews);
 
 // Reactions for this message (keyed globally by msgid). Returns one entry per
 // distinct emoji with its count and whether we reacted, sorted for stability.
@@ -173,18 +176,27 @@ const nickCtx = inject<NickCtx>("nickCtx", {
       </template>
     </div>
 
-    <!-- link previews: always break onto their own full-width row -->
+    <!-- Link previews start from the saved default, then remain independently
+         expandable/collapsible for this message. -->
     <div v-if="links.some((u) => preview(u))" class="previews">
-      <template v-for="u in links" :key="'p' + u">
-        <a v-if="preview(u)" :href="u" target="_blank" rel="noopener noreferrer" class="preview-card">
-          <img v-if="preview(u)!.image" :src="proxied(preview(u)!.image)" class="preview-img" loading="lazy" alt="" />
-          <span class="preview-text">
-            <span v-if="host(u)" class="preview-host">{{ host(u) }}</span>
-            <span class="preview-title">{{ preview(u)!.title }}</span>
-            <span v-if="preview(u)!.description" class="preview-desc">{{ preview(u)!.description }}</span>
-          </span>
-        </a>
-      </template>
+      <button
+        type="button"
+        class="preview-toggle"
+        :aria-expanded="previewsExpanded"
+        @click="previewsExpanded = !previewsExpanded"
+      >{{ previewsExpanded ? "▾ Hide preview" : "▸ Show preview" }}</button>
+      <div v-if="previewsExpanded" class="preview-cards">
+        <template v-for="u in links" :key="'p' + u">
+          <a v-if="preview(u)" :href="u" target="_blank" rel="noopener noreferrer" class="preview-card">
+            <img v-if="preview(u)!.image" :src="proxied(preview(u)!.image)" class="preview-img" loading="lazy" alt="" />
+            <span class="preview-text">
+              <span v-if="host(u)" class="preview-host">{{ host(u) }}</span>
+              <span class="preview-title">{{ preview(u)!.title }}</span>
+              <span v-if="preview(u)!.description" class="preview-desc">{{ preview(u)!.description }}</span>
+            </span>
+          </a>
+        </template>
+      </div>
     </div>
 
     <!-- reactions -->

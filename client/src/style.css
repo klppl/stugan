@@ -994,6 +994,24 @@ body {
   gap: 4px;
   margin: 3px 0 2px;
 }
+.preview-toggle {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 0.82em;
+  cursor: pointer;
+}
+.preview-toggle:hover {
+  color: var(--accent);
+}
+.preview-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 .preview-card {
   display: flex;
   gap: 10px;
