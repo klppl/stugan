@@ -263,6 +263,7 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
         <li
           v-for="buf in channelBuffers(net)"
           :key="buf.name"
+          class="long-press-target"
           :class="{
             active: isActive(net.id, buf.name),
             [buf.kind]: true,
@@ -281,6 +282,7 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
           @touchmove.passive="ctx.onTouchMove($event)"
           @touchend="ctx.cancelLp"
           @touchcancel="ctx.cancelLp"
+          @selectstart.prevent
           title="right-click (or long-press) for buffer options; drag to reorder"
         >
           <span v-if="isEncrypted(buf)" class="lock-icon" :title="`encrypted (${buf.state.encrypted})`">🔒</span>
@@ -299,7 +301,7 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
         <li
           v-for="f in sortedFriends(net)"
           :key="f.nick"
-          class="friend"
+          class="friend long-press-target"
           :class="{ offline: !f.online }"
           :title="(f.online ? f.nick + ' is online — click to DM' : f.nick + ' is offline') + '; right-click to remove'"
           @click="openFriend(net.id, f.nick)"
@@ -308,6 +310,7 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
           @touchmove.passive="friendCtx.onTouchMove($event)"
           @touchend="friendCtx.cancelLp"
           @touchcancel="friendCtx.cancelLp"
+          @selectstart.prevent
         >
           <span class="friend-dot" :class="{ on: f.online }"></span>
           <span class="friend-nick">{{ f.nick }}</span>

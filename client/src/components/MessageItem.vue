@@ -152,7 +152,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
     <template v-else-if="msg.kind === 'action'">
       <span class="body">*
         <span
-          class="from"
+          class="from long-press-target"
           :class="{ self: msg.self }"
           :style="{ color: fromColor(msg.from) }"
           title="right-click (or long-press) for nick options"
@@ -161,6 +161,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
           @touchmove.passive="nickCtx.onTouchMove($event)"
           @touchend="nickCtx.cancelLp"
           @touchcancel="nickCtx.cancelLp"
+          @selectstart.prevent
         >{{ msg.from }}</span>{{ " " }}
         <template v-for="(s, i) in segs" :key="i">
           <template v-if="s.type === 'link'">
@@ -185,7 +186,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
     </template>
     <template v-else>
       <span
-        class="from"
+        class="from long-press-target"
         :class="{ self: msg.self }"
         :style="{ color: fromColor(msg.from) }"
         title="right-click (or long-press) for nick options"
@@ -194,6 +195,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
         @touchmove.passive="nickCtx.onTouchMove($event)"
         @touchend="nickCtx.cancelLp"
         @touchcancel="nickCtx.cancelLp"
+        @selectstart.prevent
       >{{ msg.from }}</span>
       <span class="body">
         <template v-for="(s, i) in segs" :key="i">

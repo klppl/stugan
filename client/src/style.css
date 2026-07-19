@@ -838,6 +838,15 @@ body {
   font-weight: 600;
   flex-shrink: 0;
 }
+/* Custom context-menu targets must not also trigger iOS/Android's native copy
+   callout. Scope this to the interactive row/nick only so surrounding message
+   text remains selectable; pan-y preserves normal vertical scrolling. */
+.long-press-target {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: pan-y;
+}
 .message .from.self {
   color: var(--self);
 }

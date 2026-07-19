@@ -16,7 +16,9 @@ import { onMounted, onUnmounted, ref, type Ref } from "vue";
 //
 // Width/height are the approximate menu dimensions used to clamp the
 // position so it doesn't overflow the viewport. Defaults match the
-// existing .ctx-menu CSS.
+// existing .ctx-menu CSS. Touch targets should also carry the shared
+// .long-press-target class and prevent selectstart, which stops the native
+// copy callout without disabling vertical scrolling.
 
 export interface CtxState<T> {
   payload: T;
@@ -57,6 +59,10 @@ export function useContextMenu<T>(opts: { width?: number; height?: number } = {}
   function onTouchStart(payload: T, ev: TouchEvent) {
     const t = ev.touches[0];
     if (!t) return;
+    // Interactive long-press targets opt out of native selection/callouts in
+    // CSS. Clear any selection left from an earlier gesture as well, so the
+    // custom menu never opens underneath stale copy handles on mobile.
+    window.getSelection()?.removeAllRanges();
     lpStart = { x: t.clientX, y: t.clientY };
     cancelLp();
     lpTimer = setTimeout(() => {

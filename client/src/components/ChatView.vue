@@ -649,6 +649,7 @@ async function onDrop(e: DragEvent) {
             <li
               v-for="mem in members"
               :key="mem.nick"
+              class="long-press-target"
               :class="{ away: mem.away }"
               :title="mem.away ? mem.nick + ' (away)' : 'click to DM; right-click for more'"
               @click="openQuery(mem.nick)"
@@ -657,6 +658,7 @@ async function onDrop(e: DragEvent) {
               @touchmove.passive="memberCtx.onTouchMove($event)"
               @touchend="memberCtx.cancelLp"
               @touchcancel="memberCtx.cancelLp"
+              @selectstart.prevent
             >
               <span class="modes">{{ mem.modes }}</span><span :style="{ color: memberColor(mem.nick) }">{{ mem.nick }}</span>
             </li>
