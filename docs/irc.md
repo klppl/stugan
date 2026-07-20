@@ -58,10 +58,11 @@ echo so the server's copy is the only one shown.
 
 ### Reconnect
 
-The connection runs to completion and returns; reconnect, backoff, and the
-per-network `perform` lines are driven by the Engine, which re-dials through
-the `Connector`. IRC connections are independent of browser sessions — they
-persist while no client is attached.
+The connection runs to completion and returns; reconnect, backoff, Perform,
+and auto-join sequencing are driven by the Engine, which re-dials through the
+`Connector`. Perform lines run one second apart; configured channels join one
+second after the last line so service auth/modes settle first. IRC connections
+are independent of browser sessions — they persist while no client is attached.
 
 ## Event translation (`translate.go`)
 

@@ -27,6 +27,9 @@ type IRCConn interface {
 	Caps() []string
 	// CurrentNick returns our current nick on this network.
 	CurrentNick() string
+	// Autojoin joins the connection's configured channels. The engine calls it
+	// after Perform has completed so service auth/user modes can settle first.
+	Autojoin()
 	// Close terminates the connection.
 	Close() error
 }

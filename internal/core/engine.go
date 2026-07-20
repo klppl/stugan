@@ -105,7 +105,11 @@ type Engine struct {
 	// conns and the run-state below are guarded by mu.
 	conns       map[string]IRCConn
 	connCancels map[string]context.CancelFunc
-	listAccum   map[string][]ChannelListItem // in-progress LIST results
+	// startupSeq identifies the current post-registration sequence for each
+	// network. A reconnect supersedes any older Perform goroutine before it can
+	// send another command or auto-join on the new connection.
+	startupSeq map[string]uint64
+	listAccum  map[string][]ChannelListItem // in-progress LIST results
 	// pendingWhois records which buffer issued a WHOIS/WHOWAS/WHO/NAMES so we
 	// can route the server's numeric replies back to it. Key is
 	// "<network>\t<lowercase-target>"; cleared on the matching end-of
@@ -177,6 +181,7 @@ func New(opts Options) *Engine {
 		netStore:     opts.Networks,
 		conns:        map[string]IRCConn{},
 		connCancels:  map[string]context.CancelFunc{},
+		startupSeq:   map[string]uint64{},
 		listAccum:    map[string][]ChannelListItem{},
 		pendingWhois: map[string]string{},
 		pendingState: map[string]map[string]map[string]string{},
@@ -353,6 +358,7 @@ func (e *Engine) RemoveNetwork(id string) error {
 	// a plugin re-publishes buffer state on rejoin if it's ever re-added.
 	delete(e.pendingState, id)
 	delete(e.listAccum, id)
+	delete(e.startupSeq, id)
 	for i, n := range e.user.Networks {
 		if n.ID == id {
 			e.user.Networks = append(e.user.Networks[:i], e.user.Networks[i+1:]...)
@@ -986,18 +992,21 @@ func (e *Engine) handle(ctx context.Context, ev Event) {
 	}
 }
 
+const performCommandDelay = time.Second
+
 // runPerform replays a network's configured perform commands after it
-// registers, on every (re)connect. Lines are submitted through the normal
-// input path (alias expansion, /command dispatch, plugin hooks), so they
-// behave exactly as if the user had typed them in the status buffer. It runs
-// in its own goroutine: sendInput enqueues onto the event bus, and we are
-// already on the loop goroutine reading that bus, so submitting inline could
-// stall if the buffer filled.
+// registers, on every (re)connect, then starts configured channel auto-join.
+// Commands are spaced out so service authentication/user modes have time to
+// settle (QuakeNet, for example, may otherwise see JOIN before +x). Lines go
+// through the normal input path (aliases, commands, plugin hooks), exactly as
+// if typed in the status buffer. Networks without Perform auto-join at once.
 func (e *Engine) runPerform(network string) {
 	e.mu.RLock()
 	n := e.user.Network(network)
 	var lines []string
 	var variables map[string]string
+	var conn IRCConn
+	var hasAutojoin bool
 	if n != nil && len(n.Params.Perform) > 0 {
 		lines = append(lines, n.Params.Perform...)
 		networkName := n.Name
@@ -1013,18 +1022,62 @@ func (e *Engine) runPerform(network string) {
 			"realname": n.Params.Realname,
 		}
 	}
+	if n != nil {
+		hasAutojoin = len(n.Params.Channels) > 0
+		conn = e.conns[network]
+	}
 	e.mu.RUnlock()
+	if conn == nil {
+		return
+	}
+
+	e.mu.Lock()
+	e.startupSeq[network]++
+	seq := e.startupSeq[network]
+	e.mu.Unlock()
+
 	if len(lines) == 0 {
+		if e.startupActive(network, seq, conn) {
+			conn.Autojoin()
+		}
 		return
 	}
 	go func() {
+		commands := make([]string, 0, len(lines))
 		for _, line := range lines {
-			if strings.TrimSpace(line) == "" {
-				continue
+			if strings.TrimSpace(line) != "" {
+				commands = append(commands, line)
+			}
+		}
+		for i, line := range commands {
+			if !e.startupActive(network, seq, conn) {
+				return
 			}
 			e.SendInput(network, StatusBuffer, expandPerformVariables(line, variables))
+			// Wait between Perform commands, and after the final command when
+			// channels are waiting to auto-join. No trailing wait is needed if
+			// there is no subsequent startup action.
+			if i+1 < len(commands) || hasAutojoin {
+				select {
+				case <-e.done:
+					return
+				case <-time.After(performCommandDelay):
+				}
+			}
+		}
+		if e.startupActive(network, seq, conn) {
+			conn.Autojoin()
 		}
 	}()
+}
+
+// startupActive prevents a delayed Perform sequence from leaking across a
+// disconnect/reconnect or a live network edit that replaces the connection.
+func (e *Engine) startupActive(network string, seq uint64, conn IRCConn) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	n := e.user.Network(network)
+	return n != nil && n.State == StateRegistered && e.conns[network] == conn && e.startupSeq[network] == seq
 }
 
 // expandPerformVariables substitutes named $variables in a perform line.

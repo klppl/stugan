@@ -69,17 +69,18 @@ type fakeConnector struct {
 	conns  []*fakeRuntimeConn
 }
 
-func (f *fakeConnector) Dial(NetworkParams, ConnHandler) (IRCConn, error) {
+func (f *fakeConnector) Dial(p NetworkParams, _ ConnHandler) (IRCConn, error) {
 	f.dialed++
-	c := &fakeRuntimeConn{caps: f.caps}
+	c := &fakeRuntimeConn{caps: f.caps, channels: append([]string(nil), p.Channels...)}
 	f.conns = append(f.conns, c)
 	return c, nil
 }
 
 type fakeRuntimeConn struct {
-	mu   sync.Mutex
-	raws []string
-	caps []string
+	mu       sync.Mutex
+	raws     []string
+	caps     []string
+	channels []string
 }
 
 func (c *fakeRuntimeConn) Connect(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
@@ -97,7 +98,14 @@ func (c *fakeRuntimeConn) Message(target, text string) error {
 }
 func (c *fakeRuntimeConn) Caps() []string      { return c.caps }
 func (c *fakeRuntimeConn) CurrentNick() string { return "" }
-func (c *fakeRuntimeConn) Close() error        { return nil }
+func (c *fakeRuntimeConn) Autojoin() {
+	c.mu.Lock()
+	if len(c.channels) > 0 {
+		c.raws = append(c.raws, "JOIN "+strings.Join(c.channels, ","))
+	}
+	c.mu.Unlock()
+}
+func (c *fakeRuntimeConn) Close() error { return nil }
 
 // rawsSnap returns a copy of the sent raw lines, safe to read while the
 // engine loop may still be writing (used by tests that run the loop).
@@ -465,12 +473,13 @@ func TestRunPerformOnConnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = e.Run(ctx) }()
+	waitForNetworkState(t, e, "n", StateConnecting)
 
 	// The server may select a different nick from the configured preference.
 	// Perform variables must use that live nick.
 	e.HandleEvent(Event{Type: EvConnect, Network: "n", Nick: "server-nick"})
 
-	deadline := time.After(2 * time.Second)
+	deadline := time.After(3 * time.Second)
 	for {
 		raws := conn.conns[0].rawsSnap()
 		if slices.Contains(raws, "JOIN #ops opskey") &&
@@ -483,6 +492,56 @@ func TestRunPerformOnConnect(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+}
+
+// Perform must finish before configured channel auto-join. QuakeNet service
+// auth/user modes such as +x otherwise race the JOIN and expose the real host.
+func TestPerformBeforeAutojoin(t *testing.T) {
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	if err := e.AddNetworkLive(NetworkParams{
+		ID: "n", Name: "QuakeNet", Addr: "irc.quakenet.org:6697", Nick: "me",
+		Perform: []string{"/raw MODE me +x"}, Channels: []string{"#stugan"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = e.Run(ctx) }()
+	waitForNetworkState(t, e, "n", StateConnecting)
+
+	start := time.Now()
+	e.HandleEvent(Event{Type: EvConnect, Network: "n", Nick: "me"})
+	deadline := time.After(3 * time.Second)
+	for {
+		raws := conn.conns[0].rawsSnap()
+		if len(raws) >= 2 {
+			if raws[0] != "MODE me +x" || raws[1] != "JOIN #stugan" {
+				t.Fatalf("startup order = %v, want MODE then JOIN", raws)
+			}
+			if elapsed := time.Since(start); elapsed < performCommandDelay {
+				t.Fatalf("autojoin after %v, want at least %v for mode to settle", elapsed, performCommandDelay)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("startup sequence incomplete; raws=%v", raws)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func waitForNetworkState(t *testing.T, e *Engine, network string, want ConnState) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if n := e.SnapshotNetwork(network); n != nil && n.State == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("network %q did not reach state %q", network, want)
 }
 
 func TestExpandPerformVariables(t *testing.T) {

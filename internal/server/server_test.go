@@ -25,6 +25,7 @@ func (f *fakeConn) Message(target, text string) error {
 }
 func (f *fakeConn) Caps() []string      { return nil }
 func (f *fakeConn) CurrentNick() string { return "me" }
+func (f *fakeConn) Autojoin()           {}
 func (f *fakeConn) Close() error        { return nil }
 
 type noopSink struct{}

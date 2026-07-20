@@ -47,7 +47,7 @@ type Options struct {
 	// CertPEM is a client certificate (cert + private key concatenated, PEM)
 	// presented during the TLS handshake for CertFP / SASL EXTERNAL.
 	CertPEM  string
-	Channels []string // auto-joined after registration
+	Channels []string // auto-joined by the engine after registration + Perform
 	// ChannelKeys maps a channel in Channels to its join key (+k password).
 	// Channels without a key are absent.
 	ChannelKeys map[string]string
@@ -196,7 +196,6 @@ func (c *Conn) registerHandlers() {
 		// goroutine, same as absorbMultiline/handleBatch, so no lock is needed.
 		clear(c.batches)
 		c.emit(core.Event{Type: core.EvConnect, Network: c.opts.Network, Nick: gc.GetNick()})
-		c.autojoin(gc)
 		c.armMonitor(gc)
 	})
 
@@ -304,6 +303,11 @@ func (c *Conn) autojoin(gc *girc.Client) {
 		gc.Cmd.Join(keyless...)
 	}
 }
+
+// Autojoin joins the configured channels. Registration only emits EvConnect;
+// the engine calls this after its Perform sequence so authentication and user
+// modes (notably QuakeNet +x) take effect before any channel JOIN is sent.
+func (c *Conn) Autojoin() { c.autojoin(c.client) }
 
 // monitorChunk is how many nicks ride one MONITOR + command. MONITOR targets
 // are comma-separated in a single parameter, so this keeps the line well within

@@ -65,7 +65,7 @@ authoritative.
 | `tls` | bool | Use TLS. |
 | `insecure` | bool | Skip TLS certificate verification (self-signed / LAN servers only). |
 | `nick` / `user` / `realname` | string | Identity. |
-| `channels` | []string | Auto-join on connect. |
+| `channels` | []string | Auto-join after registration and Perform. |
 | `monitor` | []string | Friends list watched via IRCv3 MONITOR (online/offline). Editable from the GUI thereafter. |
 | `connect` | bool | Connect on startup (default true). |
 | `sasl_user` / `sasl_pass` | string | SASL PLAIN credentials. |
@@ -97,6 +97,12 @@ confirmed the connection:
 
 Use `${name}` when text immediately follows a variable, for example
 `${nick}_away`. Use `$$` for a literal `$`. Unknown variables are left unchanged.
+
+Perform lines run in order with a one-second pause between commands. Configured
+`channels` are joined one second after the final Perform command, allowing
+service authentication and user modes (such as QuakeNet `+x`) to take effect
+before JOIN. With no Perform commands, channels are joined immediately after
+registration.
 
 ## `[highlight]`
 
