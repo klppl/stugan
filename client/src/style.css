@@ -756,6 +756,13 @@ body {
   gap: 12px;
   align-items: baseline;
 }
+.mentions-header {
+  justify-content: space-between;
+  align-items: center;
+}
+.mentions-read {
+  white-space: nowrap;
+}
 .buffer-name {
   font-weight: 700;
   flex-shrink: 0;
@@ -828,6 +835,7 @@ body {
   color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 .message .loc {
   color: var(--accent);

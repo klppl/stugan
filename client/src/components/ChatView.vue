@@ -598,10 +598,17 @@ async function onDrop(e: DragEvent) {
 
     <!-- Mentions -->
     <template v-else-if="store.view === 'mentions'">
-      <header class="chat-header"><span class="buffer-name">Mentions</span></header>
+      <header class="chat-header mentions-header">
+        <span class="buffer-name">Mentions</span>
+        <button
+          v-if="store.mentions.length"
+          class="ghost mentions-read"
+          @click="connection.markMentionsRead()"
+        >Mark as read</button>
+      </header>
       <div class="messages">
         <div v-if="!store.mentions.length" class="empty">no mentions yet</div>
-        <MentionRow v-for="m in store.mentions" :key="msgKey(m)" :msg="m" />
+        <MentionRow v-for="m in store.mentions" :key="msgKey(m)" :msg="m" show-date />
       </div>
     </template>
 

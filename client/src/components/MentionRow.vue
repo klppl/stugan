@@ -7,7 +7,7 @@ import MessageItem from "./MessageItem.vue";
 // One row in the Mentions / Search panes. Clicking the row expands the chat
 // surrounding the message inline (fetched on demand, keyed by message id) so
 // the user gets context without leaving the list; clicking again collapses it.
-const props = defineProps<{ msg: MessageDTO }>();
+const props = defineProps<{ msg: MessageDTO; showDate?: boolean }>();
 
 const ctx = computed(() => connection.contextFor(props.msg));
 const open = computed(() => ctx.value?.open ?? false);
@@ -22,7 +22,7 @@ const open = computed(() => ctx.value?.open ?? false);
       @click="connection.toggleContext(msg)"
     >
       <span class="disclosure" aria-hidden="true">{{ open ? "▾" : "▸" }}</span>
-      <MessageItem :msg="msg" :show-buffer="true" />
+      <MessageItem :msg="msg" :show-buffer="true" :show-date="showDate" />
     </div>
     <div v-if="open" class="mention-context">
       <div v-if="ctx?.loading" class="empty">loading context…</div>

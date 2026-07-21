@@ -1072,6 +1072,34 @@ export class Connection {
     this.store.view = this.store.view === "mentions" ? "chat" : "mentions";
   }
 
+  // markMentionsRead is the only action that dismisses entries from the
+  // Mentions pane. Opening the pane is deliberately passive: highlights stay
+  // there until the user explicitly acknowledges them. Also advance each
+  // represented buffer's persisted read marker so the acknowledgement
+  // converges across reconnects and the user's other clients.
+  markMentionsRead() {
+    const mentions = this.store.mentions;
+    if (!mentions.length) return;
+
+    const buffers = new Map<string, { network: string; buffer: string }>();
+    for (const m of mentions) {
+      buffers.set(bufKey(m.network, m.buffer), { network: m.network, buffer: m.buffer });
+    }
+
+    for (const { network, buffer } of buffers.values()) {
+      const buf = this.buf(network, buffer);
+      if (buf) {
+        buf.unread = 0;
+        buf.highlight = 0;
+        buf.unreadMarker = null;
+        buf.markerPending = 0;
+      }
+      this.markRead(network, buffer);
+    }
+
+    this.store.mentions = [];
+  }
+
   // jumpToMessage navigates to the buffer that contains m and asks the
   // chat view to scroll m into view. The view watcher in ChatView calls
   // fetchAround() if the message isn't already in the loaded buffer.

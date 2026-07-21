@@ -7,7 +7,7 @@ import { settings } from "../settings";
 import { nickColor } from "../nickColor";
 import { connection } from "../connection";
 
-const props = defineProps<{ msg: MessageDTO; showBuffer?: boolean }>();
+const props = defineProps<{ msg: MessageDTO; showBuffer?: boolean; showDate?: boolean }>();
 
 // A small fixed palette for one-click reactions; the chip row also lets you
 // toggle any reaction already present.
@@ -53,7 +53,11 @@ function doRedact() {
 
 function time(iso: string): string {
   if (!iso) return "";
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  const d = new Date(iso);
+  const clock = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  if (!props.showDate) return clock;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${clock}`;
 }
 
 // Membership churn (join/part/quit/nick) and true system notices both render
