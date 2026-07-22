@@ -1,5 +1,7 @@
 package core
 
+import "time"
+
 // API is the surface the engine exposes back to the plugin host, so Lua
 // scripts can act on and read the IRC state without the plugin package
 // touching engine internals or the IRC library. The engine implements it
@@ -29,6 +31,8 @@ type API interface {
 	Channels(network string) []ChannelInfo
 	Members(network, channel string) []MemberInfo
 	Nick(network string) string
+	// Backlog reads recent stored history for a buffer.
+	Backlog(network, buffer string, limit int) []MessageInfo
 }
 
 // NetworkInfo is a flat snapshot of a network for the plugin API.
@@ -52,4 +56,11 @@ type MemberInfo struct {
 	Account string
 	Modes   string
 	Away    bool
+}
+
+// MessageInfo is a flat snapshot of a stored message for the plugin API.
+type MessageInfo struct {
+	From string
+	Text string
+	Time time.Time
 }

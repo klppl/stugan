@@ -164,6 +164,7 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 			User:      &core.User{ID: u.Name, Name: u.Name},
 			Connector: connector,
 			Networks:  db, // persist GUI-added networks
+			History:   db, // history backlog reader for plugins
 		})
 		eng.AddSink(db)
 

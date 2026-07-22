@@ -70,6 +70,11 @@ type UnreadCount struct {
 // produce an enormous frame.
 const maxListItems = 2000
 
+// HistoryReader reads recent stored messages for a buffer.
+type HistoryReader interface {
+	Backlog(ctx context.Context, network, buffer string, beforeSeq int64, limit int) ([]Message, bool, error)
+}
+
 // Options configures a new Engine.
 type Options struct {
 	Logger    *slog.Logger
@@ -80,6 +85,7 @@ type Options struct {
 	Aliases   map[string]string // command aliases with $1/$2/$* substitution
 	Connector Connector         // builds connections for runtime AddNetwork
 	Networks  NetworkStore      // persists GUI-added networks (optional)
+	History   HistoryReader     // reads stored backlog (optional)
 }
 
 // Engine owns the domain state and serializes all mutation onto a single
@@ -90,9 +96,10 @@ type Options struct {
 // guarded by mu: the loop write-locks for the brief mutation, readers
 // read-lock. I/O (sink fan-out, conn sends) happens outside the lock.
 type Engine struct {
-	log   *slog.Logger
-	host  PluginHost
-	sinks []Sink
+	log     *slog.Logger
+	host    PluginHost
+	sinks   []Sink
+	history HistoryReader
 
 	mu   sync.RWMutex
 	user *User
@@ -174,6 +181,7 @@ func New(opts Options) *Engine {
 		log:          log,
 		host:         host,
 		sinks:        sinks,
+		history:      opts.History,
 		user:         user,
 		highlight:    hl,
 		aliases:      opts.Aliases,

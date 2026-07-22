@@ -197,6 +197,22 @@ stugan.hook_command("summarize", function(args, ctx)
   local count = tonumber(args[1]) or 30
   local key = (ctx.network or ""):lower() .. "/" .. (ctx.buffer or ""):lower()
   local msgs = history[key] or {}
+
+  -- If in-memory history has fewer lines than requested, query SQLite database backlog!
+  if #msgs < count and type(stugan.backlog) == "function" then
+    local db_msgs = stugan.backlog(ctx.network, ctx.buffer, count)
+    if db_msgs and #db_msgs > 0 then
+      msgs = {}
+      for _, m in ipairs(db_msgs) do
+        table.insert(msgs, {
+          from = m.from or "unknown",
+          text = m.text or "",
+          time = os.date("%H:%M", m.time or os.time())
+        })
+      end
+    end
+  end
+
   if #msgs == 0 then
     stugan.print(ctx.network, ctx.buffer, "No recent messages captured in this buffer to summarize.")
     return

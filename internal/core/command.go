@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -481,4 +482,19 @@ func (a engineAPI) Nick(network string) string {
 		return n.Nick
 	}
 	return ""
+}
+
+func (a engineAPI) Backlog(network, buffer string, limit int) []MessageInfo {
+	if a.e.history == nil {
+		return nil
+	}
+	msgs, _, err := a.e.history.Backlog(context.Background(), network, buffer, 0, limit)
+	if err != nil || len(msgs) == 0 {
+		return nil
+	}
+	out := make([]MessageInfo, len(msgs))
+	for i, m := range msgs {
+		out[i] = MessageInfo{From: m.From, Text: m.Text, Time: m.Time}
+	}
+	return out
 }

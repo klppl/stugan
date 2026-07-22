@@ -69,11 +69,13 @@ func (a *fakeAPI) Networks() []core.NetworkInfo {
 }
 func (a *fakeAPI) Channels(string) []core.ChannelInfo       { return nil }
 func (a *fakeAPI) Members(string, string) []core.MemberInfo { return nil }
-func (a *fakeAPI) Nick(string) string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.nickVal
+func (a *fakeAPI) Nick(network string) string {
+	if a.nickVal != "" {
+		return a.nickVal
+	}
+	return "me"
 }
+func (a *fakeAPI) Backlog(string, string, int) []core.MessageInfo { return nil }
 
 func (a *fakeAPI) sentMsgs() [][3]string {
 	a.mu.Lock()

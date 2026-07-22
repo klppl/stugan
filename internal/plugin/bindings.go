@@ -256,6 +256,22 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 		L.Push(lua.LString(h.api.Nick(L.CheckString(1))))
 		return 1
 	}))
+	t.RawSetString("backlog", s.L.NewFunction(func(L *lua.LState) int {
+		net := L.CheckString(1)
+		buf := L.CheckString(2)
+		limit := L.OptInt(3, 50)
+		msgs := h.api.Backlog(net, buf, limit)
+		arr := L.NewTable()
+		for _, m := range msgs {
+			item := L.NewTable()
+			item.RawSetString("from", lua.LString(m.From))
+			item.RawSetString("text", lua.LString(m.Text))
+			item.RawSetString("time", lua.LNumber(m.Time.Unix()))
+			arr.Append(item)
+		}
+		L.Push(arr)
+		return 1
+	}))
 
 	// Persistence, config, logging ---------------------------------------
 	t.RawSetString("crypto", h.buildCrypto(s))
