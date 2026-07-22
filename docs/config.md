@@ -64,7 +64,7 @@ authoritative.
 | `fallbacks` | []string | Additional `host:port` servers tried in order when `addr` fails to connect. |
 | `tls` | bool | Use TLS. |
 | `insecure` | bool | Skip TLS certificate verification (self-signed / LAN servers only). |
-| `nick` / `user` / `realname` | string | Identity. |
+| `nick` / `user` / `realname` | string | Identity. `user` is the IRC ident and accepts only letters, digits and `-` `.` `_` `\` `[` `]` `{` `}` `^` `|`; it is **not** where a bouncer login goes (see [Bouncers](#bouncers-soju--znc)). |
 | `channels` | []string | Auto-join after registration and Perform. |
 | `monitor` | []string | Friends list watched via IRCv3 MONITOR (online/offline). Editable from the GUI thereafter. |
 | `connect` | bool | Connect on startup (default true). |
@@ -103,6 +103,64 @@ Perform lines run in order with a one-second pause between commands. Configured
 service authentication and user modes (such as QuakeNet `+x`) to take effect
 before JOIN. With no Perform commands, channels are joined immediately after
 registration.
+
+### Bouncers (soju / ZNC)
+
+A bouncer multiplexes several upstream networks over one connection, so it
+needs to know *which* account and *which* upstream network you want. Both
+carry that selector in a `username/network` string — but it belongs in the
+**authentication** fields, never in `user`:
+
+| Field | Value |
+|-------|-------|
+| `nick` | Your nick on the upstream network. |
+| `user` | Leave empty (defaults to the nick). The ident charset rejects `/` and `@`. |
+| `sasl_user` | soju: `<username>/<network>` — optionally `@<client>` to give this client its own detached session and backlog, e.g. `anders/libera@stugan`. |
+| `sasl_pass` | Your bouncer password. |
+| `server_pass` | ZNC only: `<username>/<network>:<password>`. |
+
+**soju needs SASL.** Its `PASS` path takes the account name from the `USER`
+command and treats `PASS` as the password alone — it never splits a
+`user:password` string — and the ident charset can't carry a `username/network`
+selector, so `server_pass` is a dead end there. soju advertises `sasl=PLAIN`;
+use `sasl_user` / `sasl_pass`. ZNC does split `PASS` on `:`, so `server_pass`
+works for it.
+
+In the GUI these are **SASL user** / **SASL pass** on the add-network form and
+**Server pass** under *Advanced*.
+
+```toml
+[[networks]]
+name      = "soju"
+addr      = "192.168.1.10:6697"
+tls       = true
+nick      = "anders"
+sasl_user = "anders/libera@stugan"
+sasl_pass = "hunter2"
+channels  = ["#stugan"]
+```
+
+Putting the bouncer login in `user` instead fails before the socket is even
+dialed, and the network retries with backoff forever:
+
+```
+level=WARN msg="connection ended; will retry" network=soju err="irc soju: invalid configuration: bad user/ident specified" backoff=8s
+```
+
+That is the ident charset rejecting `/` and `@` — move the value to
+`sasl_user` (ZNC: `server_pass`) and clear `user`.
+
+Getting the account name from somewhere else fails at registration instead. On
+soju, a `server_pass` with no working `USER` name is rejected against whatever
+ident was sent — here the nick, because `user` was empty:
+
+```
+downstream "10.0.0.14:60458": PASS authentication error for user "z": user not found
+```
+
+A plaintext bouncer on a LAN (`tls = false`, port 6667) sends the SASL password
+in the clear; prefer TLS, and `insecure = true` if it uses a self-signed
+certificate.
 
 ## `[highlight]`
 
