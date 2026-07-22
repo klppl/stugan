@@ -127,7 +127,10 @@ use `sasl_user` / `sasl_pass`. ZNC does split `PASS` on `:`, so `server_pass`
 works for it.
 
 In the GUI these are **SASL user** / **SASL pass** on the add-network form and
-**Server pass** under *Advanced*.
+**Server pass** under *Advanced*. Leave **SASL EXTERNAL** unticked: it takes
+precedence over the user/password and authenticates with a client certificate
+instead, so a bouncer that only offers PLAIN answers `Unsupported SASL
+mechanism` and drops the connection.
 
 ```toml
 [[networks]]
