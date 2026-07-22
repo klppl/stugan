@@ -25,10 +25,11 @@ stugan.setting("model", {
 })
 
 stugan.setting("language", {
-  type = "text",
+  type = "select",
   default = "auto",
+  options = { "auto", "swedish", "english", "german", "french", "spanish", "finnish", "norwegian", "danish", "dutch", "italian" },
   label = "Response Language",
-  help = "Target language ('auto' auto-detects channel language, or set e.g. 'swedish', 'english')"
+  help = "Target language ('auto' auto-detects channel language)"
 })
 
 stugan.setting("endpoint", {
