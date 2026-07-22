@@ -56,6 +56,8 @@ local function build_payload(fmt, net, buf, sender, text)
       timestamp = os.time()
     }
   end
+end
+
 local function trim(s)
   if type(s) ~= "string" then return "" end
   return s:match("^%s*(.-)%s*$") or ""

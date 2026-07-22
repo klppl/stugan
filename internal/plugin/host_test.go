@@ -4,11 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/klippelism/stugan/internal/core"
+	"github.com/klippelism/stugan/internal/scripts"
 )
 
 // fakeAPI records the actions scripts take.
@@ -671,6 +673,24 @@ func TestUnloadClearsUnhookers(t *testing.T) {
 	h.do(func() {
 		if n := len(h.unhookers); n != 4 {
 			t.Errorf("unhookers = %d after reloads, want 4", n)
+		}
+	})
+}
+
+func TestBuiltinScriptsLoadCleanly(t *testing.T) {
+	api := &fakeAPI{}
+	scriptsMap := map[string]string{}
+	for name, content := range scripts.Builtins {
+		scriptsMap[name] = string(content)
+	}
+	h := newHost(t, api, scriptsMap, nil)
+	h.do(func() {
+		for name := range scripts.Builtins {
+			scriptName := strings.TrimSuffix(name, ".lua")
+			s := h.scripts[scriptName]
+			if s == nil {
+				t.Errorf("builtin script %q was not loaded", name)
+			}
 		}
 	})
 }
