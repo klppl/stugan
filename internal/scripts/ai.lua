@@ -1,6 +1,7 @@
-stugan.describe("AI Assistant & Conversation Summarizer (/ask <prompt>, /summarize [N])")
+stugan.describe("AI Assistant & Conversation Summarizer (/ask <prompt>, /summarize [N], /ai)")
 
-local provider = stugan.setting("provider", {
+-- Register settings declarations for Settings -> Plugins form
+stugan.setting("provider", {
   type = "select",
   default = "openai",
   options = { "openai", "deepseek", "anthropic", "gemini", "ollama" },
@@ -8,7 +9,7 @@ local provider = stugan.setting("provider", {
   help = "Select OpenAI, DeepSeek, Anthropic Claude, Google Gemini, or local Ollama"
 })
 
-local api_key = stugan.setting("api_key", {
+stugan.setting("api_key", {
   type = "text",
   secret = true,
   default = "",
@@ -16,19 +17,32 @@ local api_key = stugan.setting("api_key", {
   help = "API Key for OpenAI, DeepSeek, Anthropic, or Gemini (leave blank for Ollama)"
 })
 
-local model_name = stugan.setting("model", {
+stugan.setting("model", {
   type = "text",
   default = "gpt-4o-mini",
   label = "Model Name",
   help = "e.g. gpt-4o-mini, deepseek-chat, deepseek-reasoner, claude-3-5-sonnet, gemini-1.5-flash, llama3"
 })
 
-local custom_endpoint = stugan.setting("endpoint", {
+stugan.setting("endpoint", {
   type = "text",
   default = "",
   label = "Custom Endpoint URL",
   help = "Override default API endpoint URL if needed"
 })
+
+local function trim(s)
+  if type(s) ~= "string" then return "" end
+  return s:match("^%s*(.-)%s*$") or ""
+end
+
+local function get_setting(name, default_val)
+  local val = stugan.kv.get(name)
+  if val ~= nil and trim(val) ~= "" then
+    return trim(val)
+  end
+  return default_val
+end
 
 -- Ring buffer of recent messages per channel for /summarize
 local history = {}
@@ -63,15 +77,9 @@ stugan.hook_input(function(input, ctx)
   return input
 end)
 
-local function trim(s)
-  if type(s) ~= "string" then return "" end
-  return s:match("^%s*(.-)%s*$") or ""
-end
-
-local function get_endpoint()
-  local custom = trim(custom_endpoint)
+local function get_endpoint(prov, model_name, api_key)
+  local custom = get_setting("endpoint", "")
   if custom ~= "" then return custom end
-  local prov = provider
   if prov == "deepseek" then
     return "https://api.deepseek.com/chat/completions"
   elseif prov == "anthropic" then
@@ -86,8 +94,16 @@ local function get_endpoint()
 end
 
 local function call_ai(prompt, system_prompt, cb)
-  local prov = provider
-  local url = get_endpoint()
+  local prov = get_setting("provider", "openai")
+  local api_key = get_setting("api_key", "")
+  local model_name = get_setting("model", prov == "deepseek" and "deepseek-chat" or "gpt-4o-mini")
+
+  if prov ~= "ollama" and api_key == "" then
+    cb(false, "API key is not configured for provider '" .. prov .. "'. Set it via /ai key <your-key> or in Settings -> Plugins.")
+    return
+  end
+
+  local url = get_endpoint(prov, model_name, api_key)
   local headers = { ["Content-Type"] = "application/json" }
   local req_body = {}
 
@@ -112,7 +128,7 @@ local function call_ai(prompt, system_prompt, cb)
       prompt = (system_prompt and (system_prompt .. "\n\n") or "") .. prompt,
       stream = false
     }
-  else -- openai default
+  else -- openai & deepseek
     headers["Authorization"] = "Bearer " .. api_key
     req_body = {
       model = model_name,
@@ -159,13 +175,13 @@ local function call_ai(prompt, system_prompt, cb)
       end
     elseif prov == "ollama" then
       reply = data.response or ""
-    else -- openai
+    else -- openai / deepseek
       if data.choices and data.choices[1] and data.choices[1].message then
         reply = data.choices[1].message.content or ""
       end
     end
 
-    reply = reply:gsub("^%s+", ""):gsub("%s+$", "")
+    reply = trim(reply)
     if reply == "" then
       cb(false, "Empty AI response")
     else
@@ -180,7 +196,9 @@ stugan.hook_command("ask", function(args, ctx)
     return
   end
   local prompt = table.concat(args, " ")
-  stugan.print(ctx.network, ctx.buffer, "🤖 Asking AI (" .. provider .. " / " .. model_name .. ")…")
+  local prov = get_setting("provider", "openai")
+  local model = get_setting("model", prov == "deepseek" and "deepseek-chat" or "gpt-4o-mini")
+  stugan.print(ctx.network, ctx.buffer, "🤖 Asking AI (" .. prov .. " / " .. model .. ")…")
 
   call_ai(prompt, "You are a concise IRC AI bot. Keep answers direct, friendly, and concise.", function(ok, result)
     if ok then
@@ -227,7 +245,8 @@ stugan.hook_command("summarize", function(args, ctx)
   local transcript = table.concat(lines, "\n")
   local prompt = "Summarize this recent IRC conversation from " .. ctx.buffer .. " into exactly 3 bullet points highlighting main discussion topics or decisions:\n\n" .. transcript
 
-  stugan.print(ctx.network, ctx.buffer, "📊 Summarizing last " .. #lines .. " messages using AI…")
+  local prov = get_setting("provider", "openai")
+  stugan.print(ctx.network, ctx.buffer, "📊 Summarizing last " .. #lines .. " messages using AI (" .. prov .. ")…")
 
   call_ai(prompt, "You are an expert chat summarizer. Provide a clean 3-bullet point summary.", function(ok, result)
     if ok then
@@ -239,4 +258,44 @@ stugan.hook_command("summarize", function(args, ctx)
       stugan.print(ctx.network, ctx.buffer, "❌ Summarize Error: " .. result)
     end
   end)
+end)
+
+stugan.hook_command("ai", function(args, ctx)
+  if #args == 0 then
+    stugan.print(ctx.network, ctx.buffer, "Usage: /ai <key|provider|model|endpoint|status>")
+    stugan.print(ctx.network, ctx.buffer, "  /ai key <your-api-key>             Set API key")
+    stugan.print(ctx.network, ctx.buffer, "  /ai provider <deepseek|openai|anthropic|gemini|ollama>")
+    stugan.print(ctx.network, ctx.buffer, "  /ai model <model-name>             Set model (e.g. deepseek-chat, gpt-4o-mini)")
+    stugan.print(ctx.network, ctx.buffer, "  /ai status                         Show active AI settings")
+    return
+  end
+
+  local cmd = args[1]:lower()
+  if cmd == "key" and #args >= 2 then
+    stugan.kv.set("api_key", args[2])
+    stugan.print(ctx.network, ctx.buffer, "✅ AI API key updated.")
+  elseif cmd == "provider" and #args >= 2 then
+    local p = args[2]:lower()
+    if p == "openai" or p == "deepseek" or p == "anthropic" or p == "gemini" or p == "ollama" then
+      stugan.kv.set("provider", p)
+      stugan.print(ctx.network, ctx.buffer, "✅ AI Provider set to: " .. p)
+    else
+      stugan.print(ctx.network, ctx.buffer, "Invalid provider. Choose: openai, deepseek, anthropic, gemini, ollama")
+    end
+  elseif cmd == "model" and #args >= 2 then
+    stugan.kv.set("model", args[2])
+    stugan.print(ctx.network, ctx.buffer, "✅ AI Model set to: " .. args[2])
+  elseif cmd == "endpoint" and #args >= 2 then
+    stugan.kv.set("endpoint", args[2])
+    stugan.print(ctx.network, ctx.buffer, "✅ AI custom endpoint set to: " .. args[2])
+  elseif cmd == "status" then
+    local prov = get_setting("provider", "openai")
+    local key = get_setting("api_key", "")
+    local model = get_setting("model", prov == "deepseek" and "deepseek-chat" or "gpt-4o-mini")
+    local ep = get_setting("endpoint", "(default)")
+    local key_status = key ~= "" and ("Configured (…" .. key:sub(-4) .. ")") or "Not set"
+    stugan.print(ctx.network, ctx.buffer, "AI Status -> Provider: " .. prov .. " | Model: " .. model .. " | Key: " .. key_status .. " | Endpoint: " .. ep)
+  else
+    stugan.print(ctx.network, ctx.buffer, "Unknown subcommand. Usage: /ai <key|provider|model|endpoint|status>")
+  end
 end)
