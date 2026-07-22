@@ -87,3 +87,18 @@ connect  = true
 # private key concatenated.
 # sasl_external = true
 # cert_file     = "/home/me/.config/stugan/libera.pem"
+
+# ---------------------------------------------------------------------------
+# SSH terminal UI (optional). Serves the same client over SSH as a full-screen
+# terminal app, bridged to the same engine as the web UI. Public-key auth only.
+# See docs/ssh.md.
+# ---------------------------------------------------------------------------
+# [ssh]
+# enabled = true
+# listen  = "0.0.0.0:2222"                     # default ":2222"
+# host_key = ""                                # default <data>/ssh_host_ed25519_key (auto-generated)
+# authorized_keys = [                          # single-user mode; multi-user uses
+#   "ssh-ed25519 AAAA... me@laptop",           # each [[users]].authorized_keys
+# ]
+#
+# Connect with:  ssh -p 2222 default@your-host

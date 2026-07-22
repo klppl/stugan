@@ -151,6 +151,43 @@ password_hash = "$2a$10$....."   # from `stugan -hashpw`
 
 Generate `password_hash` with `stugan -hashpw` (reads the password from stdin).
 
+Each user may also carry `authorized_keys` for the SSH terminal UI (see
+[`[ssh]`](#ssh)):
+
+```toml
+[[users]]
+name = "alice"
+password_hash = "$2a$10$....."
+authorized_keys = ["ssh-ed25519 AAAA… alice@laptop"]
+```
+
+## `[ssh]`
+
+Serves the same client as a terminal UI over SSH, so a network becomes usable
+from a plain `ssh` command with no browser. Authentication is **public key
+only** — a session's key must appear in the target user's `authorized_keys`.
+Disabled unless `enabled = true`. See [ssh.md](ssh.md) for the full guide.
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `enabled` | bool | `false` | Turn the SSH listener on. |
+| `listen` | string | `:2222` | Address to bind, e.g. `0.0.0.0:2222`. |
+| `host_key` | string | `<data>/ssh_host_ed25519_key` | Server host key path; an ed25519 key is generated here on first run if absent. |
+| `authorized_keys` | []string | — | OpenSSH public keys allowed to log in as the implicit **single** user. In multi-user mode use each `[[users]].authorized_keys` instead. |
+
+```toml
+[ssh]
+enabled = true
+listen  = "0.0.0.0:2222"
+authorized_keys = [
+  "ssh-ed25519 AAAA… me@laptop",
+]
+```
+
+Connect with `ssh -p 2222 <user>@<host>` — the SSH username selects which
+stugan user to open (in single-user mode it is `default`). A key registered
+for one user can never open another user's session.
+
 ## Environment variables
 
 | Var | Meaning |

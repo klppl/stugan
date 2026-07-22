@@ -20,6 +20,7 @@ import (
 	"github.com/klippelism/stugan/internal/scripts"
 	"github.com/klippelism/stugan/internal/server"
 	"github.com/klippelism/stugan/internal/store"
+	"github.com/klippelism/stugan/internal/tui"
 )
 
 // installBuiltinScripts copies any bundled scripts (currently just fish.lua
@@ -277,6 +278,16 @@ func userAliases(db *store.Store, cfg *config.Config, log *slog.Logger) map[stri
 // registerSinks wires the server's per-user sink onto each engine. Call
 // before running the engines.
 func (h *hub) registerSinks(srv *server.Server) {
+	for id, eng := range h.engines {
+		eng.AddSink(srv.Sink(id))
+	}
+}
+
+// registerTUISinks wires the SSH TUI server's per-user sink onto each engine,
+// so committed lines reach SSH sessions too. Like registerSinks, call before
+// running the engines: AddSink mutates the engine's sink slice, which must be
+// stable once the loop goroutine starts.
+func (h *hub) registerTUISinks(srv *tui.Server) {
 	for id, eng := range h.engines {
 		eng.AddSink(srv.Sink(id))
 	}
