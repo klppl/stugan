@@ -34,19 +34,33 @@ local custom_endpoint = stugan.setting("endpoint", {
 local history = {}
 local MAX_HISTORY = 100
 
-stugan.hook_message(function(msg)
-  if not msg or not msg.buffer or not msg.text then return msg end
-  local key = (msg.network or "") .. "/" .. (msg.buffer or "")
+local function record_history(net, buf, sender, text, timestamp)
+  if not net or not buf or not text or type(text) ~= "string" then return end
+  if text:sub(1, 1) == "/" then return end -- ignore slash commands
+  local key = (net:lower()) .. "/" .. (buf:lower())
   history[key] = history[key] or {}
   table.insert(history[key], {
-    from = msg.from or "unknown",
-    text = msg.text,
-    time = os.date("%H:%M", msg.time or os.time())
+    from = sender or "unknown",
+    text = text,
+    time = os.date("%H:%M", timestamp or os.time())
   })
   if #history[key] > MAX_HISTORY then
     table.remove(history[key], 1)
   end
+end
+
+stugan.hook_message(function(msg)
+  if msg and msg.network and msg.buffer and msg.text then
+    record_history(msg.network, msg.buffer, msg.from, msg.text, msg.time)
+  end
   return msg
+end)
+
+stugan.hook_input(function(input, ctx)
+  if input and ctx and ctx.network and ctx.buffer then
+    record_history(ctx.network, ctx.buffer, ctx.nick or "me", input, os.time())
+  end
+  return input
 end)
 
 local function trim(s)
@@ -181,7 +195,7 @@ end)
 
 stugan.hook_command("summarize", function(args, ctx)
   local count = tonumber(args[1]) or 30
-  local key = (ctx.network or "") .. "/" .. (ctx.buffer or "")
+  local key = (ctx.network or ""):lower() .. "/" .. (ctx.buffer or ""):lower()
   local msgs = history[key] or {}
   if #msgs == 0 then
     stugan.print(ctx.network, ctx.buffer, "No recent messages captured in this buffer to summarize.")
