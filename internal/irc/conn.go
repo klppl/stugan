@@ -160,11 +160,16 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		}
 		gcfg.TLSConfig = tcfg
 	}
+	// mech is kept aside so the client can be wired into it below: it writes
+	// its own AUTHENTICATE chunks (see sasl.go), but the girc client can only
+	// be built once this config is complete.
+	var mech *saslPlain
 	switch {
 	case opts.SASLExternal:
 		gcfg.SASL = &girc.SASLExternal{}
 	case opts.SASLUser != "":
-		gcfg.SASL = &girc.SASLPlain{User: opts.SASLUser, Pass: opts.SASLPass}
+		mech = &saslPlain{user: opts.SASLUser, pass: opts.SASLPass}
+		gcfg.SASL = mech
 	}
 
 	addrs := []string{opts.Addr}
@@ -180,6 +185,9 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		client:  girc.New(gcfg),
 		addrs:   addrs,
 		batches: map[string]*multilineBatch{},
+	}
+	if mech != nil {
+		mech.client = c.client
 	}
 	c.registerHandlers()
 	return c, nil
