@@ -340,5 +340,13 @@ func (c *Config) EnsureDirs() error {
 			return fmt.Errorf("create dir %s: %w", dir, err)
 		}
 	}
+	for _, u := range c.Users {
+		userHome := filepath.Join(c.home, "users", u.Name)
+		for _, dir := range []string{userHome, filepath.Join(userHome, "scripts"), filepath.Join(userHome, "data")} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return fmt.Errorf("create user dir %s: %w", dir, err)
+			}
+		}
+	}
 	return nil
 }

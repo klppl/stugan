@@ -27,6 +27,10 @@ import (
 // fresh install. Idempotent: an existing file is left alone, so a user who
 // edits or deletes a bundled script keeps their version across restarts.
 func installBuiltinScripts(scriptsDir string, log *slog.Logger) {
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		log.Warn("create scripts dir", "dir", scriptsDir, "err", err)
+		return
+	}
 	for name, body := range scripts.Builtins {
 		p := filepath.Join(scriptsDir, name)
 		if _, err := os.Stat(p); err == nil {

@@ -694,3 +694,18 @@ func TestBuiltinScriptsLoadCleanly(t *testing.T) {
 		}
 	})
 }
+
+func TestHostCreatesNonExistentScriptsDir(t *testing.T) {
+	api := &fakeAPI{}
+	dir := filepath.Join(t.TempDir(), "nested", "scripts")
+	h, err := New(Options{API: api, Dir: dir})
+	if err != nil {
+		t.Fatalf("New failed with non-existent dir: %v", err)
+	}
+	defer h.Close()
+
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		t.Errorf("expected scripts dir %s to be created, err: %v", dir, err)
+	}
+}
+

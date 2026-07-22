@@ -759,6 +759,9 @@ func (h *Host) startWatcher() error {
 	if h.dir == "" {
 		return errors.New("no scripts dir")
 	}
+	if err := os.MkdirAll(h.dir, 0o755); err != nil {
+		return err
+	}
 	if _, err := os.Stat(h.dir); err != nil {
 		return err
 	}

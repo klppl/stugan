@@ -124,3 +124,30 @@ func TestPluginSandbox(t *testing.T) {
 		})
 	}
 }
+
+func TestEnsureDirs(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "stugan")
+	cfg := &Config{
+		home: home,
+		Users: []UserConfig{
+			{Name: "alice"},
+		},
+	}
+	if err := cfg.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs failed: %v", err)
+	}
+
+	for _, d := range []string{
+		home,
+		cfg.ScriptsDir(),
+		cfg.DataDir(),
+		filepath.Join(home, "users", "alice", "scripts"),
+		filepath.Join(home, "users", "alice", "data"),
+	} {
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			t.Errorf("expected directory %s to exist, err: %v", d, err)
+		}
+	}
+}
+
