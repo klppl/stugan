@@ -98,9 +98,15 @@ local function call_ai(prompt, system_prompt, cb)
   local api_key = get_setting("api_key", "")
   local model_name = get_setting("model", prov == "deepseek" and "deepseek-chat" or "gpt-4o-mini")
 
-  if prov ~= "ollama" and api_key == "" then
-    cb(false, "API key is not configured for provider '" .. prov .. "'. Set it via /ai key <your-key> or in Settings -> Plugins.")
-    return
+  if prov ~= "ollama" then
+    if api_key == "" then
+      cb(false, "API key is not configured for provider '" .. prov .. "'. Set it via /ai key <your-key> or in Settings -> Plugins.")
+      return
+    end
+    if api_key:find("gpt%-") or api_key:find("claude%-") or api_key:find("gemini%-") or api_key:find("deepseek%-") or api_key:find("mini") then
+      cb(false, "Invalid API key '" .. api_key .. "'. That looks like a model name, not an API key! Set your real API key via /ai key <sk-...>")
+      return
+    end
   end
 
   local url = get_endpoint(prov, model_name, api_key)
