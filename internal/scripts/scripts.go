@@ -17,9 +17,17 @@ var Fish []byte
 //go:embed ignore.lua
 var Ignore []byte
 
+//go:embed ai.lua
+var AI []byte
+
+//go:embed webhooks.lua
+var Webhooks []byte
+
 // Builtins maps a script filename to its embedded contents. The hub uses
 // this map to seed a user's scripts directory at startup.
 var Builtins = map[string][]byte{
-	"fish.lua":   Fish,
-	"ignore.lua": Ignore,
+	"fish.lua":     Fish,
+	"ignore.lua":   Ignore,
+	"ai.lua":       AI,
+	"webhooks.lua": Webhooks,
 }

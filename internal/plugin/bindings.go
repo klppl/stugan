@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -270,6 +271,7 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 		return 1
 	}))
 	t.RawSetString("log", h.buildLog(s))
+	t.RawSetString("json", h.buildJSON(s))
 	t.RawSetString("script_name", lua.LString(s.name))
 
 	// describe(text) records a one-line human description shown in the
@@ -435,6 +437,70 @@ func (h *Host) buildLog(s *script) *lua.LTable {
 	add("warn", h.log.Warn)
 	add("error", h.log.Error)
 	return t
+}
+
+func (h *Host) buildJSON(s *script) *lua.LTable {
+	t := s.L.NewTable()
+	t.RawSetString("decode", s.L.NewFunction(func(L *lua.LState) int {
+		str := L.CheckString(1)
+		var v any
+		if err := json.Unmarshal([]byte(str), &v); err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		L.Push(goToLua(L, v))
+		return 1
+	}))
+	t.RawSetString("encode", s.L.NewFunction(func(L *lua.LState) int {
+		v := L.Get(1)
+		b, err := json.Marshal(luaToGo(v))
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		L.Push(lua.LString(string(b)))
+		return 1
+	}))
+	return t
+}
+
+func luaToGo(v lua.LValue) any {
+	switch x := v.(type) {
+	case lua.LBool:
+		return bool(x)
+	case lua.LNumber:
+		return float64(x)
+	case lua.LString:
+		return string(x)
+	case *lua.LTable:
+		isArr := true
+		maxKey := 0
+		x.ForEach(func(k, v lua.LValue) {
+			if num, ok := k.(lua.LNumber); ok && int(num) > 0 {
+				if int(num) > maxKey {
+					maxKey = int(num)
+				}
+			} else {
+				isArr = false
+			}
+		})
+		if isArr && maxKey > 0 {
+			arr := make([]any, maxKey)
+			for i := 1; i <= maxKey; i++ {
+				arr[i-1] = luaToGo(x.RawGetInt(i))
+			}
+			return arr
+		}
+		m := make(map[string]any)
+		x.ForEach(func(k, v lua.LValue) {
+			m[k.String()] = luaToGo(v)
+		})
+		return m
+	default:
+		return nil
+	}
 }
 
 // --- small helpers ---------------------------------------------------------
