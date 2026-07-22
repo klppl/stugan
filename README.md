@@ -77,24 +77,18 @@ login and isolate accounts. See [docs/config.md](docs/config.md) for the full
 reference and [docs/config.example.toml](docs/config.example.toml) for a
 starting point.
 
-## Plugins
+## Plugins & Script Library
 
-Drop a Lua script in `$STUGAN_HOME/scripts/*.lua` and it loads live
-(hot-reloaded on save). Scripts register commands, filter/rewrite/drop
-messages, hook signals, and run timers via a `stugan.*` API. A crashing script
-is isolated and never takes down the daemon.
+`stugan` ships with bundled default scripts (`fish.lua` encryption, `ignore.lua`, `ai.lua`, `webhooks.lua`) and an extensive collection of ready-to-use example plugins in [docs/examples/](docs/examples):
 
-```lua
--- scripts/greet.lua
-stugan.hook_command("greet", function(args, ctx)
-  stugan.message(ctx.network, args[1], "hello from a plugin!")
-end)
-```
+- **AI Companion & Summarizer** ([`ai.lua`](docs/examples/ai.lua)): `/ask <prompt>` and `/summarize [N]` using OpenAI, Claude, Gemini, or Ollama.
+- **Outbound Webhooks** ([`webhooks.lua`](docs/examples/webhooks.lua)): Forward highlights & mentions to Discord, Slack, Ntfy, or custom HTTP webhooks.
+- **FiSH Encryption** ([`fish.lua`](internal/scripts/fish.lua)): Blowfish CBC/ECB encryption with `/setkey` and sidebar lock indicators.
+- **Utilities & Automation**: Auto-away (`away.lua`), URL title fetchers (`title.lua`), typo sed corrections (`sed.lua`), NickServ auto-identify (`nickserv.lua`), URL tracking (`urls.lua`), nick watcher (`watch.lua`), and fun commands (`fun.lua`).
 
-See [docs/plugins.md](docs/plugins.md) and [docs/examples](docs/examples)
-(`greet`, `highlight_reply`, `away`, `sed`, `urls`, `expand`, `watch`,
-`nickserv`, `qauth`, `fun`, plus the bundled FiSH encryption and `ignore`
-plugins).
+Drop any Lua script into `$STUGAN_HOME/scripts/*.lua` and it loads live (hot-reloaded on save). Manage, configure, and reload plugins directly in the Web UI under **Settings → Plugins**.
+
+See [docs/plugins.md](docs/plugins.md) for the Lua API reference and [docs/examples/](docs/examples) to browse all scripts.
 
 ## Documentation
 

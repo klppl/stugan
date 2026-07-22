@@ -528,6 +528,18 @@ key…" affordance in the web UI just works without you copying anything by
 hand. Edits and deletions are preserved across restarts: a missing file is
 only re-installed if the script with that exact name doesn't exist.
 
+### ai.lua — AI chat assistant & conversation summarizer
+
+Queries OpenAI, Anthropic Claude, Google Gemini, or local Ollama instances via `stugan.http` + `stugan.json`. `/ask <prompt>` prints concise AI responses into the buffer; `/summarize [N]` reads recent buffer history from a sliding memory window and generates a 3-bullet summary of what you missed while away. Form settings: provider, secret API key, model name, and optional custom endpoint. See `docs/examples/ai.lua` and `internal/scripts/ai.lua`.
+
+**Bundled and auto-installed.**
+
+### webhooks.lua — outbound highlight & notification forwarder
+
+Monitors incoming messages via `hook_message`. When a highlight or mention arrives, it formats and POSTs a JSON notification payload to your Webhook URL (Discord, Slack, Ntfy, or generic HTTP webhook). Commands: `/webhook test`, `/webhook url <URL>`, `/webhook format <discord|slack|ntfy|generic>`, `/webhook status`. See `docs/examples/webhooks.lua` and `internal/scripts/webhooks.lua`.
+
+**Bundled and auto-installed.**
+
 ### ignore.lua — server-side per-nick ignore
 
 IRC has no native IGNORE, so this drops messages **in the engine** via
