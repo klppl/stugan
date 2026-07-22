@@ -49,8 +49,13 @@ stugan.hook_message(function(msg)
   return msg
 end)
 
+local function trim(s)
+  if type(s) ~= "string" then return "" end
+  return s:match("^%s*(.-)%s*$") or ""
+end
+
 local function get_endpoint()
-  local custom = custom_endpoint:trim()
+  local custom = trim(custom_endpoint)
   if custom ~= "" then return custom end
   local prov = provider
   if prov == "deepseek" then

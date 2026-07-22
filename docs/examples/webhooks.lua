@@ -56,10 +56,13 @@ local function build_payload(fmt, net, buf, sender, text)
       timestamp = os.time()
     }
   end
+local function trim(s)
+  if type(s) ~= "string" then return "" end
+  return s:match("^%s*(.-)%s*$") or ""
 end
 
 local function send_webhook(net, buf, sender, text, cb)
-  local target = webhook_url:trim()
+  local target = trim(webhook_url)
   if target == "" then
     if cb then cb(false, "Webhook URL is not configured (set via /webhook url <URL> or Settings -> Plugins)") end
     return
@@ -137,7 +140,7 @@ stugan.hook_command("webhook", function(args, ctx)
       stugan.print(ctx.network, ctx.buffer, "Invalid format. Supported: discord, slack, ntfy, generic")
     end
   elseif cmd == "status" then
-    local configured = webhook_url:trim() ~= "" and "Configured" or "Not configured"
+    local configured = trim(webhook_url) ~= "" and "Configured" or "Not configured"
     stugan.print(ctx.network, ctx.buffer, "Webhook Status: " .. configured .. " | Format: " .. format .. " | Highlights: " .. notify_highlights)
   else
     stugan.print(ctx.network, ctx.buffer, "Unknown subcommand. Usage: /webhook <test|url|format|status>")
