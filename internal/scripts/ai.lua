@@ -24,6 +24,13 @@ stugan.setting("model", {
   help = "e.g. gpt-4o-mini, deepseek-chat, deepseek-reasoner, claude-3-5-sonnet, gemini-1.5-flash, llama3"
 })
 
+stugan.setting("language", {
+  type = "text",
+  default = "auto",
+  label = "Response Language",
+  help = "Target language ('auto' auto-detects channel language, or set e.g. 'swedish', 'english')"
+})
+
 stugan.setting("endpoint", {
   type = "text",
   default = "",
@@ -42,6 +49,18 @@ local function get_setting(name, default_val)
     return trim(val)
   end
   return default_val
+end
+
+-- Format raw markdown into clean IRC formatting (bold \002, clean bullet points •)
+local function format_irc_line(line)
+  if not line or line == "" then return "" end
+  -- Convert markdown bold **text** to IRC bold byte \002text\002
+  line = line:gsub("%*%*(.-)%*%*", "\002%1\002")
+  -- Strip remaining single asterisks/underscores
+  line = line:gsub("%*(.-)%*", "%1"):gsub("_(.-)_", "%1")
+  -- Convert leading bullet points (- or *) to clean •
+  line = line:gsub("^%s*[%-%*]%s*", "• ")
+  return line
 end
 
 -- Ring buffer of recent messages per channel for /summarize
@@ -204,12 +223,22 @@ stugan.hook_command("ask", function(args, ctx)
   local prompt = table.concat(args, " ")
   local prov = get_setting("provider", "openai")
   local model = get_setting("model", prov == "deepseek" and "deepseek-chat" or "gpt-4o-mini")
+  local lang = get_setting("language", "auto")
+
+  local sys_prompt = "You are a concise IRC AI bot. Keep answers direct, friendly, and concise."
+  if lang:lower() ~= "auto" then
+    sys_prompt = sys_prompt .. " Respond in " .. lang .. "."
+  end
+
   stugan.print(ctx.network, ctx.buffer, "🤖 Asking AI (" .. prov .. " / " .. model .. ")…")
 
-  call_ai(prompt, "You are a concise IRC AI bot. Keep answers direct, friendly, and concise.", function(ok, result)
+  call_ai(prompt, sys_prompt, function(ok, result)
     if ok then
       for line in result:gmatch("[^\r\n]+") do
-        stugan.print(ctx.network, ctx.buffer, "🤖 " .. line)
+        local formatted = format_irc_line(line)
+        if formatted ~= "" then
+          stugan.print(ctx.network, ctx.buffer, "🤖 " .. formatted)
+        end
       end
     else
       stugan.print(ctx.network, ctx.buffer, "❌ AI Error: " .. result)
@@ -249,16 +278,28 @@ stugan.hook_command("summarize", function(args, ctx)
   end
 
   local transcript = table.concat(lines, "\n")
-  local prompt = "Summarize this recent IRC conversation from " .. ctx.buffer .. " into exactly 3 bullet points highlighting main discussion topics or decisions:\n\n" .. transcript
+  local lang = get_setting("language", "auto")
+  local lang_instruction
+  if lang:lower() == "auto" then
+    lang_instruction = "Analyze the IRC conversation transcript and write your summary in the primary language spoken in the conversation (e.g., if the conversation is in Swedish, write your summary in Swedish)."
+  else
+    lang_instruction = "Write your summary in " .. lang .. "."
+  end
+
+  local prompt = "Summarize this recent IRC conversation from " .. ctx.buffer .. " into exactly 3 bullet points highlighting main discussion topics or decisions. Do NOT use markdown bold asterisks (**).\n\n" .. transcript
+  local sys_prompt = "You are an expert chat summarizer. Provide a clean 3-bullet point summary. " .. lang_instruction
 
   local prov = get_setting("provider", "openai")
   stugan.print(ctx.network, ctx.buffer, "📊 Summarizing last " .. #lines .. " messages using AI (" .. prov .. ")…")
 
-  call_ai(prompt, "You are an expert chat summarizer. Provide a clean 3-bullet point summary.", function(ok, result)
+  call_ai(prompt, sys_prompt, function(ok, result)
     if ok then
       stugan.print(ctx.network, ctx.buffer, "📊 Conversation Summary (" .. #lines .. " msgs):")
       for line in result:gmatch("[^\r\n]+") do
-        stugan.print(ctx.network, ctx.buffer, line)
+        local formatted = format_irc_line(line)
+        if formatted ~= "" then
+          stugan.print(ctx.network, ctx.buffer, formatted)
+        end
       end
     else
       stugan.print(ctx.network, ctx.buffer, "❌ Summarize Error: " .. result)
@@ -268,17 +309,18 @@ end)
 
 stugan.hook_command("ai", function(args, ctx)
   if #args == 0 then
-    stugan.print(ctx.network, ctx.buffer, "Usage: /ai <key|provider|model|endpoint|status>")
+    stugan.print(ctx.network, ctx.buffer, "Usage: /ai <key|provider|model|language|endpoint|status>")
     stugan.print(ctx.network, ctx.buffer, "  /ai key <your-api-key>             Set API key")
     stugan.print(ctx.network, ctx.buffer, "  /ai provider <deepseek|openai|anthropic|gemini|ollama>")
     stugan.print(ctx.network, ctx.buffer, "  /ai model <model-name>             Set model (e.g. deepseek-chat, gpt-4o-mini)")
+    stugan.print(ctx.network, ctx.buffer, "  /ai language <auto|swedish|english|...> Set language")
     stugan.print(ctx.network, ctx.buffer, "  /ai status                         Show active AI settings")
     return
   end
 
   local cmd = args[1]:lower()
   if cmd == "key" and #args >= 2 then
-    stugan.kv.set("api_key", args[2])
+    stugan.kv.set("api_key", trim(args[2]))
     stugan.print(ctx.network, ctx.buffer, "✅ AI API key updated.")
   elseif cmd == "provider" and #args >= 2 then
     local p = args[2]:lower()
@@ -289,19 +331,28 @@ stugan.hook_command("ai", function(args, ctx)
       stugan.print(ctx.network, ctx.buffer, "Invalid provider. Choose: openai, deepseek, anthropic, gemini, ollama")
     end
   elseif cmd == "model" and #args >= 2 then
-    stugan.kv.set("model", args[2])
+    stugan.kv.set("model", trim(args[2]))
     stugan.print(ctx.network, ctx.buffer, "✅ AI Model set to: " .. args[2])
+  elseif cmd == "language" or cmd == "lang" then
+    if #args >= 2 then
+      local l = trim(args[2])
+      stugan.kv.set("language", l)
+      stugan.print(ctx.network, ctx.buffer, "✅ AI Response language set to: " .. l)
+    else
+      stugan.print(ctx.network, ctx.buffer, "Current language setting: " .. get_setting("language", "auto"))
+    end
   elseif cmd == "endpoint" and #args >= 2 then
-    stugan.kv.set("endpoint", args[2])
+    stugan.kv.set("endpoint", trim(args[2]))
     stugan.print(ctx.network, ctx.buffer, "✅ AI custom endpoint set to: " .. args[2])
   elseif cmd == "status" then
     local prov = get_setting("provider", "openai")
     local key = get_setting("api_key", "")
     local model = get_setting("model", prov == "deepseek" and "deepseek-chat" or "gpt-4o-mini")
+    local lang = get_setting("language", "auto")
     local ep = get_setting("endpoint", "(default)")
     local key_status = key ~= "" and ("Configured (…" .. key:sub(-4) .. ")") or "Not set"
-    stugan.print(ctx.network, ctx.buffer, "AI Status -> Provider: " .. prov .. " | Model: " .. model .. " | Key: " .. key_status .. " | Endpoint: " .. ep)
+    stugan.print(ctx.network, ctx.buffer, "AI Status -> Provider: " .. prov .. " | Model: " .. model .. " | Language: " .. lang .. " | Key: " .. key_status .. " | Endpoint: " .. ep)
   else
-    stugan.print(ctx.network, ctx.buffer, "Unknown subcommand. Usage: /ai <key|provider|model|endpoint|status>")
+    stugan.print(ctx.network, ctx.buffer, "Unknown subcommand. Usage: /ai <key|provider|model|language|endpoint|status>")
   end
 end)
