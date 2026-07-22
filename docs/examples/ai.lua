@@ -3,9 +3,9 @@ stugan.describe("AI Assistant & Conversation Summarizer (/ask <prompt>, /summari
 local provider = stugan.setting("provider", {
   type = "select",
   default = "openai",
-  options = { "openai", "anthropic", "gemini", "ollama" },
+  options = { "openai", "deepseek", "anthropic", "gemini", "ollama" },
   label = "AI Provider",
-  help = "Select OpenAI, Anthropic Claude, Google Gemini, or local Ollama"
+  help = "Select OpenAI, DeepSeek, Anthropic Claude, Google Gemini, or local Ollama"
 })
 
 local api_key = stugan.setting("api_key", {
@@ -13,14 +13,14 @@ local api_key = stugan.setting("api_key", {
   secret = true,
   default = "",
   label = "API Key",
-  help = "API Key for OpenAI, Anthropic, or Gemini (leave blank for Ollama)"
+  help = "API Key for OpenAI, DeepSeek, Anthropic, or Gemini (leave blank for Ollama)"
 })
 
 local model_name = stugan.setting("model", {
   type = "text",
   default = "gpt-4o-mini",
   label = "Model Name",
-  help = "e.g. gpt-4o-mini, claude-3-5-sonnet, gemini-1.5-flash, llama3"
+  help = "e.g. gpt-4o-mini, deepseek-chat, deepseek-reasoner, claude-3-5-sonnet, gemini-1.5-flash, llama3"
 })
 
 local custom_endpoint = stugan.setting("endpoint", {
@@ -53,7 +53,9 @@ local function get_endpoint()
   local custom = custom_endpoint:trim()
   if custom ~= "" then return custom end
   local prov = provider
-  if prov == "anthropic" then
+  if prov == "deepseek" then
+    return "https://api.deepseek.com/chat/completions"
+  elseif prov == "anthropic" then
     return "https://api.anthropic.com/v1/messages"
   elseif prov == "gemini" then
     return "https://generativelanguage.googleapis.com/v1beta/models/" .. model_name .. ":generateContent?key=" .. api_key

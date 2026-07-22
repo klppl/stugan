@@ -81,7 +81,7 @@ starting point.
 
 `stugan` ships with bundled default scripts (`fish.lua` encryption, `ignore.lua`, `ai.lua`, `webhooks.lua`) and an extensive collection of ready-to-use example plugins in [docs/examples/](docs/examples):
 
-- **AI Companion & Summarizer** ([`ai.lua`](docs/examples/ai.lua)): `/ask <prompt>` and `/summarize [N]` using OpenAI, Claude, Gemini, or Ollama.
+- **AI Companion & Summarizer** ([`ai.lua`](docs/examples/ai.lua)): `/ask <prompt>` and `/summarize [N]` using OpenAI, DeepSeek, Claude, Gemini, or Ollama.
 - **Outbound Webhooks** ([`webhooks.lua`](docs/examples/webhooks.lua)): Forward highlights & mentions to Discord, Slack, Ntfy, or custom HTTP webhooks.
 - **FiSH Encryption** ([`fish.lua`](internal/scripts/fish.lua)): Blowfish CBC/ECB encryption with `/setkey` and sidebar lock indicators.
 - **Utilities & Automation**: Auto-away (`away.lua`), URL title fetchers (`title.lua`), typo sed corrections (`sed.lua`), NickServ auto-identify (`nickserv.lua`), URL tracking (`urls.lua`), nick watcher (`watch.lua`), and fun commands (`fun.lua`).

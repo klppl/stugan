@@ -530,7 +530,7 @@ only re-installed if the script with that exact name doesn't exist.
 
 ### ai.lua — AI chat assistant & conversation summarizer
 
-Queries OpenAI, Anthropic Claude, Google Gemini, or local Ollama instances via `stugan.http` + `stugan.json`. `/ask <prompt>` prints concise AI responses into the buffer; `/summarize [N]` reads recent buffer history from a sliding memory window and generates a 3-bullet summary of what you missed while away. Form settings: provider, secret API key, model name, and optional custom endpoint. See `docs/examples/ai.lua` and `internal/scripts/ai.lua`.
+Queries OpenAI, DeepSeek, Anthropic Claude, Google Gemini, or local Ollama instances via `stugan.http` + `stugan.json`. `/ask <prompt>` prints concise AI responses into the buffer; `/summarize [N]` reads recent buffer history from a sliding memory window and generates a 3-bullet summary of what you missed while away. Form settings: provider, secret API key, model name, and optional custom endpoint. See `docs/examples/ai.lua` and `internal/scripts/ai.lua`.
 
 **Bundled and auto-installed.**
 
