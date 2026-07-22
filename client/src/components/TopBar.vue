@@ -4,11 +4,13 @@ import { connection } from "../connection";
 import { ui, toggleSidebar, toggleMembers } from "../ui";
 import { toggleMircTheme } from "../settings";
 import ChannelBrowser from "./ChannelBrowser.vue";
+import ChannelInspectorModal from "./ChannelInspectorModal.vue";
 
 const emit = defineEmits<{ settings: [] }>();
 const store = connection.store;
 const q = ref("");
 const browseNet = ref<string | null>(null);
+const showInspector = ref(false);
 // On mobile we hide the search input behind a magnifier button; this toggles it.
 const searchOpen = ref(false);
 const searchEl = ref<HTMLInputElement | null>(null);
@@ -94,6 +96,13 @@ function saveTopic() {
       <span class="buffer-name" @click="topicOpen = !topicOpen">
         {{ bufferTitle }}<span v-if="buffer.kind === 'channel'" class="topic-caret" aria-hidden="true">▾</span>
       </span>
+      <button
+        v-if="store.active"
+        class="ghost icon-btn inspector-btn"
+        title="Channel Details / Inspector"
+        aria-label="Channel Details"
+        @click="showInspector = true"
+      >ℹ</button>
       <input
         v-if="editingTopic"
         ref="topicInput"
@@ -160,5 +169,11 @@ function saveTopic() {
     </span>
 
     <ChannelBrowser v-if="browseNet" :network="browseNet" @close="browseNet = null" />
+    <ChannelInspectorModal
+      v-if="showInspector && store.active && buffer"
+      :network="store.active.network"
+      :channel="buffer"
+      @close="showInspector = false"
+    />
   </header>
 </template>

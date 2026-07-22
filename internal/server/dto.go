@@ -189,13 +189,20 @@ func toChannelDTO(c *core.Channel) proto.ChannelDTO {
 	for _, m := range c.Members {
 		mems = append(mems, proto.MemberDTO{Nick: m.Nick, Modes: m.Modes, Away: m.Away})
 	}
+	tTime := ""
+	if !c.TopicTime.IsZero() {
+		tTime = c.TopicTime.UTC().Format(time.RFC3339)
+	}
 	return proto.ChannelDTO{
-		Name:      c.Name,
-		Kind:      string(c.Kind),
-		Topic:     c.Topic,
-		Members:   mems,
-		Unread:    c.Unread,
-		Highlight: c.Highlight,
-		State:     c.State,
+		Name:        c.Name,
+		Kind:        string(c.Kind),
+		Topic:       c.Topic,
+		TopicSetter: c.TopicSetter,
+		TopicTime:   tTime,
+		Mode:        c.Mode,
+		Members:     mems,
+		Unread:      c.Unread,
+		Highlight:   c.Highlight,
+		State:       c.State,
 	}
 }

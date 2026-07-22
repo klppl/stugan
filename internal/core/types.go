@@ -73,6 +73,7 @@ func (n *Network) clone() *Network {
 	for j, ch := range n.Channels {
 		cc := &Channel{
 			Name: ch.Name, Kind: ch.Kind, Topic: ch.Topic,
+			TopicSetter: ch.TopicSetter, TopicTime: ch.TopicTime, Mode: ch.Mode,
 			Unread: ch.Unread, Highlight: ch.Highlight,
 			Members: make(map[string]*Member, len(ch.Members)),
 		}
@@ -246,13 +247,16 @@ func (n *Network) removeAutojoin(name string) bool {
 // state (e.g. the fish.lua plugin sets {"encrypted": "cbc"} so the sidebar
 // can render a lock icon). Nil and empty maps both mean "no state".
 type Channel struct {
-	Name      string
-	Kind      ChannelKind
-	Topic     string
-	Members   map[string]*Member
-	Unread    int
-	Highlight int
-	State     map[string]string
+	Name        string
+	Kind        ChannelKind
+	Topic       string
+	TopicSetter string
+	TopicTime   time.Time
+	Mode        string
+	Members     map[string]*Member
+	Unread      int
+	Highlight   int
+	State       map[string]string
 }
 
 // Member is a participant in a channel.

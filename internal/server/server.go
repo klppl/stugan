@@ -533,6 +533,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	state.Highlight = proto.HighlightRules{Patterns: patterns, Exceptions: exceptions}
 	state.Aliases = proto.AliasTable{Aliases: tenant.Engine.Aliases()}
 	state.Muted = loadMuted(tenant)
+	state.Settings = loadSettings(tenant)
 	init, _ := proto.Frame(proto.TInit, state)
 	c.trySend(hello)
 	c.trySend(init)
@@ -739,6 +740,21 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		// confirm the save (and see dropped/normalized entries), others to stay
 		// in sync without a reload.
 		s.broadcast(c.user, proto.TAliases, proto.AliasTable{Aliases: aliases})
+
+	case proto.TSettingsSet:
+		var d proto.SettingsPayload
+		if err := decode(env, &d); err != nil {
+			c.sendError(env.ID, "bad_request", "invalid settings:set payload")
+			return
+		}
+		if c.tenant.Prefs != nil && d.Settings != nil {
+			if b, err := json.Marshal(d.Settings); err == nil {
+				if err := c.tenant.Prefs.SetPref(prefSettings, string(b)); err != nil {
+					s.log.Error("save settings", "user", c.user, "err", err)
+				}
+			}
+		}
+		s.broadcast(c.user, proto.TSettings, d)
 
 	case proto.TMonitorAdd:
 		bestHandle(env,

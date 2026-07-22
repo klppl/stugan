@@ -1662,23 +1662,28 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 			}
 			netChanged = true
 		}
-		if ev.Text != "" {
-			who := ev.Nick
-			if who == "" {
-				who = "mode"
-			}
-			sys(ev.Buffer, fmt.Sprintf("%s sets mode %s", who, ev.Text))
+		if ev.Nick == "" { // 324 RPL_CHANNELMODEIS
+			c.Mode = ev.Text
+			netChanged = true
+		} else if ev.Text != "" {
+			c.Mode = updateChannelMode(c.Mode, ev.Text)
+			sys(ev.Buffer, fmt.Sprintf("%s sets mode %s", ev.Nick, ev.Text))
 			netChanged = true
 		}
 
 	case EvTopic:
 		c, _ := n.getOrCreate(ev.Buffer, KindChannel)
-		c.Topic = ev.Text
-		// A setter nick means someone changed the topic live — announce it. The
-		// initial topic delivered on join (RPL_TOPIC, no setter) just updates
-		// the topic bar silently.
+		if ev.Text != "" {
+			c.Topic = ev.Text
+		}
 		if ev.Nick != "" {
-			sys(ev.Buffer, fmt.Sprintf("%s set topic: %s", ev.Nick, ev.Text))
+			c.TopicSetter = ev.Nick
+			if !ev.Time.IsZero() {
+				c.TopicTime = ev.Time
+			}
+			if ev.Text != "" {
+				sys(ev.Buffer, fmt.Sprintf("%s set topic: %s", ev.Nick, ev.Text))
+			}
 		}
 		netChanged = true
 	}
@@ -1810,4 +1815,42 @@ func addPrefix(modes, sym string) string {
 		}
 	}
 	return modes + sym
+}
+
+// updateChannelMode merges channel mode changes (e.g. "+ntk key") into the
+// existing mode string (e.g. "+n").
+func updateChannelMode(current, change string) string {
+	changeFlags, _, _ := strings.Cut(strings.TrimSpace(change), " ")
+	if !strings.HasPrefix(changeFlags, "+") && !strings.HasPrefix(changeFlags, "-") {
+		return changeFlags
+	}
+	adding := true
+	modeSet := map[rune]bool{}
+	if strings.HasPrefix(current, "+") {
+		for _, r := range current[1:] {
+			modeSet[r] = true
+		}
+	}
+	for _, r := range changeFlags {
+		if r == '+' {
+			adding = true
+		} else if r == '-' {
+			adding = false
+		} else {
+			if adding {
+				modeSet[r] = true
+			} else {
+				delete(modeSet, r)
+			}
+		}
+	}
+	if len(modeSet) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteByte('+')
+	for r := range modeSet {
+		b.WriteRune(r)
+	}
+	return b.String()
 }

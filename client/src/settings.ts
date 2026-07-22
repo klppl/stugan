@@ -193,6 +193,28 @@ function applyTheme() {
   }
 }
 
+let isSyncingRemote = false;
+
+export function loadSettingsPayload(s: Record<string, unknown>) {
+  if (!s || typeof s !== "object") return;
+  isSyncingRemote = true;
+  try {
+    if (typeof s.theme === "string") settings.theme = s.theme;
+    if (Array.isArray(s.customThemes)) settings.customThemes = s.customThemes as CustomTheme[];
+    if (typeof s.fontSize === "number") settings.fontSize = s.fontSize;
+    if (typeof s.foldEvents === "boolean") settings.foldEvents = s.foldEvents;
+    if (typeof s.expandLinkPreviews === "boolean") settings.expandLinkPreviews = s.expandLinkPreviews;
+    if (typeof s.coloredNicks === "boolean") settings.coloredNicks = s.coloredNicks;
+    if (typeof s.reactions === "boolean") settings.reactions = s.reactions;
+    if (typeof s.sendTyping === "boolean") settings.sendTyping = s.sendTyping;
+    if (typeof s.showTyping === "boolean") settings.showTyping = s.showTyping;
+  } finally {
+    isSyncingRemote = false;
+  }
+}
+
+let syncTimer: number | null = null;
+
 watch(
   settings,
   (s) => {
@@ -201,6 +223,13 @@ watch(
     // Set after applyTheme so the user's picked size wins over a custom theme
     // that also declares --font-size (parseTheme accepts any --variable).
     document.documentElement.style.setProperty("--font-size", s.fontSize + "px");
+    if (!isSyncingRemote) {
+      if (syncTimer) clearTimeout(syncTimer);
+      syncTimer = window.setTimeout(() => {
+        syncTimer = null;
+        import("./connection").then(({ connection }) => connection.sendSettings(s)).catch(() => {});
+      }, 500);
+    }
   },
   { deep: true, immediate: true },
 );

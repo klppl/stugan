@@ -1,5 +1,5 @@
 import { reactive } from "vue";
-import { settings, LEGACY_MUTES_KEY } from "./settings";
+import { settings, LEGACY_MUTES_KEY, loadSettingsPayload } from "./settings";
 import { stripFormatting } from "./links";
 import { refresh, canEnter } from "./auth";
 import {
@@ -7,6 +7,7 @@ import {
   PROTOCOL,
   type Envelope,
   type InitState,
+  type SettingsPayload,
   type MessageDTO,
   type MsgSend,
   type BacklogFetch,
@@ -630,6 +631,11 @@ export class Connection {
       case T.Aliases:
         this.store.aliases = (env.d as AliasTable).aliases ?? {};
         break;
+      case T.Settings:
+        if (env.d && (env.d as SettingsPayload).settings) {
+          loadSettingsPayload((env.d as SettingsPayload).settings);
+        }
+        break;
       case T.Mute:
         this.applyMute(env.d as MuteSet);
         break;
@@ -682,12 +688,14 @@ export class Connection {
   }
 
   private applyInit(init: InitState) {
-    // Highlight rules and mutes are server-authoritative; adopt them before
-    // applying networks, because applyNetwork's unread adoption consults the
-    // mute set. (Older servers omit these fields — fall back to empty.)
+    // Highlight rules, mutes, and settings are server-authoritative; adopt them
+    // before applying networks.
     this.store.highlight = init.highlight ?? { patterns: [], exceptions: [] };
     this.store.aliases = init.aliases?.aliases ?? {};
     this.store.muted = (init.muted ?? []).map((r) => bufKey(r.network, r.buffer));
+    if (init.settings) {
+      loadSettingsPayload(init.settings);
+    }
     this.migrateLegacyMutes();
     // adoptUnread: the init snapshot carries authoritative unread/highlight
     // counts computed from the server-side read markers, so badges reflect
@@ -1016,6 +1024,10 @@ export class Connection {
   navigateTo(network: string, buffer: string) {
     if (this.buf(network, buffer)) this.select(network, buffer);
     else this.pendingNav = { network, buffer };
+  }
+
+  sendSettings(settingsObj: Record<string, unknown>) {
+    this.sendFrame(T.SettingsSet, { settings: settingsObj });
   }
 
   select(network: string, buffer: string) {

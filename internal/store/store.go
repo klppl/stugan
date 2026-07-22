@@ -577,6 +577,62 @@ func (s *Store) BacklogAround(ctx context.Context, network, buffer string, aroun
 
 // searchQuery turns free text into an FTS5 MATCH expression plus any terms too
 // short for the trigram index. Each term is quoted so FTS syntax is always
+type searchFilter struct {
+	cleanQuery string
+	from       string
+	inBuf      string
+	hasLink    bool
+	beforeTS   int64
+	afterTS    int64
+}
+
+// parseSearchFilters extracts structured qualifiers (from:nick, in:#chan, has:link,
+// before:YYYY-MM-DD, after:YYYY-MM-DD) out of a raw search string.
+func parseSearchFilters(raw string) searchFilter {
+	fields := strings.Fields(raw)
+	var textTerms []string
+	var sf searchFilter
+
+	for _, f := range fields {
+		key, val, found := strings.Cut(f, ":")
+		if !found || val == "" {
+			textTerms = append(textTerms, f)
+			continue
+		}
+		key = strings.ToLower(key)
+		switch key {
+		case "from", "by", "author":
+			sf.from = val
+		case "in", "buffer", "chan", "channel":
+			sf.inBuf = val
+		case "has":
+			if strings.EqualFold(val, "link") || strings.EqualFold(val, "url") {
+				sf.hasLink = true
+			} else {
+				textTerms = append(textTerms, f)
+			}
+		case "before":
+			if t, err := time.Parse("2006-01-02", val); err == nil {
+				sf.beforeTS = t.Add(24 * time.Hour).UnixMilli()
+			} else {
+				textTerms = append(textTerms, f)
+			}
+		case "after", "since":
+			if t, err := time.Parse("2006-01-02", val); err == nil {
+				sf.afterTS = t.UnixMilli()
+			} else {
+				textTerms = append(textTerms, f)
+			}
+		default:
+			textTerms = append(textTerms, f)
+		}
+	}
+	sf.cleanQuery = strings.Join(textTerms, " ")
+	return sf
+}
+
+// searchQuery turns free text into an FTS5 MATCH expression plus any terms too
+// short for the trigram index. Each term is quoted so FTS syntax is always
 // treated literally. Terms remain implicit-AND: every long term must match the
 // trigram index and every one/two-character term must occur in the message.
 func searchQuery(raw string) (match string, short []string) {
@@ -593,14 +649,16 @@ func searchQuery(raw string) (match string, short []string) {
 }
 
 // Search runs a full-text query over message text, newest matches first.
-// network and/or buffer narrow the scope when non-empty.
+// network and/or buffer narrow the scope when non-empty. Structured query
+// filters (from:nick, in:#chan, has:link, before/after dates) are supported.
 func (s *Store) Search(ctx context.Context, query, network, buffer string, limit int) ([]core.Message, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	match, short := searchQuery(query)
-	if match == "" && len(short) == 0 {
-		return nil, nil // no usable search terms
+	sf := parseSearchFilters(query)
+	match, short := searchQuery(sf.cleanQuery)
+	if match == "" && len(short) == 0 && sf.from == "" && sf.inBuf == "" && !sf.hasLink && sf.beforeTS == 0 && sf.afterTS == 0 {
+		return nil, nil // no usable search terms or filters
 	}
 	q := `SELECT ` + msgColsM + ` FROM messages m`
 	var args []any
@@ -624,6 +682,24 @@ func (s *Store) Search(ctx context.Context, query, network, buffer string, limit
 	if buffer != "" {
 		q += " AND m.buffer = ?"
 		args = append(args, buffer)
+	} else if sf.inBuf != "" {
+		q += " AND lower(m.buffer) = lower(?)"
+		args = append(args, sf.inBuf)
+	}
+	if sf.from != "" {
+		q += " AND lower(m.from_nick) = lower(?)"
+		args = append(args, sf.from)
+	}
+	if sf.hasLink {
+		q += " AND (m.text LIKE '%http://%' OR m.text LIKE '%https://%')"
+	}
+	if sf.beforeTS > 0 {
+		q += " AND m.ts < ?"
+		args = append(args, sf.beforeTS)
+	}
+	if sf.afterTS > 0 {
+		q += " AND m.ts >= ?"
+		args = append(args, sf.afterTS)
 	}
 	q += " ORDER BY m.id DESC LIMIT ?"
 	args = append(args, limit)

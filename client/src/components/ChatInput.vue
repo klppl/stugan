@@ -4,8 +4,10 @@ import type { Buffer } from "../connection";
 import { connection } from "../connection";
 import { emojiMatches, replaceEmoji } from "../emoji";
 import { ui } from "../ui";
+import UploadPreviewModal from "./UploadPreviewModal.vue";
 
 const props = defineProps<{ network: string; buffer: Buffer | null }>();
+const pastedImageFile = ref<File | null>(null);
 
 // Built-in slash commands exposed via Tab-completion. Mirrors the cases in
 // internal/core/command.go — keep them in rough sync, though the default
@@ -283,6 +285,10 @@ async function onPaste(e: ClipboardEvent) {
   const file = e.clipboardData?.files?.[0];
   if (!file || !connection.hasCap("uploads")) return;
   e.preventDefault();
+  if (file.type.startsWith("image/")) {
+    pastedImageFile.value = file;
+    return;
+  }
   const url = await connection.upload(file);
   if (url) text.value = (text.value ? text.value + " " : "") + url;
 }
@@ -384,5 +390,12 @@ defineExpose({ inputEl, appendText, focus, typeChar });
     </button>
     <input ref="fileEl" type="file" multiple hidden @change="onFilePicked" />
     <button type="submit" :disabled="!buffer" @mousedown.prevent>Send</button>
+    <UploadPreviewModal
+      v-if="pastedImageFile && buffer"
+      :file="pastedImageFile"
+      :network="network"
+      :buffer="buffer.name"
+      @close="pastedImageFile = null"
+    />
   </form>
 </template>

@@ -31,6 +31,7 @@ const (
 	TMissedResult = "missed:result" // s2c (answers missed:fetch — "what you missed" digest)
 	THighlight    = "highlight"     // s2c (current rules; answers highlight:set)
 	TAliases      = "aliases"       // s2c (current alias table; answers aliases:set)
+	TSettings     = "settings"      // s2c (current UI settings; answers settings:set)
 	TPong         = "pong"          // s2c (answers c2s ping; app-level liveness)
 	TError        = "error"         // s2c
 
@@ -49,6 +50,7 @@ const (
 	TRead         = "read"           // c2s mark a buffer read; s2c broadcast of that to the user's other tabs
 	THighlightSet = "highlight:set"  // c2s — replace the highlight ruleset
 	TAliasSet     = "aliases:set"    // c2s — replace the command-alias table
+	TSettingsSet  = "settings:set"   // c2s — set/sync UI preferences across devices
 	TMonitorAdd   = "monitor:add"    // c2s — add a nick to a network's friends list
 	TMonitorRem   = "monitor:remove" // c2s — remove a nick from a network's friends list
 	TMute         = "mute"           // c2s set intent; s2c absolute state broadcast to the user's tabs
@@ -88,6 +90,12 @@ type InitState struct {
 	Highlight HighlightRules `json:"highlight"`
 	Aliases   AliasTable     `json:"aliases"`
 	Muted     []MuteRef      `json:"muted,omitempty"`
+	Settings  map[string]any `json:"settings,omitempty"`
+}
+
+// SettingsPayload carries user UI preferences across server and tabs.
+type SettingsPayload struct {
+	Settings map[string]any `json:"settings"`
 }
 
 // UserDTO is the wire projection of core.User.
@@ -120,13 +128,16 @@ type FriendDTO struct {
 // the client treats it as plugin-defined metadata it can react to (e.g. a
 // "encrypted" key from the FiSH plugin → render a lock icon).
 type ChannelDTO struct {
-	Name      string            `json:"name"`
-	Kind      string            `json:"kind"`
-	Topic     string            `json:"topic"`
-	Members   []MemberDTO       `json:"members,omitempty"`
-	Unread    int               `json:"unread"`
-	Highlight int               `json:"highlight"`
-	State     map[string]string `json:"state,omitempty"`
+	Name        string            `json:"name"`
+	Kind        string            `json:"kind"`
+	Topic       string            `json:"topic"`
+	TopicSetter string            `json:"topic_setter,omitempty"`
+	TopicTime   string            `json:"topic_time,omitempty"`
+	Mode        string            `json:"mode,omitempty"`
+	Members     []MemberDTO       `json:"members,omitempty"`
+	Unread      int               `json:"unread"`
+	Highlight   int               `json:"highlight"`
+	State       map[string]string `json:"state,omitempty"`
 }
 
 // MemberDTO is the wire projection of core.Member.

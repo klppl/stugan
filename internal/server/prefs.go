@@ -13,7 +13,24 @@ const (
 	prefHighlight = "highlight" // proto.HighlightRules
 	prefMuted     = "muted"     // []proto.MuteRef
 	prefAliases   = "aliases"   // map[string]string (command name → expansion)
+	prefSettings  = "settings"  // map[string]any (UI preferences)
 )
+
+// loadSettings reads a tenant's UI preferences map, or nil when unset or on error.
+func loadSettings(t *Tenant) map[string]any {
+	if t == nil || t.Prefs == nil {
+		return nil
+	}
+	v, err := t.Prefs.Pref(prefSettings)
+	if err != nil || v == "" {
+		return nil
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(v), &m) != nil {
+		return nil
+	}
+	return m
+}
 
 // sanitizeAliases normalizes a client-supplied alias table: it lowercases and
 // trims names (dropping a leading slash a user might type), and discards any

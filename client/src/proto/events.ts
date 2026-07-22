@@ -24,6 +24,7 @@ export const T = {
   MissedResult: "missed:result",
   Highlight: "highlight",
   Aliases: "aliases",
+  Settings: "settings",
   Pong: "pong",
   Error: "error",
   MsgSend: "msg:send",
@@ -41,6 +42,7 @@ export const T = {
   Read: "read",
   HighlightSet: "highlight:set",
   AliasSet: "aliases:set",
+  SettingsSet: "settings:set",
   MonitorAdd: "monitor:add",
   MonitorRemove: "monitor:remove",
   Mute: "mute",
@@ -67,6 +69,11 @@ export interface InitState {
   highlight: HighlightRules;
   aliases: AliasTable;
   muted?: MuteRef[];
+  settings?: Record<string, unknown>;
+}
+
+export interface SettingsPayload {
+  settings: Record<string, unknown>;
 }
 
 // AliasTable maps a slash-command name (lowercase, no leading slash) to an
@@ -149,6 +156,9 @@ export interface ChannelDTO {
   name: string;
   kind: string;
   topic: string;
+  topic_setter?: string;
+  topic_time?: string;
+  mode?: string;
   members?: MemberDTO[];
   unread: number;
   highlight: number;

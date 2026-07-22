@@ -450,6 +450,29 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			Type: core.EvTopic, Network: network, Time: when,
 			Buffer: e.Params[1], Text: e.Last(),
 		}, true
+
+	case "333": // RPL_TOPICWHOTIME: <me> <channel> <setter> <timestamp>
+		if len(e.Params) < 4 {
+			return core.Event{}, false
+		}
+		sec, _ := strconv.ParseInt(e.Params[3], 10, 64)
+		t := when
+		if sec > 0 {
+			t = time.Unix(sec, 0).UTC()
+		}
+		return core.Event{
+			Type: core.EvTopic, Network: network, Time: t,
+			Buffer: e.Params[1], Nick: e.Params[2], Text: "",
+		}, true
+
+	case girc.RPL_CHANNELMODEIS: // 324: <me> <channel> <mode> [params]
+		if len(e.Params) < 3 {
+			return core.Event{}, false
+		}
+		return core.Event{
+			Type: core.EvMode, Network: network, Time: when,
+			Buffer: e.Params[1], Nick: "", Text: strings.Join(e.Params[2:], " "),
+		}, true
 	}
 
 	// Server numeric replies (WHOIS, WHOWAS, WHO, errors, …). Each formats
