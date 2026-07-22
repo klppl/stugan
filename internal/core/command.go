@@ -498,3 +498,11 @@ func (a engineAPI) Backlog(network, buffer string, limit int) []MessageInfo {
 	}
 	return out
 }
+
+func (a engineAPI) HoldJoins(network string) error {
+	return a.e.HoldJoins(network)
+}
+
+func (a engineAPI) ReleaseJoins(network string) error {
+	return a.e.ReleaseJoins(network)
+}

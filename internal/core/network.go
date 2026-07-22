@@ -55,6 +55,9 @@ type NetworkParams struct {
 	// list — freshly joined channels, the status buffer — sort to the end.
 	// Applied to snapshots; see Engine.orderChannels.
 	BufferOrder []string `json:"buffer_order,omitempty"`
+	// JoinHoldTimeout is the maximum duration in seconds autojoin will wait when
+	// held by a plugin before auto-releasing. Defaults to 45 seconds if <= 0.
+	JoinHoldTimeout int `json:"join_hold_timeout,omitempty"`
 }
 
 // clone returns a deep copy of p, duplicating its slice fields so the copy can

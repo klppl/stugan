@@ -33,6 +33,10 @@ type API interface {
 	Nick(network string) string
 	// Backlog reads recent stored history for a buffer.
 	Backlog(network, buffer string, limit int) []MessageInfo
+	// HoldJoins / ReleaseJoins gate configured channel autojoin until service
+	// authentication completes or a timeout expires.
+	HoldJoins(network string) error
+	ReleaseJoins(network string) error
 }
 
 // NetworkInfo is a flat snapshot of a network for the plugin API.

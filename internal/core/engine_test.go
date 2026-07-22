@@ -532,6 +532,91 @@ func TestPerformBeforeAutojoin(t *testing.T) {
 	}
 }
 
+func TestHoldAndReleaseJoins(t *testing.T) {
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	if err := e.AddNetworkLive(NetworkParams{
+		ID: "n", Name: "QuakeNet", Addr: "irc.quakenet.org:6697", Nick: "me",
+		Channels: []string{"#stugan"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = e.Run(ctx) }()
+	waitForNetworkState(t, e, "n", StateConnecting)
+
+	// Connect arrives, plugin holds autojoin
+	if err := e.HoldJoins("n"); err != nil {
+		t.Fatal(err)
+	}
+	e.HandleEvent(Event{Type: EvConnect, Network: "n", Nick: "me"})
+
+	// Give perform / autojoin time to run
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify autojoin did NOT happen yet
+	if raws := conn.conns[0].rawsSnap(); len(raws) != 0 {
+		t.Fatalf("expected no raws while held, got %v", raws)
+	}
+
+	// Release autojoin
+	if err := e.ReleaseJoins("n"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify autojoin fired
+	deadline := time.After(time.Second)
+	for {
+		if raws := conn.conns[0].rawsSnap(); len(raws) == 1 && raws[0] == "JOIN #stugan" {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("autojoin did not fire after release; raws=%v", conn.conns[0].rawsSnap())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestHoldJoinsTimeoutFallback(t *testing.T) {
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	if err := e.AddNetworkLive(NetworkParams{
+		ID: "n", Name: "QuakeNet", Addr: "irc.quakenet.org:6697", Nick: "me",
+		Channels: []string{"#stugan"}, JoinHoldTimeout: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = e.Run(ctx) }()
+	waitForNetworkState(t, e, "n", StateConnecting)
+
+	if err := e.HoldJoins("n"); err != nil {
+		t.Fatal(err)
+	}
+	e.HandleEvent(Event{Type: EvConnect, Network: "n", Nick: "me"})
+
+	// Should not have joined immediately
+	if raws := conn.conns[0].rawsSnap(); len(raws) != 0 {
+		t.Fatalf("expected no raws while held, got %v", raws)
+	}
+
+	// Wait for 1s timeout fallback
+	deadline := time.After(2 * time.Second)
+	for {
+		if raws := conn.conns[0].rawsSnap(); len(raws) == 1 && raws[0] == "JOIN #stugan" {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("autojoin did not fire after timeout fallback; raws=%v", conn.conns[0].rawsSnap())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 func waitForNetworkState(t *testing.T, e *Engine, network string, want ConnState) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)

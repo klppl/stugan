@@ -201,6 +201,9 @@ type NetworkConfig struct {
 	Monitor []string `toml:"monitor"`
 	// Connect, when false, leaves the network configured but idle.
 	Connect bool `toml:"connect"`
+	// JoinHoldTimeout is the maximum time in seconds autojoin will wait when
+	// held by a plugin before auto-releasing. Default 45s.
+	JoinHoldTimeout int `toml:"join_hold_timeout"`
 }
 
 // Load resolves the home directory, reads config.toml from it (tolerating

@@ -322,6 +322,7 @@ func paramsFromConfig(n config.NetworkConfig, log *slog.Logger) core.NetworkPara
 		Monitor:    n.Monitor,
 		ServerPass: n.ServerPass, Perform: n.Perform,
 		SASLExternal: n.SASLExternal, CertPEM: certPEM,
+		JoinHoldTimeout: n.JoinHoldTimeout,
 	}
 }
 

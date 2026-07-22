@@ -131,6 +131,12 @@ stugan.action(network, target, text)    -- /me
 stugan.join(network, channel)
 stugan.part(network, channel)
 
+-- Gate channel autojoin until service authentication completes.
+-- hold_joins buffers the core's configured autojoin JOINs (with fallback timeout).
+-- release_joins flushes the queued JOINs once auth/user-modes finish.
+stugan.hold_joins(network)
+stugan.release_joins(network)
+
 -- Inject a line into a buffer's view WITHOUT sending to IRC (local print).
 stugan.print(network, buffer, text)
 -- Shorthand using the hook's ctx/msg buffer:

@@ -88,6 +88,13 @@ type Options struct {
 	History   HistoryReader     // reads stored backlog (optional)
 }
 
+type joinGate struct {
+	held    bool
+	pending bool
+	conn    IRCConn
+	timer   *time.Timer
+}
+
 // Engine owns the domain state and serializes all mutation onto a single
 // loop goroutine fed by the event bus. It implements ConnHandler.
 //
@@ -136,6 +143,9 @@ type Engine struct {
 	// before JOIN) and a daemon restart (live state is in-memory only).
 	// Guarded by mu.
 	pendingState map[string]map[string]map[string]string
+
+	// joinGates tracks autojoin hold state per network. Guarded by mu.
+	joinGates map[string]*joinGate
 
 	// idBase + idSeq mint stable ids for lines the IRC server delivered
 	// without a msgid tag (see synthID). idBase is a per-run random prefix;
@@ -193,6 +203,7 @@ func New(opts Options) *Engine {
 		listAccum:    map[string][]ChannelListItem{},
 		pendingWhois: map[string]string{},
 		pendingState: map[string]map[string]map[string]string{},
+		joinGates:    map[string]*joinGate{},
 		pendingKeys:  map[string]string{},
 		idBase:       randHex(6),
 		events:       make(chan Event, 256),
@@ -367,6 +378,7 @@ func (e *Engine) RemoveNetwork(id string) error {
 	delete(e.pendingState, id)
 	delete(e.listAccum, id)
 	delete(e.startupSeq, id)
+	e.resetJoinGateLocked(id)
 	for i, n := range e.user.Networks {
 		if n.ID == id {
 			e.user.Networks = append(e.user.Networks[:i], e.user.Networks[i+1:]...)
@@ -863,6 +875,12 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	e.mu.Lock()
 	e.running = false
+	for _, g := range e.joinGates {
+		if g.timer != nil {
+			g.timer.Stop()
+		}
+	}
+	e.joinGates = map[string]*joinGate{}
 	conns := make([]IRCConn, 0, len(e.conns))
 	for _, conn := range e.conns {
 		conns = append(conns, conn)
@@ -1045,9 +1063,7 @@ func (e *Engine) runPerform(network string) {
 	e.mu.Unlock()
 
 	if len(lines) == 0 {
-		if e.startupActive(network, seq, conn) {
-			conn.Autojoin()
-		}
+		e.triggerAutojoinOrQueue(network, seq, conn)
 		return
 	}
 	go func() {
@@ -1073,9 +1089,7 @@ func (e *Engine) runPerform(network string) {
 				}
 			}
 		}
-		if e.startupActive(network, seq, conn) {
-			conn.Autojoin()
-		}
+		e.triggerAutojoinOrQueue(network, seq, conn)
 	}()
 }
 
@@ -1084,8 +1098,143 @@ func (e *Engine) runPerform(network string) {
 func (e *Engine) startupActive(network string, seq uint64, conn IRCConn) bool {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	return e.startupActiveLocked(network, seq, conn)
+}
+
+func (e *Engine) startupActiveLocked(network string, seq uint64, conn IRCConn) bool {
 	n := e.user.Network(network)
 	return n != nil && n.State == StateRegistered && e.conns[network] == conn && e.startupSeq[network] == seq
+}
+
+// HoldJoins buffers configured channel autojoin until ReleaseJoins is called
+// or a timeout (JoinHoldTimeout, default 45s) expires.
+func (e *Engine) HoldJoins(network string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	n := e.user.Network(network)
+	if n == nil {
+		return fmt.Errorf("network not found: %s", network)
+	}
+	netID := n.ID
+	conn := e.conns[netID]
+	if conn == nil {
+		return fmt.Errorf("network not connected: %s", network)
+	}
+
+	g := e.joinGates[netID]
+	if g == nil {
+		g = &joinGate{}
+		e.joinGates[netID] = g
+	}
+	if g.conn != conn {
+		if g.timer != nil {
+			g.timer.Stop()
+			g.timer = nil
+		}
+		g.pending = false
+		g.conn = conn
+	}
+	g.held = true
+	if g.timer != nil {
+		g.timer.Stop()
+	}
+	timeoutSec := n.Params.JoinHoldTimeout
+	if timeoutSec <= 0 {
+		timeoutSec = 45
+	}
+	timeout := time.Duration(timeoutSec) * time.Second
+	g.timer = time.AfterFunc(timeout, func() {
+		e.autoReleaseJoins(netID, conn)
+	})
+	return nil
+}
+
+// ReleaseJoins un-holds configured channel autojoin for a network, flushing
+// any queued JOIN commands immediately.
+func (e *Engine) ReleaseJoins(network string) error {
+	e.mu.Lock()
+	n := e.user.Network(network)
+	if n == nil {
+		e.mu.Unlock()
+		return fmt.Errorf("network not found: %s", network)
+	}
+	netID := n.ID
+	conn := e.conns[netID]
+
+	g := e.joinGates[netID]
+	if g == nil {
+		e.mu.Unlock()
+		return nil
+	}
+	if g.timer != nil {
+		g.timer.Stop()
+		g.timer = nil
+	}
+	g.held = false
+
+	var shouldAutojoin bool
+	if g.pending && g.conn == conn && e.isConnActiveLocked(netID, conn) {
+		shouldAutojoin = true
+		g.pending = false
+	}
+	e.mu.Unlock()
+
+	if shouldAutojoin && conn != nil {
+		conn.Autojoin()
+	}
+	return nil
+}
+
+func (e *Engine) autoReleaseJoins(netID string, conn IRCConn) {
+	e.mu.Lock()
+	g := e.joinGates[netID]
+	if g == nil || !g.held || g.conn != conn {
+		e.mu.Unlock()
+		return
+	}
+	g.held = false
+	g.timer = nil
+
+	shouldAutojoin := g.pending && e.isConnActiveLocked(netID, conn)
+	g.pending = false
+	e.mu.Unlock()
+
+	if shouldAutojoin && conn != nil {
+		e.log.Info("autojoin hold timed out, auto-releasing", "network", netID)
+		conn.Autojoin()
+	}
+}
+
+func (e *Engine) isConnActiveLocked(network string, conn IRCConn) bool {
+	n := e.user.Network(network)
+	return n != nil && n.State == StateRegistered && e.conns[network] == conn && conn != nil
+}
+
+func (e *Engine) triggerAutojoinOrQueue(network string, seq uint64, conn IRCConn) {
+	e.mu.Lock()
+	if !e.startupActiveLocked(network, seq, conn) {
+		e.mu.Unlock()
+		return
+	}
+	g := e.joinGates[network]
+	if g != nil && g.held && g.conn == conn {
+		g.pending = true
+		e.mu.Unlock()
+		return
+	}
+	e.mu.Unlock()
+
+	conn.Autojoin()
+}
+
+func (e *Engine) resetJoinGateLocked(network string) {
+	if g, ok := e.joinGates[network]; ok {
+		if g.timer != nil {
+			g.timer.Stop()
+		}
+		delete(e.joinGates, network)
+	}
 }
 
 // expandPerformVariables substitutes named $variables in a perform line.
@@ -1473,6 +1622,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		netChanged = true
 
 	case EvDisconnect:
+		e.resetJoinGateLocked(ev.Network)
 		n.State = StateDisconnected
 		msg := "disconnected"
 		if ev.Text != "" {

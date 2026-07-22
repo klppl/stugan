@@ -110,6 +110,7 @@ end
 local function authenticate(network)
   local u, p = creds(network)
   if not u then return false end
+  stugan.hold_joins(network)
   if use_challenge() then
     pending[network] = true
     toq(network, "CHALLENGE") -- Q replies with a CHALLENGE notice (handled below)
@@ -148,9 +149,12 @@ stugan.hook_message(function(msg)
   if not use_challenge() and low:find("auth") and low:find("authenticate") then
     authenticate(net)
   end
-  -- Mask our host once Q confirms the login.
-  if hidehost_enabled() and low:find("you are now logged in") then
-    stugan.send(net, "MODE " .. (stugan.nick(net) or "") .. " +x")
+  -- Mask our host once Q confirms the login, then release queued autojoin.
+  if low:find("you are now logged in") then
+    if hidehost_enabled() then
+      stugan.send(net, "MODE " .. (stugan.nick(net) or "") .. " +x")
+    end
+    stugan.release_joins(net)
   end
   return msg
 end)
