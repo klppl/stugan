@@ -503,7 +503,7 @@ func (h *Host) DownloadPlugin(ctx context.Context, name string) error {
 		client = safehttp.New()
 	}
 
-	url := fmt.Sprintf("https://raw.githubusercontent.com/klippelism/stugan/main/plugins/%s.lua", name)
+	url := fmt.Sprintf("https://raw.githubusercontent.com/klppl/stugan/main/plugins/%s.lua", name)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)

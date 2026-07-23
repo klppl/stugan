@@ -21,7 +21,7 @@ In any channel or query buffer, run the `/load` command followed by the plugin n
 - `/load away` — Download and activate idle auto-away + auto-reply
 - `/load fish` — Download and activate FiSH Blowfish encryption
 
-When you run `/load`, stugan automatically fetches the latest version from the official library (`https://raw.githubusercontent.com/klippelism/stugan/main/plugins/<script-name>.lua`), places it in your `$STUGAN_HOME/scripts/` directory, and hot-loads it immediately into the runtime.
+When you run `/load`, stugan automatically fetches the latest version from the official library (`https://raw.githubusercontent.com/klppl/stugan/main/plugins/<script-name>.lua`), places it in your `$STUGAN_HOME/scripts/` directory, and hot-loads it immediately into the runtime.
 
 ---
 
