@@ -48,6 +48,32 @@ type Config struct {
 
 	// Auth tunes session behavior (only relevant when Users is set).
 	Auth AuthConfig `toml:"auth"`
+
+	// SSH exposes the terminal UI over SSH. Public-key auth only; disabled
+	// unless [ssh].enabled is set.
+	SSH SSHConfig `toml:"ssh"`
+}
+
+// SSHConfig configures the SSH-served terminal UI. Authentication is by
+// public key only: a session's key must appear in the target user's
+// authorized_keys (per-[[user]] in multi-user mode, or the top-level
+// [ssh].authorized_keys for the implicit single user).
+type SSHConfig struct {
+	// Enabled turns the SSH listener on. Off by default: nothing binds an
+	// SSH port unless this is set.
+	Enabled bool `toml:"enabled"`
+	// Listen is the address the SSH server binds, e.g. "0.0.0.0:2222".
+	// Defaults to ":2222" when enabled and left empty.
+	Listen string `toml:"listen"`
+	// HostKey is the path to the server's private host key (OpenSSH PEM).
+	// Generated (ed25519) on first run when the file is absent. Defaults to
+	// <data>/ssh_host_ed25519_key.
+	HostKey string `toml:"host_key"`
+	// AuthorizedKeys lists the OpenSSH public keys ("ssh-ed25519 AAAA…")
+	// allowed to log in as the implicit "default" user in single-user mode.
+	// Ignored in multi-user mode, where each [[users]] block carries its own
+	// authorized_keys.
+	AuthorizedKeys []string `toml:"authorized_keys"`
 }
 
 // HistoryConfig controls message-history retention.
@@ -63,6 +89,10 @@ type UserConfig struct {
 	Name         string          `toml:"name"`
 	PasswordHash string          `toml:"password_hash"` // bcrypt; see `stugan -hashpw`
 	Networks     []NetworkConfig `toml:"networks"`
+	// AuthorizedKeys lists the OpenSSH public keys allowed to open an SSH TUI
+	// session as this user (see [ssh]). Empty means this user cannot log in
+	// over SSH.
+	AuthorizedKeys []string `toml:"authorized_keys"`
 }
 
 // AuthConfig tunes authentication.
@@ -103,7 +133,28 @@ func (c *Config) EffectiveUsers() []UserConfig {
 	if len(c.Users) > 0 {
 		return c.Users
 	}
-	return []UserConfig{{Name: "default", Networks: c.Networks}}
+	return []UserConfig{{
+		Name:           "default",
+		Networks:       c.Networks,
+		AuthorizedKeys: c.SSH.AuthorizedKeys,
+	}}
+}
+
+// SSHHostKeyPath returns the configured host-key path, or the default under
+// the data directory when unset.
+func (c *Config) SSHHostKeyPath() string {
+	if c.SSH.HostKey != "" {
+		return c.SSH.HostKey
+	}
+	return filepath.Join(c.DataDir(), "ssh_host_ed25519_key")
+}
+
+// SSHListen returns the SSH listen address, defaulting to ":2222".
+func (c *Config) SSHListen() string {
+	if c.SSH.Listen != "" {
+		return c.SSH.Listen
+	}
+	return ":2222"
 }
 
 // HighlightConfig holds case-insensitive regex highlight rules. A nick

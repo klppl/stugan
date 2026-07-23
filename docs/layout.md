@@ -18,6 +18,7 @@ internal/
   plugin/          PluginHost impl: a Lua host (the only place gopher-lua lives)
   auth/            bcrypt credentials + sessions (multi-user)
   server/          HTTP + WebSocket, typed event router, multi-tenant hub
+  tui/             SSH terminal UI (the only place wish + Bubble Tea live)
   proto/           shared wire-protocol structs (TS mirror in client/)
   scripts/         embedded bundled Lua plugins (fish.lua)
 client/            Vue 3 + TS + Vite frontend
@@ -51,13 +52,15 @@ is depended upon.
 | `store`   | `modernc.org/sqlite`, `core`, stdlib    | `server`, `plugin` |
 | `plugin`  | gopher-lua, `core`, stdlib              | `server`, `irc` impl, `store` impl |
 | `server`  | `core`, `proto`, `auth`, coder/websocket | girc, Lua |
+| `tui`     | `core`, wish, Bubble Tea, Lip Gloss     | girc, Lua, `server`, `store` impl |
 | `proto`   | stdlib only                             | everything else |
 | `config`  | go-toml/v2, stdlib                      | everything else |
 
 **The rule that matters:** core imports none of the heavy libraries, and
-girc/lua/sqlite never leak past their owning package. That is what makes them
-swappable — when we write a custom IRCv3 stack, only `irc` changes; a WASM
-plugin host would only change `plugin`.
+girc/lua/sqlite/wish never leak past their owning package. That is what makes
+them swappable — when we write a custom IRCv3 stack, only `irc` changes; a WASM
+plugin host would only change `plugin`; the SSH front-end lives entirely in
+`tui`, a second `Sink`-driven consumer of the engine alongside `server`.
 
 `core` defines the interfaces it consumes (`IRCConn`, `PluginHost`,
 `NetworkStore`, `Connector`, `Sink`, `API`). The concrete packages implement
