@@ -79,6 +79,12 @@ type Conn struct {
 	// goroutine) and consumed by Connect (engine reconnect loop) to turn
 	// the generic disconnect error into core.ErrAuthFailed.
 	authFailed atomic.Bool
+	// mech is our SASL PLAIN implementation (nil for EXTERNAL or no SASL). It
+	// is installed into the girc config for the initial registration exchange
+	// and cleared once registered, so girc can't re-run SASL mid-session on a
+	// post-registration CAP ACK (see the CONNECTED handler); Connect restores
+	// it before every (re)connect.
+	mech *saslPlain
 }
 
 // multilineBatch accumulates the lines of one inbound draft/multiline message
@@ -160,11 +166,16 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		}
 		gcfg.TLSConfig = tcfg
 	}
+	// mech is kept aside so the client can be wired into it below: it writes
+	// its own AUTHENTICATE chunks (see sasl.go), but the girc client can only
+	// be built once this config is complete.
+	var mech *saslPlain
 	switch {
 	case opts.SASLExternal:
 		gcfg.SASL = &girc.SASLExternal{}
 	case opts.SASLUser != "":
-		gcfg.SASL = &girc.SASLPlain{User: opts.SASLUser, Pass: opts.SASLPass}
+		mech = &saslPlain{user: opts.SASLUser, pass: opts.SASLPass}
+		gcfg.SASL = mech
 	}
 
 	addrs := []string{opts.Addr}
@@ -180,6 +191,10 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		client:  girc.New(gcfg),
 		addrs:   addrs,
 		batches: map[string]*multilineBatch{},
+		mech:    mech,
+	}
+	if mech != nil {
+		mech.client = c.client
 	}
 	c.registerHandlers()
 	return c, nil
@@ -195,6 +210,21 @@ func (c *Conn) registerHandlers() {
 		// so it can't linger across reconnects. Runs on girc's single handler
 		// goroutine, same as absorbMultiline/handleBatch, so no lock is needed.
 		clear(c.batches)
+		// Registration is complete (this fires ~2s after RPL_WELCOME, well
+		// after the SASL exchange), so clear the SASL mech: girc otherwise
+		// re-sends AUTHENTICATE on any later CAP ACK while sasl is enabled and
+		// Config.SASL is set (cap.go handleCAP), and a bouncer that emits a
+		// CAP NEW after registration — soju, once it has attached the upstream
+		// network and advertises bouncer-networks-notify — would trigger a
+		// spurious mid-session re-auth that the server rejects, dropping the
+		// connection. Connect reinstalls the mech before the next dial. This
+		// write and handleCAP's read of Config.SASL are on different girc
+		// goroutines, but separated in time: the initial CAP exchange finishes
+		// before RPL_WELCOME, and a bouncer's CAP NEW arrives only once it has
+		// attached the upstream network, seconds later.
+		if c.mech != nil {
+			gc.Config.SASL = nil
+		}
 		c.emit(core.Event{Type: core.EvConnect, Network: c.opts.Network, Nick: gc.GetNick()})
 		c.armMonitor(gc)
 	})
@@ -382,6 +412,14 @@ func (c *Conn) Connect(ctx context.Context) error {
 	if err := c.useAddr(c.addrs[c.addrIdx]); err != nil {
 		c.advanceAddr()
 		return fmt.Errorf("irc %s: %w", c.opts.Network, err)
+	}
+
+	// Reinstall the SASL mech cleared on the previous registration (see the
+	// CONNECTED handler), so this fresh registration authenticates. Safe to
+	// set here: the client is idle between Connect calls, which the reconnect
+	// loop makes serially.
+	if c.mech != nil {
+		c.client.Config.SASL = c.mech
 	}
 
 	stop := make(chan struct{})
