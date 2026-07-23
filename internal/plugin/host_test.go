@@ -2,6 +2,8 @@ package plugin
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -749,5 +751,66 @@ func TestHostCreatesNonExistentScriptsDir(t *testing.T) {
 
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		t.Errorf("expected scripts dir %s to be created, err: %v", dir, err)
+	}
+}
+
+type mockDoer struct {
+	fn func(*http.Request) (*http.Response, error)
+}
+
+func (m mockDoer) Do(req *http.Request) (*http.Response, error) {
+	return m.fn(req)
+}
+
+func TestDownloadPlugin(t *testing.T) {
+	api := &fakeAPI{}
+	dir := t.TempDir()
+
+	doer := mockDoer{
+		fn: func(req *http.Request) (*http.Response, error) {
+			if strings.HasSuffix(req.URL.Path, "/testdownload.lua") {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`stugan.describe("test script")`)),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusNotFound,
+				Body:       io.NopCloser(strings.NewReader("404 Not Found")),
+			}, nil
+		},
+	}
+
+	h, err := New(Options{API: api, Dir: dir, HTTP: doer})
+	if err != nil {
+		t.Fatalf("New host: %v", err)
+	}
+	defer h.Close()
+
+	ctx := context.Background()
+
+	// Test downloading non-existent plugin
+	if err := h.DownloadPlugin(ctx, "nonexistent"); err == nil {
+		t.Error("expected error for nonexistent plugin, got nil")
+	}
+
+	// Test downloading valid plugin
+	if err := h.DownloadPlugin(ctx, "testdownload"); err != nil {
+		t.Fatalf("DownloadPlugin failed: %v", err)
+	}
+
+	// Verify file was saved to disk
+	savedPath := filepath.Join(dir, "testdownload.lua")
+	content, err := os.ReadFile(savedPath)
+	if err != nil {
+		t.Fatalf("read saved plugin file: %v", err)
+	}
+	if !strings.Contains(string(content), "test script") {
+		t.Errorf("saved content mismatch: %s", string(content))
+	}
+
+	// Verify plugin is loaded
+	if !h.isLoaded("testdownload") {
+		t.Errorf("expected plugin 'testdownload' to be loaded")
 	}
 }

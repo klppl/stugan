@@ -79,16 +79,18 @@ starting point.
 
 ## Plugins & Script Library
 
-`stugan` ships with bundled default scripts (`fish.lua` encryption, `ignore.lua`, `ai.lua`, `webhooks.lua`) and an extensive collection of ready-to-use example plugins in [docs/examples/](docs/examples):
+`stugan` includes an official **Plugin Library** located in [plugins/](plugins/), packed with ready-to-use scripts:
 
-- **AI Companion & Summarizer** ([`ai.lua`](docs/examples/ai.lua)): `/ask <prompt>` and `/summarize [N]` using OpenAI, DeepSeek, Claude, Gemini, or Ollama.
-- **Outbound Webhooks** ([`webhooks.lua`](docs/examples/webhooks.lua)): Forward highlights & mentions to Discord, Slack, Ntfy, or custom HTTP webhooks.
-- **FiSH Encryption** ([`fish.lua`](internal/scripts/fish.lua)): Blowfish CBC/ECB encryption with `/setkey` and sidebar lock indicators.
+- **AI Companion & Summarizer** ([`ai.lua`](plugins/ai.lua)): `/ask <prompt>` and `/summarize [N]` using OpenAI, DeepSeek, Claude, Gemini, or Ollama.
+- **Outbound Webhooks** ([`webhooks.lua`](plugins/webhooks.lua)): Forward highlights & mentions to Discord, Slack, Ntfy, or custom HTTP webhooks.
+- **FiSH Encryption** ([`fish.lua`](plugins/fish.lua)): Blowfish CBC/ECB encryption with `/setkey` and sidebar lock indicators.
 - **Utilities & Automation**: Auto-away (`away.lua`), URL title fetchers (`title.lua`), typo sed corrections (`sed.lua`), NickServ auto-identify (`nickserv.lua`), URL tracking (`urls.lua`), nick watcher (`watch.lua`), and fun commands (`fun.lua`).
 
-Drop any Lua script into `$STUGAN_HOME/scripts/*.lua` and it loads live (hot-reloaded on save). Manage, configure, and reload plugins directly in the Web UI under **Settings → Plugins**.
+Install any plugin directly from within stugan by running `/load <script-name>` in chat (e.g. `/load title`), which downloads it directly from the official repository and loads it live into the runtime. You can also drop any Lua script into `$STUGAN_HOME/scripts/*.lua` for local development.
 
-See [docs/plugins.md](docs/plugins.md) for the Lua API reference and [docs/examples/](docs/examples) to browse all scripts.
+Manage, configure, reload, or unload plugins directly in the Web UI under **Settings → Plugins** or via `/load`, `/unload`, and `/reload` slash commands.
+
+See [plugins/README.md](plugins/README.md) for the plugin library catalog and [docs/plugins.md](docs/plugins.md) for the Lua API reference.
 
 ## Documentation
 

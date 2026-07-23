@@ -93,6 +93,9 @@ type PluginHost interface {
 	LoadPlugin(name string) error
 	UnloadPlugin(name string) error
 	ReloadPlugin(name string) error
+	// DownloadPlugin downloads the named script from the official plugin
+	// repository into the scripts directory and loads it.
+	DownloadPlugin(ctx context.Context, name string) error
 	// SetPluginSetting writes value to the named setting (declared via
 	// stugan.setting) of a loaded script: it validates against the setting's
 	// type, persists it to the script's kv, and runs the setting's apply
@@ -113,6 +116,9 @@ func (nopHost) Plugins() []PluginInfo                              { return nil 
 func (nopHost) LoadPlugin(string) error                            { return errors.New("plugins are disabled") }
 func (nopHost) UnloadPlugin(string) error                          { return errors.New("plugins are disabled") }
 func (nopHost) ReloadPlugin(string) error                          { return errors.New("plugins are disabled") }
+func (nopHost) DownloadPlugin(context.Context, string) error {
+	return errors.New("plugins are disabled")
+}
 func (nopHost) SetPluginSetting(string, string, string) error {
 	return errors.New("plugins are disabled")
 }

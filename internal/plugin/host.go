@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -28,6 +29,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/klippelism/stugan/internal/core"
+	"github.com/klippelism/stugan/internal/safehttp"
 )
 
 // defaultHookTimeout bounds a single hook invocation so a runaway script
@@ -484,6 +486,58 @@ func (h *Host) UnloadPlugin(name string) error {
 
 // ReloadPlugin re-reads a script from disk, dropping its old hooks first.
 func (h *Host) ReloadPlugin(name string) error { return h.LoadPlugin(name) }
+
+// DownloadPlugin downloads the named script from the official plugin repository
+// into the scripts directory and loads it.
+func (h *Host) DownloadPlugin(ctx context.Context, name string) error {
+	name = strings.TrimSpace(name)
+	name = strings.TrimSuffix(name, ".lua")
+	if name == "" || name != filepath.Base(name) || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("invalid plugin name %q", name)
+	}
+	if h.dir == "" {
+		return errors.New("no scripts directory configured")
+	}
+	client := h.httpClient
+	if client == nil {
+		client = safehttp.New()
+	}
+
+	url := fmt.Sprintf("https://raw.githubusercontent.com/klippelism/stugan/main/plugins/%s.lua", name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("plugin %q not found in official library", name)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d downloading plugin %q", resp.StatusCode, name)
+	}
+
+	// Cap at 1 MiB to match plugin http response cap
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read response body: %w", err)
+	}
+
+	if err := os.MkdirAll(h.dir, 0o755); err != nil {
+		return fmt.Errorf("create scripts dir: %w", err)
+	}
+
+	dst := filepath.Join(h.dir, name+".lua")
+	if err := os.WriteFile(dst, body, 0o644); err != nil {
+		return fmt.Errorf("write plugin file: %w", err)
+	}
+
+	return h.LoadPlugin(name)
+}
 
 // scriptPath resolves a bare script name to its file, rejecting anything
 // that looks like a path (traversal guard — name comes from the client).

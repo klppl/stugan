@@ -339,7 +339,7 @@ links posted in a channel.
   > same `PluginHost` interface — no API changes for script authors using the
   > documented surface.
 
-## 3.8 Worked examples (shipped in docs/examples/)
+## 3.8 Official Plugin Library (shipped in plugins/)
 
 ### greet.lua — a command + a content filter
 
@@ -584,6 +584,8 @@ ignore list.
 
 A `/command` that no plugin claims falls back to built-ins: `/me`, `/msg`,
 `/notice`, `/join`, `/part`, `/topic`, `/nick`, `/quit`, `/chathistory`
-(server-side history where supported), and `/raw` (alias `/quote`).
-Anything else unrecognized prints an "unknown command" notice. A line
+(server-side history where supported), `/raw` (alias `/quote`), and plugin
+management commands: `/load <script-name>` (downloads from the official plugin library
+and loads it live), `/unload <script-name>`, and `/reload <script-name>`.
+Anything else unrecognized passes through as a raw IRC command. A line
 starting with `//` is sent literally (an escaped leading slash).

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,11 +15,89 @@ import (
 // common slash-commands; anything unrecognized is sent as a raw IRC line
 // (uppercased), matching the weechat/irssi habit of /FOO being raw FOO.
 func (e *Engine) runBuiltinCommand(ev Event) {
+	name := strings.ToLower(ev.Command)
+	switch name {
+	case "load":
+		if len(ev.Args) == 0 {
+			e.inject(Message{
+				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+				Kind: MsgSystem, Text: "usage: /load <script-name> (e.g. /load title)",
+			})
+			return
+		}
+		scriptName := ev.Args[0]
+		e.inject(Message{
+			Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+			Kind: MsgSystem, Text: fmt.Sprintf("downloading plugin %q...", scriptName),
+		})
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			err := e.host.DownloadPlugin(ctx, scriptName)
+			if err != nil {
+				e.inject(Message{
+					Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+					Kind: MsgSystem, Text: fmt.Sprintf("failed to load plugin %q: %v", scriptName, err),
+				})
+			} else {
+				cleanName := strings.TrimSuffix(filepath.Base(scriptName), ".lua")
+				e.inject(Message{
+					Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+					Kind: MsgSystem, Text: fmt.Sprintf("successfully downloaded and loaded plugin %q", cleanName),
+				})
+			}
+		}()
+		return
+
+	case "unload":
+		if len(ev.Args) == 0 {
+			e.inject(Message{
+				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+				Kind: MsgSystem, Text: "usage: /unload <script-name>",
+			})
+			return
+		}
+		name := strings.TrimSuffix(filepath.Base(ev.Args[0]), ".lua")
+		if err := e.host.UnloadPlugin(name); err != nil {
+			e.inject(Message{
+				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+				Kind: MsgSystem, Text: fmt.Sprintf("failed to unload plugin %q: %v", name, err),
+			})
+		} else {
+			e.inject(Message{
+				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+				Kind: MsgSystem, Text: fmt.Sprintf("unloaded plugin %q", name),
+			})
+		}
+		return
+
+	case "reload":
+		if len(ev.Args) == 0 {
+			e.inject(Message{
+				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+				Kind: MsgSystem, Text: "usage: /reload <script-name>",
+			})
+			return
+		}
+		name := strings.TrimSuffix(filepath.Base(ev.Args[0]), ".lua")
+		if err := e.host.ReloadPlugin(name); err != nil {
+			e.inject(Message{
+				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+				Kind: MsgSystem, Text: fmt.Sprintf("failed to reload plugin %q: %v", name, err),
+			})
+		} else {
+			e.inject(Message{
+				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+				Kind: MsgSystem, Text: fmt.Sprintf("reloaded plugin %q", name),
+			})
+		}
+		return
+	}
+
 	conn := e.connFor(ev.Network)
 	if conn == nil {
 		return
 	}
-	name := strings.ToLower(ev.Command)
 	switch name {
 	case "me":
 		e.API().Action(ev.Network, ev.Buffer, ev.Text)

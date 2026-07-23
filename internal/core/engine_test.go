@@ -1439,6 +1439,7 @@ func (dropHost) Plugins() []PluginInfo                         { return nil }
 func (dropHost) LoadPlugin(string) error                       { return nil }
 func (dropHost) UnloadPlugin(string) error                     { return nil }
 func (dropHost) ReloadPlugin(string) error                     { return nil }
+func (dropHost) DownloadPlugin(context.Context, string) error  { return nil }
 func (dropHost) SetPluginSetting(string, string, string) error { return nil }
 func (dropHost) Close() error                                  { return nil }
 
@@ -1658,4 +1659,104 @@ func TestRFC1459Fold(t *testing.T) {
 	if !eqFold(`ABC[]\~`, `abc{}|^`) {
 		t.Error(`eqFold(ABC[]\~, abc{}|^) = false`)
 	}
+}
+
+type mockPluginHost struct {
+	nopHost
+	downloaded []string
+	unloaded   []string
+	reloaded   []string
+	mu         sync.Mutex
+}
+
+func (m *mockPluginHost) DownloadPlugin(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.downloaded = append(m.downloaded, name)
+	if name == "fail" {
+		return fmt.Errorf("download error")
+	}
+	return nil
+}
+
+func (m *mockPluginHost) UnloadPlugin(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.unloaded = append(m.unloaded, name)
+	return nil
+}
+
+func (m *mockPluginHost) ReloadPlugin(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reloaded = append(m.reloaded, name)
+	return nil
+}
+
+type safeSink struct {
+	mu   sync.Mutex
+	msgs []Message
+}
+
+func (s *safeSink) Print(m Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.msgs = append(s.msgs, m)
+}
+func (s *safeSink) NetworkChanged(*Network)                       {}
+func (s *safeSink) NetworkRemoved(string)                         {}
+func (s *safeSink) NetworksReordered([]string)                    {}
+func (s *safeSink) ChannelList(string, []ChannelListItem)         {}
+func (s *safeSink) Typing(string, string, string, string)         {}
+func (s *safeSink) React(string, string, string, string, string)  {}
+func (s *safeSink) Redact(string, string, string, string, string) {}
+
+func (s *safeSink) lastText() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.msgs) == 0 {
+		return ""
+	}
+	return s.msgs[len(s.msgs)-1].Text
+}
+
+func TestPluginSlashCommands(t *testing.T) {
+	sink := &safeSink{}
+	host := &mockPluginHost{}
+	e := New(Options{Sink: sink, Host: host})
+	e.AddNetwork(NetworkParams{ID: "net", Name: "net", Nick: "me"}, nil)
+
+	ctx := context.Background()
+
+	// /load without args
+	e.handle(ctx, Event{Type: EvCommand, Network: "net", Buffer: "#test", Command: "load"})
+	if !strings.Contains(sink.lastText(), "usage: /load") {
+		t.Errorf("expected usage message for /load, got %q", sink.lastText())
+	}
+
+	// /load title
+	e.handle(ctx, Event{Type: EvCommand, Network: "net", Buffer: "#test", Command: "load", Args: []string{"title"}})
+	time.Sleep(100 * time.Millisecond) // allow background goroutine to finish
+
+	host.mu.Lock()
+	if len(host.downloaded) == 0 || host.downloaded[0] != "title" {
+		t.Errorf("expected host to download 'title', got %v", host.downloaded)
+	}
+	host.mu.Unlock()
+
+	// /unload title
+	e.handle(ctx, Event{Type: EvCommand, Network: "net", Buffer: "#test", Command: "unload", Args: []string{"title"}})
+	host.mu.Lock()
+	if len(host.unloaded) == 0 || host.unloaded[0] != "title" {
+		t.Errorf("expected host to unload 'title', got %v", host.unloaded)
+	}
+	host.mu.Unlock()
+
+	// /reload title
+	e.handle(ctx, Event{Type: EvCommand, Network: "net", Buffer: "#test", Command: "reload", Args: []string{"title"}})
+	host.mu.Lock()
+	if len(host.reloaded) == 0 || host.reloaded[0] != "title" {
+		t.Errorf("expected host to reload 'title', got %v", host.reloaded)
+	}
+	host.mu.Unlock()
 }
