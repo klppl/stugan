@@ -358,6 +358,9 @@ func (a engineAPI) Part(network, channel string) error {
 	return c.SendRaw("PART " + channel)
 }
 
+func (a engineAPI) HoldJoins(network string) error    { return a.e.HoldJoins(network) }
+func (a engineAPI) ReleaseJoins(network string) error { return a.e.ReleaseJoins(network) }
+
 func (a engineAPI) Print(network, buffer, text string) {
 	// Inject directly rather than via HandleEvent. A hook runs on the engine
 	// loop goroutine (it blocks inside Dispatch), and that goroutine is the

@@ -15,12 +15,14 @@ import (
 
 // fakeAPI records the actions scripts take.
 type fakeAPI struct {
-	mu      sync.Mutex
-	msgs    [][3]string
-	prints  [][3]string
-	sends   [][2]string
-	states  map[string]map[string]string // "<network>\t<buffer>" → state
-	nickVal string
+	mu       sync.Mutex
+	msgs     [][3]string
+	prints   [][3]string
+	sends    [][2]string
+	holds    []string                     // networks passed to HoldJoins
+	releases []string                     // networks passed to ReleaseJoins
+	states   map[string]map[string]string // "<network>\t<buffer>" → state
+	nickVal  string
 }
 
 func (a *fakeAPI) Send(network, raw string) error {
@@ -39,6 +41,18 @@ func (a *fakeAPI) Notice(network, target, text string) error { return a.Message(
 func (a *fakeAPI) Action(network, target, text string) error { return a.Message(network, target, text) }
 func (a *fakeAPI) Join(string, string) error                 { return nil }
 func (a *fakeAPI) Part(string, string) error                 { return nil }
+func (a *fakeAPI) HoldJoins(network string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.holds = append(a.holds, network)
+	return nil
+}
+func (a *fakeAPI) ReleaseJoins(network string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.releases = append(a.releases, network)
+	return nil
+}
 func (a *fakeAPI) Print(network, buffer, text string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -243,6 +257,39 @@ func TestHookSignal(t *testing.T) {
 	h.Dispatch(context.Background(), ev)
 	if len(api.prints) != 1 || api.prints[0][2] != "carol arrived" {
 		t.Fatalf("signal prints = %v", api.prints)
+	}
+}
+
+// The auth-plugin flow behind hold_joins/release_joins: hold from the connect
+// hook, release once the service confirms the login (see qauth.lua).
+func TestHoldReleaseJoinsBindings(t *testing.T) {
+	api := &fakeAPI{}
+	h := newHost(t, api, map[string]string{
+		"auth.lua": `
+			stugan.hook_signal("connect", function(s)
+			  stugan.hold_joins(s.network)
+			end)
+			stugan.hook_message(function(m)
+			  if m.text:find("logged in") then stugan.release_joins(m.network) end
+			  return m
+			end)`,
+	}, nil)
+
+	h.Dispatch(context.Background(), core.Event{Type: core.EvConnect, Network: "n", Nick: "me"})
+	if len(api.holds) != 1 || api.holds[0] != "n" {
+		t.Fatalf("holds = %v, want [n]", api.holds)
+	}
+	if len(api.releases) != 0 {
+		t.Fatalf("released before auth confirmed: %v", api.releases)
+	}
+
+	h.Dispatch(context.Background(), core.Event{
+		Type: core.EvMessageIn, Network: "n",
+		Message: &core.Message{Network: "n", Buffer: "Q", From: "Q", Kind: core.MsgNotice,
+			Text: "You are now logged in"},
+	})
+	if len(api.releases) != 1 || api.releases[0] != "n" {
+		t.Fatalf("releases = %v, want [n]", api.releases)
 	}
 }
 
@@ -708,4 +755,3 @@ func TestHostCreatesNonExistentScriptsDir(t *testing.T) {
 		t.Errorf("expected scripts dir %s to be created, err: %v", dir, err)
 	}
 }
-

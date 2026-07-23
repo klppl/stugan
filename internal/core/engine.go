@@ -116,7 +116,12 @@ type Engine struct {
 	// network. A reconnect supersedes any older Perform goroutine before it can
 	// send another command or auto-join on the new connection.
 	startupSeq map[string]uint64
-	listAccum  map[string][]ChannelListItem // in-progress LIST results
+	// joinGates are per-network auto-join gates plugins hold via HoldJoins:
+	// while a gate exists the startup auto-join is parked on it instead of
+	// sent, until ReleaseJoins — or the gate's fallback timer — flushes it.
+	// Guarded by mu; reset on disconnect.
+	joinGates map[string]*joinGate
+	listAccum map[string][]ChannelListItem // in-progress LIST results
 	// pendingWhois records which buffer issued a WHOIS/WHOWAS/WHO/NAMES so we
 	// can route the server's numeric replies back to it. Key is
 	// "<network>\t<lowercase-target>"; cleared on the matching end-of
@@ -190,6 +195,7 @@ func New(opts Options) *Engine {
 		conns:        map[string]IRCConn{},
 		connCancels:  map[string]context.CancelFunc{},
 		startupSeq:   map[string]uint64{},
+		joinGates:    map[string]*joinGate{},
 		listAccum:    map[string][]ChannelListItem{},
 		pendingWhois: map[string]string{},
 		pendingState: map[string]map[string]map[string]string{},
@@ -367,6 +373,10 @@ func (e *Engine) RemoveNetwork(id string) error {
 	delete(e.pendingState, id)
 	delete(e.listAccum, id)
 	delete(e.startupSeq, id)
+	if g := e.joinGates[id]; g != nil {
+		g.timer.Stop()
+		delete(e.joinGates, id)
+	}
 	for i, n := range e.user.Networks {
 		if n.ID == id {
 			e.user.Networks = append(e.user.Networks[:i], e.user.Networks[i+1:]...)
@@ -1046,7 +1056,7 @@ func (e *Engine) runPerform(network string) {
 
 	if len(lines) == 0 {
 		if e.startupActive(network, seq, conn) {
-			conn.Autojoin()
+			e.autojoinOrDefer(network, seq, conn)
 		}
 		return
 	}
@@ -1074,7 +1084,7 @@ func (e *Engine) runPerform(network string) {
 			}
 		}
 		if e.startupActive(network, seq, conn) {
-			conn.Autojoin()
+			e.autojoinOrDefer(network, seq, conn)
 		}
 	}()
 }
@@ -1084,8 +1094,120 @@ func (e *Engine) runPerform(network string) {
 func (e *Engine) startupActive(network string, seq uint64, conn IRCConn) bool {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	return e.startupActiveLocked(network, seq, conn)
+}
+
+// startupActiveLocked is startupActive for callers already holding e.mu.
+func (e *Engine) startupActiveLocked(network string, seq uint64, conn IRCConn) bool {
 	n := e.user.Network(network)
 	return n != nil && n.State == StateRegistered && e.conns[network] == conn && e.startupSeq[network] == seq
+}
+
+// joinHoldTimeout is how long a HoldJoins gate may stay unreleased before the
+// engine auto-joins anyway. A buggy plugin, unreachable services, or a failed
+// auth must never leave the user outside every channel indefinitely.
+const joinHoldTimeout = 45 * time.Second
+
+// joinGate is one network's held-back startup auto-join (see Engine.joinGates).
+// Fields are guarded by e.mu; timer auto-releases an abandoned hold.
+type joinGate struct {
+	// pending is set when startup reached the auto-join point while the gate
+	// was held; releasing then flushes the join. seq/conn are recorded at that
+	// point so the flush is guarded like any startup action — a gate outlived
+	// by a reconnect or a live network edit can't join on the wrong connection.
+	pending bool
+	seq     uint64
+	conn    IRCConn
+	timer   *time.Timer
+}
+
+// HoldJoins parks the network's startup channel auto-join until ReleaseJoins
+// (or the joinHoldTimeout fallback). Meant to be called from a plugin's
+// connect hook — the engine loop dispatches that before it starts the
+// Perform/auto-join sequence — so an auth plugin can finish an asynchronous
+// service login (QuakeNet Q, NickServ without SASL) and set MODE +x before
+// any JOIN exposes the real host. Holding again restarts the gate and its
+// fallback timer.
+func (e *Engine) HoldJoins(network string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.user.Network(network) == nil {
+		return fmt.Errorf("unknown network %q", network)
+	}
+	if old := e.joinGates[network]; old != nil {
+		old.timer.Stop()
+	}
+	g := &joinGate{}
+	g.timer = time.AfterFunc(joinHoldTimeout, func() { e.expireJoinGate(network, g) })
+	e.joinGates[network] = g
+	return nil
+}
+
+// ReleaseJoins lifts a HoldJoins gate and sends the parked auto-join, if
+// startup already reached it. The plugin sends its MODE +x before releasing
+// and the server processes a connection's commands in order, so the mask is
+// active by the time the JOINs land. Releasing without a hold is a harmless
+// no-op, so a plugin may release unconditionally once auth settles.
+func (e *Engine) ReleaseJoins(network string) error {
+	e.mu.Lock()
+	if e.user.Network(network) == nil {
+		e.mu.Unlock()
+		return fmt.Errorf("unknown network %q", network)
+	}
+	conn := e.takeJoinGateLocked(network)
+	e.mu.Unlock()
+	if conn != nil {
+		conn.Autojoin()
+	}
+	return nil
+}
+
+// expireJoinGate is the fallback path: g's timer fired without ReleaseJoins.
+// Only the currently-installed gate may act — a stale timer beaten by a
+// re-hold or a disconnect reset finds a different (or no) gate and does
+// nothing.
+func (e *Engine) expireJoinGate(network string, g *joinGate) {
+	e.mu.Lock()
+	if e.joinGates[network] != g {
+		e.mu.Unlock()
+		return
+	}
+	conn := e.takeJoinGateLocked(network)
+	e.mu.Unlock()
+	e.log.Warn("join hold expired without release", "network", network, "timeout", joinHoldTimeout)
+	if conn != nil {
+		conn.Autojoin()
+	}
+}
+
+// takeJoinGateLocked removes network's gate and reports the connection to
+// auto-join on: non-nil only when startup already parked a join on the gate
+// and that startup sequence is still the live one. Caller holds e.mu.
+func (e *Engine) takeJoinGateLocked(network string) IRCConn {
+	g := e.joinGates[network]
+	if g == nil {
+		return nil
+	}
+	delete(e.joinGates, network)
+	g.timer.Stop()
+	if g.pending && e.startupActiveLocked(network, g.seq, g.conn) {
+		return g.conn
+	}
+	return nil
+}
+
+// autojoinOrDefer sends the startup auto-join, unless a plugin holds the join
+// gate — then the join is parked on the gate for ReleaseJoins (or the fallback
+// timer) to flush.
+func (e *Engine) autojoinOrDefer(network string, seq uint64, conn IRCConn) {
+	e.mu.Lock()
+	if g := e.joinGates[network]; g != nil {
+		g.pending, g.seq, g.conn = true, seq, conn
+		e.mu.Unlock()
+		return
+	}
+	e.mu.Unlock()
+	conn.Autojoin()
 }
 
 // expandPerformVariables substitutes named $variables in a perform line.
@@ -1479,6 +1601,13 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 			msg += ": " + ev.Text
 		}
 		sys(StatusBuffer, msg)
+		// Reset the join gate: the next registration starts clean, and a hold
+		// (or its fallback timer) left over from this session must not park or
+		// flush a JOIN on the new connection.
+		if g := e.joinGates[ev.Network]; g != nil {
+			g.timer.Stop()
+			delete(e.joinGates, ev.Network)
+		}
 		// Drop stale friend presence: a dropped connection knows nothing about
 		// who is online until MONITOR re-reports after the next registration.
 		n.MonitorOnline = nil

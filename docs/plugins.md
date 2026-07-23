@@ -131,6 +131,16 @@ stugan.action(network, target, text)    -- /me
 stugan.join(network, channel)
 stugan.part(network, channel)
 
+-- Gate the startup channel auto-join. Hold from a "connect" signal hook —
+-- those run before the engine's Perform/auto-join sequence — while an
+-- asynchronous service login (QuakeNet Q, NickServ without SASL) completes;
+-- release once logged in (after any MODE +x) to send the parked JOINs. The
+-- engine auto-releases after 45 s and resets the gate on reconnect, so a
+-- wedged plugin can't keep you out of your channels. Releasing without a
+-- hold is a no-op. See docs/examples/qauth.lua for the intended flow.
+stugan.hold_joins(network)
+stugan.release_joins(network)
+
 -- Inject a line into a buffer's view WITHOUT sending to IRC (local print).
 stugan.print(network, buffer, text)
 -- Shorthand using the hook's ctx/msg buffer:

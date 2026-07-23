@@ -150,4 +150,3 @@ func TestEnsureDirs(t *testing.T) {
 		}
 	}
 }
-

@@ -9,7 +9,10 @@
 --     network blocks challengeauth.
 --
 -- On connect this authenticates automatically; it also re-auths if Q asks, and
--- (with hidehost) sets +x to mask your host once Q confirms login.
+-- (with hidehost) sets +x to mask your host once Q confirms login. While auth
+-- is in flight the startup channel auto-join is held back (stugan.hold_joins),
+-- so no JOIN can expose your real host before +x takes effect; the engine
+-- auto-releases the hold after a timeout if Q never answers.
 --
 -- Everything is configured from inside stugan — no config.toml needed. Set it
 -- up from Q's query or the status buffer so nothing leaks to a channel:
@@ -120,6 +123,13 @@ local function authenticate(network)
 end
 
 stugan.hook_signal("connect", function(s)
+  -- Hold the startup auto-join while Q auth runs: connect hooks fire before
+  -- the engine's auto-join, so the gate is in place before any JOIN. Held
+  -- only when there are credentials to try — otherwise nothing would ever
+  -- release it and joins would wait out the engine's fallback timeout.
+  if creds(s.network) then
+    stugan.hold_joins(s.network)
+  end
   authenticate(s.network)
 end)
 
@@ -148,9 +158,14 @@ stugan.hook_message(function(msg)
   if not use_challenge() and low:find("auth") and low:find("authenticate") then
     authenticate(net)
   end
-  -- Mask our host once Q confirms the login.
-  if hidehost_enabled() and low:find("you are now logged in") then
-    stugan.send(net, "MODE " .. (stugan.nick(net) or "") .. " +x")
+  -- Once Q confirms the login: mask our host, then release the held
+  -- auto-join. The server processes our commands in order, so +x is active
+  -- before the released JOINs — no channel ever sees the real host.
+  if low:find("you are now logged in") then
+    if hidehost_enabled() then
+      stugan.send(net, "MODE " .. (stugan.nick(net) or "") .. " +x")
+    end
+    stugan.release_joins(net)
   end
   return msg
 end)

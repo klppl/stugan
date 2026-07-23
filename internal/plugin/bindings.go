@@ -177,6 +177,12 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 	t.RawSetString("part", s.L.NewFunction(func(L *lua.LState) int {
 		return push2(L, h.api.Part(L.CheckString(1), L.CheckString(2)))
 	}))
+	t.RawSetString("hold_joins", s.L.NewFunction(func(L *lua.LState) int {
+		return push2(L, h.api.HoldJoins(L.CheckString(1)))
+	}))
+	t.RawSetString("release_joins", s.L.NewFunction(func(L *lua.LState) int {
+		return push2(L, h.api.ReleaseJoins(L.CheckString(1)))
+	}))
 	t.RawSetString("print", s.L.NewFunction(func(L *lua.LState) int {
 		// print(network, buffer, text) or print(ctx_or_msg_table, text)
 		if tbl, ok := L.Get(1).(*lua.LTable); ok {

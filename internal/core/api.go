@@ -17,6 +17,14 @@ type API interface {
 	// Join/Part change channel membership.
 	Join(network, channel string) error
 	Part(network, channel string) error
+	// HoldJoins/ReleaseJoins gate the network's startup channel auto-join.
+	// A connect hook holds the gate so an asynchronous service login
+	// (QuakeNet Q, NickServ without SASL) and MODE +x can settle before any
+	// JOIN exposes the real host, then releases it to send the parked JOINs.
+	// The engine auto-releases after a fallback timeout and resets the gate
+	// on disconnect, so a wedged plugin can't keep the user out of channels.
+	HoldJoins(network string) error
+	ReleaseJoins(network string) error
 	// Print injects a local line into a buffer without sending to IRC.
 	Print(network, buffer, text string)
 	// SetBufferState publishes an opaque key/value bag on a buffer. The

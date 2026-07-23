@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -542,6 +543,155 @@ func waitForNetworkState(t *testing.T, e *Engine, network string, want ConnState
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("network %q did not reach state %q", network, want)
+}
+
+// holdingHost is a PluginHost standing in for an auth plugin: while hold is
+// set, its connect hook holds the network's join gate, as qauth.lua does.
+type holdingHost struct {
+	nopHost
+	e    *Engine
+	hold atomic.Bool
+}
+
+func (h *holdingHost) Dispatch(_ context.Context, ev Event) (Event, bool) {
+	if ev.Type == EvConnect && h.hold.Load() {
+		if err := h.e.HoldJoins(ev.Network); err != nil {
+			panic(err)
+		}
+	}
+	return ev, true
+}
+
+// newGatedEngine builds a running engine whose plugin host holds the join
+// gate on connect, with one live network configured to auto-join #stugan.
+func newGatedEngine(t *testing.T) (*Engine, *holdingHost, *fakeRuntimeConn, context.CancelFunc) {
+	t.Helper()
+	conn := &fakeConnector{}
+	host := &holdingHost{}
+	host.hold.Store(true)
+	e := New(Options{Sink: &captureSink{}, Connector: conn, Host: host})
+	host.e = e
+	if err := e.AddNetworkLive(NetworkParams{
+		ID: "n", Name: "QuakeNet", Addr: "irc.quakenet.org:6697", Nick: "me",
+		Channels: []string{"#stugan"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = e.Run(ctx) }()
+	waitForNetworkState(t, e, "n", StateConnecting)
+	return e, host, conn.conns[0], cancel
+}
+
+// waitForParkedJoin waits until network's startup has reached the auto-join
+// point with the join gate held — the parked state a release then flushes.
+func waitForParkedJoin(t *testing.T, e *Engine, network string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		e.mu.RLock()
+		g := e.joinGates[network]
+		parked := g != nil && g.pending
+		e.mu.RUnlock()
+		if parked {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("join gate for %q never parked the auto-join", network)
+}
+
+func waitForRaws(t *testing.T, c *fakeRuntimeConn, want []string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if slices.Equal(c.rawsSnap(), want) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("raws = %v, want %v", c.rawsSnap(), want)
+}
+
+// A plugin holding the join gate on connect parks the startup auto-join until
+// ReleaseJoins flushes it, after the plugin's MODE +x — so the join can never
+// race an asynchronous service auth (the QuakeNet +x host-exposure race).
+func TestHoldReleaseJoinsGatesAutojoin(t *testing.T) {
+	e, _, conn, cancel := newGatedEngine(t)
+	defer cancel()
+
+	e.HandleEvent(Event{Type: EvConnect, Network: "n", Nick: "me"})
+	waitForParkedJoin(t, e, "n")
+	if raws := conn.rawsSnap(); len(raws) != 0 {
+		t.Fatalf("lines sent while joins held: %v", raws)
+	}
+
+	// Auth confirmed: the plugin masks its host, then releases. The parked
+	// JOIN must go out after the MODE, mirroring the qauth.lua flow.
+	if err := e.API().Send("n", "MODE me +x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.API().ReleaseJoins("n"); err != nil {
+		t.Fatal(err)
+	}
+	waitForRaws(t, conn, []string{"MODE me +x", "JOIN #stugan"})
+
+	// Releasing again without a hold is a no-op, not a second JOIN; holding
+	// an unknown network is an error.
+	if err := e.API().ReleaseJoins("n"); err != nil {
+		t.Fatal(err)
+	}
+	if raws := conn.rawsSnap(); len(raws) != 2 {
+		t.Fatalf("re-release changed raws: %v", raws)
+	}
+	if err := e.API().HoldJoins("ghost"); err == nil {
+		t.Fatal("HoldJoins(unknown network) = nil, want error")
+	}
+}
+
+// An unreleased gate must not strand the user outside every channel: the
+// fallback timer auto-joins, and a stale expiry after that is a no-op.
+func TestHoldJoinsTimeoutFallback(t *testing.T) {
+	e, _, conn, cancel := newGatedEngine(t)
+	defer cancel()
+
+	e.HandleEvent(Event{Type: EvConnect, Network: "n", Nick: "me"})
+	waitForParkedJoin(t, e, "n")
+
+	// Fire the fallback directly rather than waiting out the real timer.
+	e.mu.RLock()
+	g := e.joinGates["n"]
+	e.mu.RUnlock()
+	e.expireJoinGate("n", g)
+	waitForRaws(t, conn, []string{"JOIN #stugan"})
+
+	e.expireJoinGate("n", g) // the gate is gone; a stale fire does nothing
+	if raws := conn.rawsSnap(); len(raws) != 1 {
+		t.Fatalf("stale expiry re-joined: %v", raws)
+	}
+}
+
+// A hold left over from a dropped session is reset on disconnect: the next
+// registration auto-joins normally, exactly once.
+func TestJoinGateResetOnReconnect(t *testing.T) {
+	e, host, conn, cancel := newGatedEngine(t)
+	defer cancel()
+
+	e.HandleEvent(Event{Type: EvConnect, Network: "n", Nick: "me"})
+	waitForParkedJoin(t, e, "n")
+
+	// The connection drops before the plugin ever releases, and the plugin
+	// does not hold on the next connect (say, its credentials were cleared).
+	host.hold.Store(false)
+	e.HandleEvent(Event{Type: EvDisconnect, Network: "n"})
+	e.HandleEvent(Event{Type: EvConnect, Network: "n", Nick: "me"})
+	waitForRaws(t, conn, []string{"JOIN #stugan"})
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.joinGates["n"] != nil {
+		t.Fatal("join gate survived the disconnect")
+	}
 }
 
 func TestExpandPerformVariables(t *testing.T) {
