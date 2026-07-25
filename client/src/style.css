@@ -608,8 +608,12 @@ body {
   background: var(--bg-alt);
   border-bottom: 1px solid var(--border);
 }
-.topbar .search {
+.search-box-container {
+  position: relative;
   flex: 0 1 220px;
+}
+.topbar .search {
+  width: 100%;
   padding: 5px 9px;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -617,6 +621,80 @@ body {
   color: var(--fg);
   font-size: 14px;
   min-width: 0;
+}
+.search-autocomplete {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  min-width: 270px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.autocomplete-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  -webkit-tap-highlight-color: transparent;
+}
+.autocomplete-item.selected,
+.autocomplete-item:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.autocomplete-item .item-type-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg-dim) 20%, transparent);
+  color: var(--fg-dim);
+}
+.autocomplete-item .item-type-tag.nick {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--accent);
+}
+.autocomplete-item .item-type-tag.channel {
+  background: color-mix(in srgb, #10b981 25%, transparent);
+  color: #10b981;
+}
+.autocomplete-item .item-type-tag.filter {
+  background: color-mix(in srgb, #f59e0b 25%, transparent);
+  color: #f59e0b;
+}
+.autocomplete-item .item-type-tag.date {
+  background: color-mix(in srgb, #8b5cf6 25%, transparent);
+  color: #8b5cf6;
+}
+.autocomplete-item .item-text {
+  font-weight: 600;
+  color: var(--fg);
+}
+.autocomplete-item .item-desc {
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin-left: auto;
+}
+.filter-chip-text {
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.filter-chip-text:hover {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--accent);
 }
 .topbar .spacer {
   flex: 1;
@@ -633,6 +711,10 @@ body {
 }
 .topbar .topic-edit {
   flex: 0 1 320px;
+}
+.mobile-actions-wrapper {
+  display: none;
+  position: relative;
 }
 .ghost {
   background: transparent;
@@ -1966,20 +2048,105 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .menu-btn,
-  .search-toggle {
+  .menu-btn {
     display: inline-flex;
   }
-  /* Hide the always-visible search input; slide it down only when the
-     magnifier is tapped (controlled by JS toggling .mobile-open). */
-  .topbar .search {
+  .topbar .desktop-action {
+    display: none !important;
+  }
+  .mobile-actions-wrapper {
+    display: inline-block;
+    position: relative;
+  }
+  .mobile-actions-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: bold;
+    min-width: 36px;
+    position: relative;
+  }
+  .mobile-actions-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 99;
+    background: transparent;
+  }
+  .mobile-actions-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 100;
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    padding: 6px;
+    min-width: 160px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .mobile-action-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    color: var(--fg);
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-action-item:hover,
+  .mobile-action-item:active {
+    background: color-mix(in srgb, var(--fg) 10%, transparent);
+  }
+  .mobile-action-item.active {
+    background: color-mix(in srgb, var(--hl) 18%, transparent);
+    color: var(--hl);
+  }
+  .mobile-action-item .item-icon {
+    font-size: 16px;
+    width: 20px;
+    display: inline-flex;
+    justify-content: center;
+  }
+  .mobile-action-item .item-label {
+    flex: 1;
+  }
+  .dot-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 8px;
+    height: 8px;
+    min-width: 0;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--hl, #ef4444);
+  }
+  /* Hide the search box container on mobile; slide it down only when search is opened. */
+  .search-box-container {
     display: none;
     flex-basis: 100%;
     order: 99; /* wraps below the button row */
-    font-size: 16px; /* prevent iOS zoom-in-on-focus */
   }
-  .topbar .search.mobile-open {
+  .search-box-container.mobile-open {
     display: block;
+  }
+  .topbar .search {
+    display: block;
+    font-size: 16px; /* prevent iOS zoom-in-on-focus */
   }
   .topbar .ghost {
     min-height: 36px;
@@ -1993,12 +2160,6 @@ body {
     display: inline;
     font-size: 16px;
     line-height: 1;
-  }
-  /* Channels-browser button drops on the narrowest screens; /join still works. */
-  @media (max-width: 380px) {
-    .channels-btn {
-      display: none;
-    }
   }
 
   .chat-header {

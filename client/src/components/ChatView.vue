@@ -582,6 +582,11 @@ async function onDrop(e: DragEvent) {
     if (url) inputRef.value?.appendText(url);
   }
 }
+function applyFilterHint(prefix: string) {
+  const current = store.search.query || "";
+  const newQ = current.trim() ? `${current.trim()} ${prefix}` : prefix;
+  connection.search(newQ);
+}
 </script>
 
 <template>
@@ -594,11 +599,11 @@ async function onDrop(e: DragEvent) {
         </div>
         <div class="search-filter-hints">
           <span class="hint-label">Filters:</span>
-          <span class="filter-chip-text" title="Filter by nick">from:nick</span>
-          <span class="filter-chip-text" title="Filter by channel">in:#channel</span>
-          <span class="filter-chip-text" title="Only messages with URLs">has:link</span>
-          <span class="filter-chip-text" title="Messages on or after date">after:YYYY-MM-DD</span>
-          <span class="filter-chip-text" title="Messages before date">before:YYYY-MM-DD</span>
+          <span class="filter-chip-text" title="Filter by nick" @click="applyFilterHint('from:')">from:nick</span>
+          <span class="filter-chip-text" title="Filter by channel" @click="applyFilterHint('in:')">in:#channel</span>
+          <span class="filter-chip-text" title="Only messages with URLs" @click="applyFilterHint('has:link')">has:link</span>
+          <span class="filter-chip-text" title="Messages on or after date" @click="applyFilterHint('after:')">after:YYYY-MM-DD</span>
+          <span class="filter-chip-text" title="Messages before date" @click="applyFilterHint('before:')">before:YYYY-MM-DD</span>
         </div>
       </header>
       <div class="messages">
@@ -607,7 +612,7 @@ async function onDrop(e: DragEvent) {
           no matches
           <p class="search-tip-sub">Try combining filters like <code>from:alice in:#dev has:link</code></p>
         </div>
-        <MentionRow v-for="m in store.search.results" :key="msgKey(m)" :msg="m" />
+        <MentionRow v-for="m in store.search.results" :key="msgKey(m)" :msg="m" show-date />
       </div>
     </template>
 
