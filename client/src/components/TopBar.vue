@@ -287,11 +287,6 @@ onMounted(() => window.addEventListener("keydown", onKeydown));
 onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 // The topic row is hidden on phones (no room in the bar); tapping the channel
-// name reveals it on its own wrapped line. Desktop always shows the topic
-// inline, so the class this toggles only has effect inside the mobile
-// media query.
-const topicOpen = ref(false);
-
 const buffer = computed(() => connection.activeBuffer());
 
 function browse() {
@@ -312,8 +307,7 @@ function doSearch() {
 }
 
 // Channel name + topic are folded into the bar (chat view only — search and
-// mentions render their own title inside ChatView). The topic is click-to-edit
-// for channels, mirroring the old standalone chat-header row.
+// mentions render their own title inside ChatView).
 const showBufferHeader = computed(() => store.view === "chat" && !!buffer.value);
 
 // The per-network status buffer ("*status") is folded into the network header
@@ -327,20 +321,6 @@ const bufferTitle = computed(() => {
   }
   return b.name;
 });
-const editingTopic = ref(false);
-const topicDraft = ref("");
-const topicInput = ref<HTMLInputElement | null>(null);
-
-function startEditTopic() {
-  if (buffer.value?.kind !== "channel") return;
-  topicDraft.value = buffer.value.topic;
-  editingTopic.value = true;
-  nextTick(() => topicInput.value?.focus());
-}
-function saveTopic() {
-  if (store.active) connection.send(store.active.network, store.active.buffer, "/topic " + topicDraft.value.trim());
-  editingTopic.value = false;
-}
 </script>
 
 <template>
@@ -357,8 +337,8 @@ function saveTopic() {
     </button>
 
     <template v-if="showBufferHeader && buffer">
-      <span class="buffer-name" @click="topicOpen = !topicOpen">
-        {{ bufferTitle }}<span v-if="buffer.kind === 'channel'" class="topic-caret" aria-hidden="true">▾</span>
+      <span class="buffer-name" title="Channel Info & Topic Details" @click="showInspector = true">
+        {{ bufferTitle }}<span v-if="buffer.kind === 'channel'" class="topic-caret" aria-hidden="true">ℹ</span>
       </span>
       <button
         v-if="store.active"
@@ -367,21 +347,11 @@ function saveTopic() {
         aria-label="Channel Details"
         @click="showInspector = true"
       >ℹ</button>
-      <input
-        v-if="editingTopic"
-        ref="topicInput"
-        v-model="topicDraft"
-        class="topic-edit"
-        @keydown.enter="saveTopic"
-        @keydown.esc="editingTopic = false"
-        @blur="editingTopic = false"
-      />
       <span
-        v-else
         class="topic"
-        :class="{ editable: buffer.kind === 'channel', 'mobile-open': topicOpen }"
-        :title="buffer.kind === 'channel' ? 'click to edit topic' : ''"
-        @click="startEditTopic"
+        :class="{ editable: buffer.kind === 'channel' }"
+        title="Click for Channel Details"
+        @click="showInspector = true"
       >{{ buffer.topic || (buffer.kind === "channel" ? "(set topic…)" : "") }}</span>
     </template>
 

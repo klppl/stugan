@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, onUnmounted } from "vue";
 import { connection } from "../connection";
 import type { ChannelDTO } from "../proto/events";
 
@@ -62,164 +62,318 @@ function promptTopic() {
     connection.send(props.network, props.channel.name, `/topic ${newTopic}`);
   }
 }
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape") {
+    emit("close");
+  }
+}
+
+onMounted(() => window.addEventListener("keydown", onKeydown));
+onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 </script>
 
 <template>
-  <div class="settings-overlay" @click.self="emit('close')">
-    <div class="settings inspector-modal">
-      <div class="inspector-header">
-        <h2>{{ channel.name }}</h2>
-        <span class="channel-kind-badge">{{ channel.kind }}</span>
-      </div>
-
-      <div class="inspector-section">
-        <h3>Topic</h3>
-        <p class="inspector-topic">{{ channel.topic || "(No topic set)" }}</p>
-        <div v-if="channel.topic_setter" class="topic-meta">
-          Set by <span class="topic-setter">{{ channel.topic_setter }}</span>
-          <span v-if="topicTimeFormatted"> on {{ topicTimeFormatted }}</span>
+  <div class="modal-backdrop" @click.self="emit('close')">
+    <div class="modal-card">
+      <header class="modal-header">
+        <div class="header-title">
+          <h2>{{ channel.name }}</h2>
+          <span class="kind-badge">{{ channel.kind }}</span>
         </div>
+        <button class="close-btn" aria-label="Close" @click="emit('close')">✕</button>
+      </header>
+
+      <div class="modal-body">
+        <section class="info-section">
+          <h3>Topic</h3>
+          <div class="topic-box">
+            <p class="topic-text">{{ channel.topic || "(No topic set)" }}</p>
+            <div v-if="channel.topic_setter" class="topic-meta">
+              Set by <strong class="setter">{{ channel.topic_setter }}</strong>
+              <span v-if="topicTimeFormatted"> on {{ topicTimeFormatted }}</span>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="channel.kind === 'channel'" class="info-section">
+          <h3>Channel Modes</h3>
+          <p v-if="!channel.mode" class="no-modes-hint">No specific channel modes active</p>
+          <div v-else class="mode-badges">
+            <span class="mode-raw">{{ channel.mode }}</span>
+            <span
+              v-for="m in modeExplanations"
+              :key="m.flag"
+              class="mode-badge"
+              :title="m.label"
+            >
+              <strong>{{ m.flag }}</strong> {{ m.label }}
+            </span>
+          </div>
+        </section>
+
+        <section v-if="channel.kind === 'channel'" class="info-section">
+          <h3>Members ({{ memberStats.total }})</h3>
+          <div class="member-stats-grid">
+            <div class="stat-box">
+              <span class="stat-num">{{ memberStats.ops }}</span>
+              <span class="stat-label">Operators</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-num">{{ memberStats.voiced }}</span>
+              <span class="stat-label">Voiced</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-num">{{ memberStats.normal }}</span>
+              <span class="stat-label">Members</span>
+            </div>
+          </div>
+        </section>
       </div>
 
-      <div v-if="channel.kind === 'channel'" class="inspector-section">
-        <h3>Channel Modes</h3>
-        <p v-if="!channel.mode" class="hint">No specific channel modes active</p>
-        <div v-else class="mode-badges">
-          <span class="mode-raw">{{ channel.mode }}</span>
-          <span
-            v-for="m in modeExplanations"
-            :key="m.flag"
-            class="mode-badge"
-            :title="m.label"
-          >
-            <strong>{{ m.flag }}</strong> {{ m.label }}
-          </span>
-        </div>
-      </div>
-
-      <div v-if="channel.kind === 'channel'" class="inspector-section">
-        <h3>Members ({{ memberStats.total }})</h3>
-        <div class="member-stats-grid">
-          <div class="stat-box">
-            <span class="stat-num">{{ memberStats.ops }}</span>
-            <span class="stat-label">Operators</span>
-          </div>
-          <div class="stat-box">
-            <span class="stat-num">{{ memberStats.voiced }}</span>
-            <span class="stat-label">Voiced</span>
-          </div>
-          <div class="stat-box">
-            <span class="stat-num">{{ memberStats.normal }}</span>
-            <span class="stat-label">Members</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="row inspector-actions">
-        <button type="button" @click="promptTopic">Set Topic</button>
-        <button v-if="channel.kind === 'channel'" type="button" class="danger" @click="partChannel">
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-sm" @click="promptTopic">✏ Set Topic</button>
+        <button v-if="channel.kind === 'channel'" type="button" class="btn btn-sm btn-danger-ghost" @click="partChannel">
           Leave Channel
         </button>
-        <span class="spacer"></span>
-        <button type="button" @click="emit('close')">Close</button>
-      </div>
+        <span class="spacer" />
+        <button type="button" class="btn btn-sm btn-primary" @click="emit('close')">Close</button>
+      </footer>
     </div>
   </div>
 </template>
 
 <style scoped>
-.inspector-modal {
-  max-width: 520px;
-}
-.inspector-header {
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
+  justify-content: center;
+  z-index: 100;
+  padding: 16px;
 }
-.inspector-header h2 {
+
+.modal-card {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 520px;
+  max-width: 100%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  animation: modal-pop 0.15s ease-out;
+}
+
+@keyframes modal-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-title h2 {
   margin: 0;
+  font-size: 18px;
+  font-weight: 700;
   word-break: break-all;
 }
-.channel-kind-badge {
-  background: var(--bg-surface-2, rgba(255, 255, 255, 0.1));
+
+.kind-badge {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 0.15rem 0.5rem;
-  font-size: 0.75rem;
+  padding: 2px 6px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--fg-muted);
+  color: var(--fg-dim);
 }
-.inspector-section {
-  margin-bottom: 1.25rem;
+
+.close-btn {
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
 }
-.inspector-section h3 {
-  font-size: 0.85rem;
+
+.close-btn:hover {
+  color: var(--fg);
+  background: var(--bg-alt);
+}
+
+.modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.info-section h3 {
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--fg-muted);
-  margin: 0 0 0.5rem 0;
+  color: var(--fg-dim);
+  margin: 0 0 8px 0;
 }
-.inspector-topic {
+
+.topic-box {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.topic-text {
   margin: 0;
-  font-size: 0.95rem;
-  line-height: 1.4;
+  font-size: 14px;
+  line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
 }
+
 .topic-meta {
-  font-size: 0.8rem;
-  color: var(--fg-muted);
-  margin-top: 0.35rem;
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin-top: 6px;
 }
-.topic-setter {
-  font-weight: 600;
+
+.setter {
   color: var(--fg);
+  font-weight: 600;
 }
+
+.no-modes-hint {
+  font-size: 13px;
+  color: var(--fg-dim);
+  margin: 0;
+}
+
 .mode-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 6px;
   align-items: center;
 }
+
 .mode-raw {
-  background: var(--accent, #5865f2);
+  background: var(--accent);
   color: #fff;
   font-weight: 700;
-  font-family: monospace;
-  padding: 0.2rem 0.5rem;
+  font-family: ui-monospace, monospace;
+  padding: 3px 8px;
   border-radius: 4px;
-  font-size: 0.85rem;
+  font-size: 13px;
 }
+
 .mode-badge {
-  background: var(--bg-surface-2, rgba(255, 255, 255, 0.08));
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-  padding: 0.2rem 0.5rem;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  padding: 3px 8px;
   border-radius: 4px;
-  font-size: 0.8rem;
+  font-size: 12px;
 }
+
 .member-stats-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 0.5rem;
+  gap: 8px;
 }
+
 .stat-box {
-  background: var(--bg-surface-2, rgba(255, 255, 255, 0.05));
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
-  border-radius: 6px;
-  padding: 0.5rem;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
   text-align: center;
 }
+
 .stat-num {
   display: block;
-  font-size: 1.25rem;
+  font-size: 20px;
   font-weight: 700;
+  color: var(--accent);
 }
+
 .stat-label {
-  font-size: 0.75rem;
-  color: var(--fg-muted);
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
 }
-.inspector-actions {
-  margin-top: 1.5rem;
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  background: var(--bg-sidebar);
+  border-top: 1px solid var(--border);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: var(--accent);
+  background: var(--bg-alt);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.btn-danger-ghost {
+  border-color: color-mix(in srgb, var(--hl) 40%, transparent);
+  color: var(--hl);
+  background: transparent;
+}
+
+.btn-danger-ghost:hover {
+  background: color-mix(in srgb, var(--hl) 15%, transparent);
 }
 </style>

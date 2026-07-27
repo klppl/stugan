@@ -65,16 +65,16 @@ const mircStatus = computed(
 
     <div
       class="app"
-      :class="{ 'drawer-open': ui.sidebarOpen || ui.membersOpen }"
+      :class="{ 'drawer-open': ui.sidebarOpen || ui.membersOpen, 'settings-active': store.view === 'settings' }"
     >
-      <Sidebar />
-      <main class="main">
-        <template v-if="store.view !== 'settings'">
+      <template v-if="store.view !== 'settings'">
+        <Sidebar />
+        <main class="main">
           <TopBar @settings="toggleSettings" />
           <ChatView />
-        </template>
-        <SettingsView v-else @close="store.view = 'chat'" />
-      </main>
+        </main>
+      </template>
+      <SettingsView v-else @close="store.view = 'chat'" />
       <!-- Backdrop dims the chat while a drawer is open; tap closes both. -->
       <div
         class="drawer-backdrop"
