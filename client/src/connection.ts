@@ -103,7 +103,7 @@ export interface Network {
   friends: FriendDTO[]; // MONITOR list with live presence (sidebar friends)
 }
 
-export type View = "chat" | "mentions" | "search";
+export type View = "chat" | "mentions" | "search" | "settings";
 
 // Toast is a transient, dismissable notice shown in a corner overlay. Today
 // the only producer is the s2c `error` frame (server.route's sendError),
@@ -1082,6 +1082,10 @@ export class Connection {
   // mentions, so "chat" lands back on the buffer the user came from).
   showMentions() {
     this.store.view = this.store.view === "mentions" ? "chat" : "mentions";
+  }
+
+  showSettings() {
+    this.store.view = this.store.view === "settings" ? "chat" : "settings";
   }
 
   // markMentionsRead is the only action that dismisses entries from the

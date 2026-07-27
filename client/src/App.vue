@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import Sidebar from "./components/Sidebar.vue";
 import ChatView from "./components/ChatView.vue";
 import TopBar from "./components/TopBar.vue";
-import Settings from "./components/Settings.vue";
+import SettingsView from "./components/settings/SettingsView.vue";
 import Login from "./components/Login.vue";
 import MagicWord from "./components/MagicWord.vue";
 import Toast from "./components/Toast.vue";
@@ -13,8 +13,11 @@ import { authState, canEnter, needsMagicWord } from "./auth";
 import { ui, closeDrawers, useSwipeNav } from "./ui";
 import { connection } from "./connection";
 
-const showSettings = ref(false);
 const showPalette = ref(false);
+
+function toggleSettings() {
+  connection.showSettings();
+}
 
 // Mobile: swipe right/left across the viewport to reveal the channel
 // sidebar / members drawer.
@@ -66,8 +69,11 @@ const mircStatus = computed(
     >
       <Sidebar />
       <main class="main">
-        <TopBar @settings="showSettings = true" />
-        <ChatView />
+        <template v-if="store.view !== 'settings'">
+          <TopBar @settings="toggleSettings" />
+          <ChatView />
+        </template>
+        <SettingsView v-else @close="store.view = 'chat'" />
       </main>
       <!-- Backdrop dims the chat while a drawer is open; tap closes both. -->
       <div
@@ -75,12 +81,11 @@ const mircStatus = computed(
         :class="{ visible: ui.sidebarOpen || ui.membersOpen }"
         @click="closeDrawers"
       />
-      <Settings v-if="showSettings" @close="showSettings = false" />
       <Digest v-if="connection.store.digestOpen" />
       <CommandPalette
         :open="showPalette"
         @close="showPalette = false"
-        @settings="showSettings = true"
+        @settings="toggleSettings"
       />
       <Toast />
     </div>
