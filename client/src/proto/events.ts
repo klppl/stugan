@@ -365,8 +365,9 @@ export interface NetConfig {
 }
 
 export interface PluginAction {
-  name: string;
-  action: "load" | "unload" | "reload";
+  name?: string;
+  action: "load" | "unload" | "reload" | "import" | "update" | "check_updates";
+  url?: string;
 }
 
 export interface PluginInfo {
@@ -378,6 +379,18 @@ export interface PluginInfo {
   commands?: string[];
   hooks: number;
   settings?: PluginSetting[];
+  source_type?: "manual" | "remote" | "curated";
+  source_url?: string;
+  update_available?: boolean;
+}
+
+export interface CuratedPluginInfo {
+  name: string;
+  description: string;
+  source_url: string;
+  installed: boolean;
+  loaded: boolean;
+  update_available?: boolean;
 }
 
 export interface PluginSetting {
@@ -401,6 +414,7 @@ export interface PluginSettingReq {
 
 export interface PluginListResp {
   plugins: PluginInfo[];
+  curated?: CuratedPluginInfo[];
 }
 
 // CompleteReq asks the plugin host for tab-completion candidates for the

@@ -12,11 +12,14 @@ package plugin
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -41,6 +44,90 @@ const defaultHookTimeout = 3 * time.Second
 const maxScriptErrors = 10
 
 var _ core.PluginHost = (*Host)(nil)
+
+// curatedPlugins lists official plugins available in the stugan repository.
+var curatedPlugins = []core.CuratedPluginInfo{
+	{
+		Name:        "fish",
+		Description: "FiSH-style Blowfish encryption (+OK CBC/ECB, DH1080 key exchange)",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/fish.lua",
+	},
+	{
+		Name:        "ai",
+		Description: "AI chat assistant & conversation summarizer (/ask, /summarize)",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/ai.lua",
+	},
+	{
+		Name:        "webhooks",
+		Description: "Outbound highlight & mention notification forwarder",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/webhooks.lua",
+	},
+	{
+		Name:        "ignore",
+		Description: "Server-side per-nick ignore filter",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/ignore.lua",
+	},
+	{
+		Name:        "away",
+		Description: "Idle auto-away + auto-reply timer",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/away.lua",
+	},
+	{
+		Name:        "greet",
+		Description: "Greeting command (/greet) & spoiler content filter",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/greet.lua",
+	},
+	{
+		Name:        "highlight_reply",
+		Description: "Auto-reply when a configurable trigger word is mentioned",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/highlight_reply.lua",
+	},
+	{
+		Name:        "team_mentions",
+		Description: "Extend tab-completion with @team group mentions",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/team_mentions.lua",
+	},
+	{
+		Name:        "sed",
+		Description: "Fix typos in your last line with s/find/replace/",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/sed.lua",
+	},
+	{
+		Name:        "urls",
+		Description: "Scrape and remember links posted in a buffer (/urls)",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/urls.lua",
+	},
+	{
+		Name:        "title",
+		Description: "Scrape and announce web page titles of posted links",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/title.lua",
+	},
+	{
+		Name:        "expand",
+		Description: "Text expander for trigger shortcuts (e.g. ;shrug)",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/expand.lua",
+	},
+	{
+		Name:        "nickserv",
+		Description: "Identify and reclaim nick on network connect",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/nickserv.lua",
+	},
+	{
+		Name:        "watch",
+		Description: "Mirror of ignore: surface & track watched nicks",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/watch.lua",
+	},
+	{
+		Name:        "qauth",
+		Description: "QuakeNet Q authentication (CHALLENGEAUTH)",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/qauth.lua",
+	},
+	{
+		Name:        "fun",
+		Description: "Toy commands (/roll, /8ball, /slap)",
+		SourceURL:   "https://raw.githubusercontent.com/klppl/stugan/main/plugins/fun.lua",
+	},
+}
 
 // KV is the persistence seam for stugan.kv. The plugin host caches values
 // in memory for fast access; if a KV is provided it loads on first touch
@@ -102,6 +189,7 @@ type Host struct {
 	// locking.
 	scripts         map[string]*script
 	kv              map[string]map[string]string // per-script KV, survives reload
+	updates         map[string]bool              // plugin name → update available
 	msgHooks        []*hook
 	inputHooks      []*hook
 	topicHooks      []*hook
@@ -182,6 +270,7 @@ func New(opts Options) (*Host, error) {
 		quit:        make(chan struct{}),
 		scripts:     map[string]*script{},
 		kv:          map[string]map[string]string{},
+		updates:     map[string]bool{},
 		signalHooks: map[string][]*hook{},
 		cmdHooks:    map[string]*hook{},
 		unhookers:   map[int]unhooker{},
@@ -261,15 +350,19 @@ func (h *Host) Plugins() []core.PluginInfo {
 		seen := map[string]bool{}
 		for name, s := range h.scripts {
 			seen[name] = true
+			srcURL, srcType := h.getScriptMetaLocked(name)
 			out = append(out, core.PluginInfo{
-				Name:        name,
-				Description: s.desc,
-				Loaded:      true,
-				Disabled:    s.disabled,
-				Errors:      s.errs,
-				Commands:    h.commandsFor(s),
-				Hooks:       h.hookCount(s),
-				Settings:    h.settingsFor(s),
+				Name:            name,
+				Description:     s.desc,
+				Loaded:          true,
+				Disabled:        s.disabled,
+				Errors:          s.errs,
+				Commands:        h.commandsFor(s),
+				Hooks:           h.hookCount(s),
+				Settings:        h.settingsFor(s),
+				SourceType:      srcType,
+				SourceURL:       srcURL,
+				UpdateAvailable: h.updates[name],
 			})
 		}
 		// Unloaded files on disk: present but not running.
@@ -281,13 +374,95 @@ func (h *Host) Plugins() []core.PluginInfo {
 				}
 				if name := scriptName(e.Name()); !seen[name] {
 					seen[name] = true
-					out = append(out, core.PluginInfo{Name: name})
+					srcURL, srcType := h.getScriptMetaLocked(name)
+					out = append(out, core.PluginInfo{
+						Name:            name,
+						Loaded:          false,
+						SourceType:      srcType,
+						SourceURL:       srcURL,
+						UpdateAvailable: h.updates[name],
+					})
 				}
 			}
 		}
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// CuratedPlugins implements core.PluginHost. It returns the list of official
+// curated plugins with their installation and update status.
+func (h *Host) CuratedPlugins() []core.CuratedPluginInfo {
+	out := make([]core.CuratedPluginInfo, 0, len(curatedPlugins))
+	h.do(func() {
+		for _, c := range curatedPlugins {
+			cp := c
+			if h.dir != "" {
+				dst := filepath.Join(h.dir, c.Name+".lua")
+				_, err := os.Stat(dst)
+				cp.Installed = (err == nil)
+			}
+			_, cp.Loaded = h.scripts[c.Name]
+			cp.UpdateAvailable = h.updates[c.Name]
+			out = append(out, cp)
+		}
+	})
+	return out
+}
+
+func (h *Host) getScriptMetaLocked(name string) (sourceURL, sourceType string) {
+	sourceURL, _ = h.kvGetByName(name, "_source_url")
+	sourceType, _ = h.kvGetByName(name, "_source_type")
+	if sourceType == "" && sourceURL == "" {
+		for _, c := range curatedPlugins {
+			if c.Name == name {
+				sourceType = "curated"
+				sourceURL = c.SourceURL
+				break
+			}
+		}
+		if sourceType == "" {
+			sourceType = "manual"
+		}
+	}
+	return sourceURL, sourceType
+}
+
+func (h *Host) setScriptMetaLocked(name, sourceURL, sourceType, installedHash string) {
+	if sourceURL != "" {
+		h.kvSetByName(name, "_source_url", sourceURL)
+	}
+	if sourceType != "" {
+		h.kvSetByName(name, "_source_type", sourceType)
+	}
+	if installedHash != "" {
+		h.kvSetByName(name, "_installed_hash", installedHash)
+	}
+}
+
+func (h *Host) kvCacheByName(scriptName string) map[string]string {
+	if h.kv[scriptName] == nil {
+		if h.kvStore != nil {
+			h.kv[scriptName] = h.kvStore.GetAll(scriptName)
+		} else {
+			h.kv[scriptName] = map[string]string{}
+		}
+	}
+	return h.kv[scriptName]
+}
+
+func (h *Host) kvGetByName(scriptName, key string) (string, bool) {
+	v, ok := h.kvCacheByName(scriptName)[key]
+	return v, ok
+}
+
+func (h *Host) kvSetByName(scriptName, key, val string) {
+	h.kvCacheByName(scriptName)[key] = val
+	if h.kvStore != nil {
+		if err := h.kvStore.Set(scriptName, key, val); err != nil {
+			h.log.Warn("plugin kv set persist", "script", scriptName, "err", err)
+		}
+	}
 }
 
 // commandsFor returns the /command names registered by script s (plugin
@@ -487,6 +662,40 @@ func (h *Host) UnloadPlugin(name string) error {
 // ReloadPlugin re-reads a script from disk, dropping its old hooks first.
 func (h *Host) ReloadPlugin(name string) error { return h.LoadPlugin(name) }
 
+func (h *Host) downloadScriptFromURL(ctx context.Context, rawURL string) ([]byte, error) {
+	client := h.httpClient
+	if client == nil {
+		client = safehttp.New()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("script not found at %s", rawURL)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d downloading script from %s", resp.StatusCode, rawURL)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+	return body, nil
+}
+
+func hashBytes(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
 // DownloadPlugin downloads the named script from the official plugin repository
 // into the scripts directory and loads it.
 func (h *Host) DownloadPlugin(ctx context.Context, name string) error {
@@ -498,33 +707,11 @@ func (h *Host) DownloadPlugin(ctx context.Context, name string) error {
 	if h.dir == "" {
 		return errors.New("no scripts directory configured")
 	}
-	client := h.httpClient
-	if client == nil {
-		client = safehttp.New()
-	}
 
-	url := fmt.Sprintf("https://raw.githubusercontent.com/klppl/stugan/main/plugins/%s.lua", name)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	rawURL := fmt.Sprintf("https://raw.githubusercontent.com/klppl/stugan/main/plugins/%s.lua", name)
+	body, err := h.downloadScriptFromURL(ctx, rawURL)
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("download failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("plugin %q not found in official library", name)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d downloading plugin %q", resp.StatusCode, name)
-	}
-
-	// Cap at 1 MiB to match plugin http response cap
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return fmt.Errorf("read response body: %w", err)
+		return err
 	}
 
 	if err := os.MkdirAll(h.dir, 0o755); err != nil {
@@ -536,7 +723,163 @@ func (h *Host) DownloadPlugin(ctx context.Context, name string) error {
 		return fmt.Errorf("write plugin file: %w", err)
 	}
 
+	hash := hashBytes(body)
+	h.do(func() {
+		h.setScriptMetaLocked(name, rawURL, "curated", hash)
+		delete(h.updates, name)
+	})
+
 	return h.LoadPlugin(name)
+}
+
+// ImportPlugin downloads a script from rawURL, saves it as name.lua (or derived name), and loads it.
+func (h *Host) ImportPlugin(ctx context.Context, rawURL, name string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("invalid script URL %q", rawURL)
+	}
+
+	name = strings.TrimSpace(name)
+	name = strings.TrimSuffix(name, ".lua")
+	if name == "" {
+		name = strings.TrimSuffix(filepath.Base(u.Path), ".lua")
+	}
+	if name == "" || name != filepath.Base(name) || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("invalid plugin name derived from URL %q", rawURL)
+	}
+	if h.dir == "" {
+		return errors.New("no scripts directory configured")
+	}
+
+	body, err := h.downloadScriptFromURL(ctx, rawURL)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(h.dir, 0o755); err != nil {
+		return fmt.Errorf("create scripts dir: %w", err)
+	}
+
+	dst := filepath.Join(h.dir, name+".lua")
+	if err := os.WriteFile(dst, body, 0o644); err != nil {
+		return fmt.Errorf("write plugin file: %w", err)
+	}
+
+	hash := hashBytes(body)
+	srcType := "remote"
+	for _, c := range curatedPlugins {
+		if c.SourceURL == rawURL || c.Name == name {
+			srcType = "curated"
+			break
+		}
+	}
+
+	h.do(func() {
+		h.setScriptMetaLocked(name, rawURL, srcType, hash)
+		delete(h.updates, name)
+	})
+
+	return h.LoadPlugin(name)
+}
+
+// UpdatePlugin re-downloads a remote/curated script, updates the file and hash, and reloads it.
+func (h *Host) UpdatePlugin(ctx context.Context, name string) error {
+	name = strings.TrimSpace(name)
+	name = strings.TrimSuffix(name, ".lua")
+	if name == "" || name != filepath.Base(name) || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("invalid plugin name %q", name)
+	}
+	if h.dir == "" {
+		return errors.New("no scripts directory configured")
+	}
+
+	var srcURL, srcType string
+	h.do(func() {
+		srcURL, srcType = h.getScriptMetaLocked(name)
+	})
+	if srcURL == "" {
+		return fmt.Errorf("plugin %q has no remote source URL", name)
+	}
+
+	body, err := h.downloadScriptFromURL(ctx, srcURL)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(h.dir, 0o755); err != nil {
+		return fmt.Errorf("create scripts dir: %w", err)
+	}
+
+	dst := filepath.Join(h.dir, name+".lua")
+	if err := os.WriteFile(dst, body, 0o644); err != nil {
+		return fmt.Errorf("write plugin file: %w", err)
+	}
+
+	hash := hashBytes(body)
+	h.do(func() {
+		h.setScriptMetaLocked(name, srcURL, srcType, hash)
+		delete(h.updates, name)
+	})
+
+	return h.LoadPlugin(name)
+}
+
+// CheckPluginUpdates checks if updates are available for script (or all scripts if name is empty).
+func (h *Host) CheckPluginUpdates(ctx context.Context, name string) error {
+	if h.dir == "" {
+		return errors.New("no scripts directory configured")
+	}
+
+	var toCheck []string
+	if name != "" {
+		name = strings.TrimSuffix(filepath.Base(name), ".lua")
+		toCheck = append(toCheck, name)
+	} else {
+		seen := map[string]bool{}
+		for _, p := range h.Plugins() {
+			seen[p.Name] = true
+			toCheck = append(toCheck, p.Name)
+		}
+		for _, c := range curatedPlugins {
+			if !seen[c.Name] {
+				toCheck = append(toCheck, c.Name)
+			}
+		}
+	}
+
+	for _, n := range toCheck {
+		var srcURL string
+		h.do(func() {
+			srcURL, _ = h.getScriptMetaLocked(n)
+		})
+		if srcURL == "" {
+			continue
+		}
+		localPath := filepath.Join(h.dir, n+".lua")
+		localBytes, err := os.ReadFile(localPath)
+		if err != nil {
+			continue // Not installed locally
+		}
+		localHash := hashBytes(localBytes)
+
+		reqCtx, reqCancel := context.WithTimeout(ctx, 5*time.Second)
+		body, err := h.downloadScriptFromURL(reqCtx, srcURL)
+		reqCancel()
+		if err != nil {
+			continue
+		}
+		remoteHash := hashBytes(body)
+		hasUpdate := (localHash != remoteHash)
+		h.do(func() {
+			if hasUpdate {
+				h.updates[n] = true
+			} else {
+				delete(h.updates, n)
+			}
+		})
+	}
+	return nil
 }
 
 // scriptPath resolves a bare script name to its file, rejecting anything

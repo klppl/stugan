@@ -31,6 +31,7 @@ import {
   type React,
   type Redact,
   type PluginInfo,
+  type CuratedPluginInfo,
   type PluginListResp,
   type PluginAction,
   type PluginSettingReq,
@@ -178,6 +179,7 @@ export interface Store {
   // Plugins known to the server, for the Settings plugin manager. Populated
   // on demand (listPlugins) and refreshed after every load/unload/reload.
   plugins: PluginInfo[];
+  curatedPlugins: CuratedPluginInfo[];
   // Highlight ruleset (regex patterns + exceptions), server-persisted per user.
   // Seeded from init and updated by the highlight settings form.
   highlight: HighlightRules;
@@ -310,6 +312,7 @@ export class Connection {
     jump: null,
     toasts: [],
     plugins: [],
+    curatedPlugins: [],
     highlight: { patterns: [], exceptions: [] },
     aliases: {},
     muted: [],
@@ -623,9 +626,12 @@ export class Connection {
       case T.Typing:
         this.applyTyping(env.d as Typing);
         break;
-      case T.PluginList:
-        this.store.plugins = (env.d as PluginListResp).plugins;
+      case T.PluginList: {
+        const d = env.d as PluginListResp;
+        this.store.plugins = d.plugins ?? [];
+        this.store.curatedPlugins = d.curated ?? [];
         break;
+      }
       case T.Highlight:
         this.store.highlight = env.d as HighlightRules;
         break;
@@ -1474,6 +1480,21 @@ export class Connection {
   // replies with a refreshed plugin:list, so the UI updates itself.
   pluginAction(name: string, action: PluginAction["action"]) {
     this.sendFrame<PluginAction>(T.PluginAction, { name, action });
+  }
+
+  // importPlugin imports a script from a raw URL.
+  importPlugin(url: string, name?: string) {
+    this.sendFrame<PluginAction>(T.PluginAction, { action: "import", url, name: name || undefined });
+  }
+
+  // updatePlugin re-downloads and reloads a remote or curated plugin.
+  updatePlugin(name: string) {
+    this.sendFrame<PluginAction>(T.PluginAction, { action: "update", name });
+  }
+
+  // checkPluginUpdates checks remote URLs for updates to installed/curated plugins.
+  checkPluginUpdates(name?: string) {
+    this.sendFrame<PluginAction>(T.PluginAction, { action: "check_updates", name: name || undefined });
   }
 
   // setPluginSetting changes one declared setting of a loaded plugin. The

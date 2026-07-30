@@ -21,29 +21,79 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 		if len(ev.Args) == 0 {
 			e.inject(Message{
 				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
-				Kind: MsgSystem, Text: "usage: /load <script-name> (e.g. /load title)",
+				Kind: MsgSystem, Text: "usage: /load <script-name|URL> [custom-name]",
 			})
 			return
 		}
-		scriptName := ev.Args[0]
+		target := ev.Args[0]
+		customName := ""
+		if len(ev.Args) > 1 {
+			customName = ev.Args[1]
+		}
+		isURL := strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://")
+		if isURL {
+			e.inject(Message{
+				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+				Kind: MsgSystem, Text: fmt.Sprintf("importing plugin from %s...", target),
+			})
+		} else {
+			e.inject(Message{
+				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+				Kind: MsgSystem, Text: fmt.Sprintf("downloading plugin %q...", target),
+			})
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			var err error
+			if isURL {
+				err = e.host.ImportPlugin(ctx, target, customName)
+			} else {
+				err = e.host.DownloadPlugin(ctx, target)
+			}
+			if err != nil {
+				e.inject(Message{
+					Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+					Kind: MsgSystem, Text: fmt.Sprintf("failed to load plugin %q: %v", target, err),
+				})
+			} else {
+				cleanName := customName
+				if cleanName == "" {
+					cleanName = strings.TrimSuffix(filepath.Base(target), ".lua")
+				}
+				e.inject(Message{
+					Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+					Kind: MsgSystem, Text: fmt.Sprintf("successfully loaded plugin %q", cleanName),
+				})
+			}
+		}()
+		return
+
+	case "update":
+		if len(ev.Args) == 0 {
+			e.inject(Message{
+				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+				Kind: MsgSystem, Text: "usage: /update <script-name>",
+			})
+			return
+		}
+		name := strings.TrimSuffix(filepath.Base(ev.Args[0]), ".lua")
 		e.inject(Message{
 			Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
-			Kind: MsgSystem, Text: fmt.Sprintf("downloading plugin %q...", scriptName),
+			Kind: MsgSystem, Text: fmt.Sprintf("updating plugin %q...", name),
 		})
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			err := e.host.DownloadPlugin(ctx, scriptName)
-			if err != nil {
+			if err := e.host.UpdatePlugin(ctx, name); err != nil {
 				e.inject(Message{
 					Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
-					Kind: MsgSystem, Text: fmt.Sprintf("failed to load plugin %q: %v", scriptName, err),
+					Kind: MsgSystem, Text: fmt.Sprintf("failed to update plugin %q: %v", name, err),
 				})
 			} else {
-				cleanName := strings.TrimSuffix(filepath.Base(scriptName), ".lua")
 				e.inject(Message{
 					Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
-					Kind: MsgSystem, Text: fmt.Sprintf("successfully downloaded and loaded plugin %q", cleanName),
+					Kind: MsgSystem, Text: fmt.Sprintf("successfully updated and reloaded plugin %q", name),
 				})
 			}
 		}()

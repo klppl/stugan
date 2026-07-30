@@ -283,6 +283,9 @@ func (e *Engine) Aliases() map[string]string {
 // UI. Safe to call concurrently; the host is fixed after startup.
 func (e *Engine) Plugins() []PluginInfo { return e.host.Plugins() }
 
+// CuratedPlugins lists official/curated plugins available from the repository.
+func (e *Engine) CuratedPlugins() []CuratedPluginInfo { return e.host.CuratedPlugins() }
+
 // Complete returns plugin-contributed tab-completion candidates for the
 // partial word being typed in (network, buffer). Read-only; the host runs
 // the completion hooks on its own goroutine, so this is safe to call from
@@ -297,6 +300,18 @@ func (e *Engine) Complete(network, buffer, word string) []string {
 func (e *Engine) LoadPlugin(name string) error   { return e.host.LoadPlugin(name) }
 func (e *Engine) UnloadPlugin(name string) error { return e.host.UnloadPlugin(name) }
 func (e *Engine) ReloadPlugin(name string) error { return e.host.ReloadPlugin(name) }
+func (e *Engine) DownloadPlugin(ctx context.Context, name string) error {
+	return e.host.DownloadPlugin(ctx, name)
+}
+func (e *Engine) ImportPlugin(ctx context.Context, rawURL, name string) error {
+	return e.host.ImportPlugin(ctx, rawURL, name)
+}
+func (e *Engine) UpdatePlugin(ctx context.Context, name string) error {
+	return e.host.UpdatePlugin(ctx, name)
+}
+func (e *Engine) CheckPluginUpdates(ctx context.Context, name string) error {
+	return e.host.CheckPluginUpdates(ctx, name)
+}
 func (e *Engine) SetPluginSetting(script, key, value string) error {
 	return e.host.SetPluginSetting(script, key, value)
 }

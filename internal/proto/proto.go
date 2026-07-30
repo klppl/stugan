@@ -401,27 +401,43 @@ type NetConfig struct {
 	Channels     []string `json:"channels"`
 }
 
-// PluginAction is a client→server request to load, unload, or reload a
-// plugin script at runtime. Action is "load", "unload", or "reload"; Name
-// is a bare script name (the filename without ".lua"). The reply is a
-// plugin:list frame with the refreshed list.
+// PluginAction is a client→server request to load, unload, reload, import,
+// update, or check for updates of plugin scripts at runtime. Action is "load",
+// "unload", "reload", "import", "update", or "check_updates". Name is a bare
+// script name (the filename without ".lua"). URL is supplied for "import".
+// The reply is a plugin:list frame with the refreshed list.
 type PluginAction struct {
-	Name   string `json:"name"`
+	Name   string `json:"name,omitempty"`
 	Action string `json:"action"`
+	URL    string `json:"url,omitempty"`
 }
 
 // PluginInfo is the wire projection of core.PluginInfo: one row in the
 // plugin manager. Loaded is false for *.lua files present in the scripts
 // dir but not currently running.
 type PluginInfo struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Loaded      bool            `json:"loaded"`
-	Disabled    bool            `json:"disabled,omitempty"`
-	Errors      int             `json:"errors,omitempty"`
-	Commands    []string        `json:"commands,omitempty"`
-	Hooks       int             `json:"hooks"`
-	Settings    []PluginSetting `json:"settings,omitempty"`
+	Name            string          `json:"name"`
+	Description     string          `json:"description,omitempty"`
+	Loaded          bool            `json:"loaded"`
+	Disabled        bool            `json:"disabled,omitempty"`
+	Errors          int             `json:"errors,omitempty"`
+	Commands        []string        `json:"commands,omitempty"`
+	Hooks           int             `json:"hooks"`
+	Settings        []PluginSetting `json:"settings,omitempty"`
+	SourceType      string          `json:"source_type,omitempty"`
+	SourceURL       string          `json:"source_url,omitempty"`
+	UpdateAvailable bool            `json:"update_available,omitempty"`
+}
+
+// CuratedPluginInfo is the wire projection of core.CuratedPluginInfo: one row in the
+// curated/official plugin repository.
+type CuratedPluginInfo struct {
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	SourceURL       string `json:"source_url"`
+	Installed       bool   `json:"installed"`
+	Loaded          bool   `json:"loaded"`
+	UpdateAvailable bool   `json:"update_available,omitempty"`
 }
 
 // PluginSetting is the wire projection of core.PluginSetting: one field in a
@@ -449,9 +465,10 @@ type PluginSettingReq struct {
 }
 
 // PluginListResp answers a plugin:list request (and every plugin:action),
-// carrying the full set of known plugins.
+// carrying the full set of known plugins and curated plugins.
 type PluginListResp struct {
-	Plugins []PluginInfo `json:"plugins"`
+	Plugins []PluginInfo        `json:"plugins"`
+	Curated []CuratedPluginInfo `json:"curated,omitempty"`
 }
 
 // CompleteReq asks the plugin host for tab-completion candidates for the

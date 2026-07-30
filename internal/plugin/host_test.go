@@ -814,3 +814,132 @@ func TestDownloadPlugin(t *testing.T) {
 		t.Errorf("expected plugin 'testdownload' to be loaded")
 	}
 }
+
+func TestImportAndUpdatePlugin(t *testing.T) {
+	api := &fakeAPI{}
+	dir := t.TempDir()
+
+	remoteContent := `stugan.describe("v1 remote script")`
+	doer := mockDoer{
+		fn: func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() == "https://example.com/custom.lua" {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(remoteContent)),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusNotFound,
+				Body:       io.NopCloser(strings.NewReader("404")),
+			}, nil
+		},
+	}
+
+	h, err := New(Options{API: api, Dir: dir, HTTP: doer})
+	if err != nil {
+		t.Fatalf("New host: %v", err)
+	}
+	defer h.Close()
+
+	ctx := context.Background()
+
+	// Import from URL
+	if err := h.ImportPlugin(ctx, "https://example.com/custom.lua", "custom"); err != nil {
+		t.Fatalf("ImportPlugin failed: %v", err)
+	}
+
+	if !h.isLoaded("custom") {
+		t.Error("imported plugin is not loaded")
+	}
+
+	plugins := h.Plugins()
+	var customPlugin *core.PluginInfo
+	for i := range plugins {
+		if plugins[i].Name == "custom" {
+			customPlugin = &plugins[i]
+			break
+		}
+	}
+	if customPlugin == nil {
+		t.Fatal("imported plugin not found in Plugins()")
+	}
+	if customPlugin.SourceType != "remote" || customPlugin.SourceURL != "https://example.com/custom.lua" {
+		t.Errorf("unexpected metadata: type=%q url=%q", customPlugin.SourceType, customPlugin.SourceURL)
+	}
+
+	// Check updates (should be false since remote content equals local file)
+	if err := h.CheckPluginUpdates(ctx, "custom"); err != nil {
+		t.Fatalf("CheckPluginUpdates failed: %v", err)
+	}
+
+	pAfterCheck := h.Plugins()
+	for _, p := range pAfterCheck {
+		if p.Name == "custom" && p.UpdateAvailable {
+			t.Errorf("expected no update available yet")
+		}
+	}
+
+	// Change remote content
+	remoteContent = `stugan.describe("v2 remote script")`
+
+	if err := h.CheckPluginUpdates(ctx, "custom"); err != nil {
+		t.Fatalf("CheckPluginUpdates failed: %v", err)
+	}
+
+	pUpdatedCheck := h.Plugins()
+	hasUpdate := false
+	for _, p := range pUpdatedCheck {
+		if p.Name == "custom" {
+			hasUpdate = p.UpdateAvailable
+		}
+	}
+	if !hasUpdate {
+		t.Error("expected update_available to be true after remote content changed")
+	}
+
+	// Update plugin
+	if err := h.UpdatePlugin(ctx, "custom"); err != nil {
+		t.Fatalf("UpdatePlugin failed: %v", err)
+	}
+
+	updatedFile, _ := os.ReadFile(filepath.Join(dir, "custom.lua"))
+	if !strings.Contains(string(updatedFile), "v2 remote script") {
+		t.Errorf("plugin file was not updated: %s", string(updatedFile))
+	}
+
+	pFinal := h.Plugins()
+	for _, p := range pFinal {
+		if p.Name == "custom" && p.UpdateAvailable {
+			t.Error("expected update_available to be cleared after update")
+		}
+	}
+}
+
+func TestCuratedPluginsList(t *testing.T) {
+	api := &fakeAPI{}
+	dir := t.TempDir()
+
+	h, err := New(Options{API: api, Dir: dir})
+	if err != nil {
+		t.Fatalf("New host: %v", err)
+	}
+	defer h.Close()
+
+	curated := h.CuratedPlugins()
+	if len(curated) == 0 {
+		t.Fatal("CuratedPlugins returned empty list")
+	}
+
+	foundFish := false
+	for _, c := range curated {
+		if c.Name == "fish" {
+			foundFish = true
+			if c.Installed || c.Loaded {
+				t.Errorf("expected fish to not be installed or loaded initially, got installed=%v loaded=%v", c.Installed, c.Loaded)
+			}
+		}
+	}
+	if !foundFish {
+		t.Error("curated plugin 'fish' not found in CuratedPlugins()")
+	}
+}

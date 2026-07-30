@@ -652,24 +652,51 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	case proto.TPluginList:
 		s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
 			Plugins: toPluginInfos(c.tenant.Engine.Plugins()),
+			Curated: toCuratedPluginInfos(c.tenant.Engine.CuratedPlugins()),
 		})
 
 	case proto.TPluginAction:
 		var d proto.PluginAction
-		if err := decode(env, &d); err != nil || d.Name == "" {
-			c.sendError(env.ID, "bad_request", "plugin:action requires name and action")
+		if err := decode(env, &d); err != nil || d.Action == "" {
+			c.sendError(env.ID, "bad_request", "plugin:action requires action")
 			return
 		}
 		var err error
 		switch d.Action {
 		case "load":
+			if d.Name == "" {
+				c.sendError(env.ID, "bad_request", "plugin:action load requires name")
+				return
+			}
 			err = c.tenant.Engine.LoadPlugin(d.Name)
 		case "unload":
+			if d.Name == "" {
+				c.sendError(env.ID, "bad_request", "plugin:action unload requires name")
+				return
+			}
 			err = c.tenant.Engine.UnloadPlugin(d.Name)
 		case "reload":
+			if d.Name == "" {
+				c.sendError(env.ID, "bad_request", "plugin:action reload requires name")
+				return
+			}
 			err = c.tenant.Engine.ReloadPlugin(d.Name)
+		case "import":
+			if d.URL == "" {
+				c.sendError(env.ID, "bad_request", "plugin:action import requires url")
+				return
+			}
+			err = c.tenant.Engine.ImportPlugin(ctx, d.URL, d.Name)
+		case "update":
+			if d.Name == "" {
+				c.sendError(env.ID, "bad_request", "plugin:action update requires name")
+				return
+			}
+			err = c.tenant.Engine.UpdatePlugin(ctx, d.Name)
+		case "check_updates":
+			err = c.tenant.Engine.CheckPluginUpdates(ctx, d.Name)
 		default:
-			c.sendError(env.ID, "bad_request", "plugin:action requires action load|unload|reload")
+			c.sendError(env.ID, "bad_request", "invalid plugin:action action")
 			return
 		}
 		if err != nil {
@@ -678,6 +705,7 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		}
 		s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
 			Plugins: toPluginInfos(c.tenant.Engine.Plugins()),
+			Curated: toCuratedPluginInfos(c.tenant.Engine.CuratedPlugins()),
 		})
 
 	case proto.TPluginSet:
@@ -692,6 +720,7 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		}
 		s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
 			Plugins: toPluginInfos(c.tenant.Engine.Plugins()),
+			Curated: toCuratedPluginInfos(c.tenant.Engine.CuratedPlugins()),
 		})
 
 	case proto.THighlightSet:

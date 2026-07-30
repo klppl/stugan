@@ -44,14 +44,28 @@ type ConnHandler interface {
 // read-only projection the host builds on demand; the runtime types (LState,
 // hooks) never leak into core.
 type PluginInfo struct {
-	Name        string          // script identity (filename without .lua)
-	Description string          // text the script declared via stugan.describe()
-	Loaded      bool            // a *.lua file present and currently running
-	Disabled    bool            // auto-disabled after repeated runtime errors
-	Errors      int             // runtime errors raised since it was (re)loaded
-	Commands    []string        // /command names it registered
-	Hooks       int             // message/input/signal/timer hooks it registered
-	Settings    []PluginSetting // values declared via stugan.setting()
+	Name            string          // script identity (filename without .lua)
+	Description     string          // text the script declared via stugan.describe()
+	Loaded          bool            // a *.lua file present and currently running
+	Disabled        bool            // auto-disabled after repeated runtime errors
+	Errors          int             // runtime errors raised since it was (re)loaded
+	Commands        []string        // /command names it registered
+	Hooks           int             // message/input/signal/timer hooks it registered
+	Settings        []PluginSetting // values declared via stugan.setting()
+	SourceType      string          // "manual" | "remote" | "curated"
+	SourceURL       string          // URL if source is remote or curated
+	UpdateAvailable bool            // true if remote source has changed since installation
+}
+
+// CuratedPluginInfo describes an official/curated plugin script available from
+// the stugan plugin repository.
+type CuratedPluginInfo struct {
+	Name            string // script identity
+	Description     string // summary of what the script does
+	SourceURL       string // URL to the raw script
+	Installed       bool   // whether it exists in the scripts directory
+	Loaded          bool   // whether it is currently running
+	UpdateAvailable bool   // whether an update is available if installed
 }
 
 // PluginSetting is one configurable value a script declared with
@@ -87,6 +101,8 @@ type PluginHost interface {
 	// ones and the *.lua files in the scripts dir that are not loaded — for
 	// the management UI.
 	Plugins() []PluginInfo
+	// CuratedPlugins lists official/curated plugins with installation status.
+	CuratedPlugins() []CuratedPluginInfo
 	// LoadPlugin loads (or reloads) the script named name from the scripts
 	// dir. UnloadPlugin tears one down; ReloadPlugin re-reads it from disk.
 	// name is a bare script name (no path separators).
@@ -96,6 +112,12 @@ type PluginHost interface {
 	// DownloadPlugin downloads the named script from the official plugin
 	// repository into the scripts directory and loads it.
 	DownloadPlugin(ctx context.Context, name string) error
+	// ImportPlugin downloads a script from rawURL, saves it as name.lua, and loads it.
+	ImportPlugin(ctx context.Context, rawURL, name string) error
+	// UpdatePlugin re-downloads a remote/curated script, updates the file and hash, and reloads it.
+	UpdatePlugin(ctx context.Context, name string) error
+	// CheckPluginUpdates checks if updates are available for script (or all scripts if name is empty).
+	CheckPluginUpdates(ctx context.Context, name string) error
 	// SetPluginSetting writes value to the named setting (declared via
 	// stugan.setting) of a loaded script: it validates against the setting's
 	// type, persists it to the script's kv, and runs the setting's apply
@@ -113,10 +135,20 @@ func (nopHost) Dispatch(_ context.Context, ev Event) (Event, bool) { return ev, 
 func (nopHost) Commands() []string                                 { return nil }
 func (nopHost) Complete(_, _, _ string) []string                   { return nil }
 func (nopHost) Plugins() []PluginInfo                              { return nil }
+func (nopHost) CuratedPlugins() []CuratedPluginInfo                { return nil }
 func (nopHost) LoadPlugin(string) error                            { return errors.New("plugins are disabled") }
 func (nopHost) UnloadPlugin(string) error                          { return errors.New("plugins are disabled") }
 func (nopHost) ReloadPlugin(string) error                          { return errors.New("plugins are disabled") }
 func (nopHost) DownloadPlugin(context.Context, string) error {
+	return errors.New("plugins are disabled")
+}
+func (nopHost) ImportPlugin(context.Context, string, string) error {
+	return errors.New("plugins are disabled")
+}
+func (nopHost) UpdatePlugin(context.Context, string) error {
+	return errors.New("plugins are disabled")
+}
+func (nopHost) CheckPluginUpdates(context.Context, string) error {
 	return errors.New("plugins are disabled")
 }
 func (nopHost) SetPluginSetting(string, string, string) error {

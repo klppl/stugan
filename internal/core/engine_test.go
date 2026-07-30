@@ -1425,7 +1425,9 @@ func TestUnknownNetworkIgnored(t *testing.T) {
 
 // dropHost drops any message whose text contains "spoiler" — exercising the
 // plugin-hook drop path through the engine loop.
-type dropHost struct{}
+type dropHost struct {
+	nopHost
+}
 
 func (dropHost) Dispatch(_ context.Context, ev Event) (Event, bool) {
 	if ev.Message != nil && strings.Contains(ev.Message.Text, "spoiler") {
@@ -1433,15 +1435,6 @@ func (dropHost) Dispatch(_ context.Context, ev Event) (Event, bool) {
 	}
 	return ev, true
 }
-func (dropHost) Commands() []string                            { return nil }
-func (dropHost) Complete(_, _, _ string) []string              { return nil }
-func (dropHost) Plugins() []PluginInfo                         { return nil }
-func (dropHost) LoadPlugin(string) error                       { return nil }
-func (dropHost) UnloadPlugin(string) error                     { return nil }
-func (dropHost) ReloadPlugin(string) error                     { return nil }
-func (dropHost) DownloadPlugin(context.Context, string) error  { return nil }
-func (dropHost) SetPluginSetting(string, string, string) error { return nil }
-func (dropHost) Close() error                                  { return nil }
 
 func TestHostCanDropMessage(t *testing.T) {
 	sink := &captureSink{}

@@ -145,14 +145,33 @@ func toPluginInfos(ps []core.PluginInfo) []proto.PluginInfo {
 	out := make([]proto.PluginInfo, len(ps))
 	for i, p := range ps {
 		out[i] = proto.PluginInfo{
-			Name:        p.Name,
-			Description: p.Description,
-			Loaded:      p.Loaded,
-			Disabled:    p.Disabled,
-			Errors:      p.Errors,
-			Commands:    p.Commands,
-			Hooks:       p.Hooks,
-			Settings:    toPluginSettings(p.Settings),
+			Name:            p.Name,
+			Description:     p.Description,
+			Loaded:          p.Loaded,
+			Disabled:        p.Disabled,
+			Errors:          p.Errors,
+			Commands:        p.Commands,
+			Hooks:           p.Hooks,
+			Settings:        toPluginSettings(p.Settings),
+			SourceType:      p.SourceType,
+			SourceURL:       p.SourceURL,
+			UpdateAvailable: p.UpdateAvailable,
+		}
+	}
+	return out
+}
+
+// toCuratedPluginInfos projects the engine's curated plugin list onto its wire form.
+func toCuratedPluginInfos(cps []core.CuratedPluginInfo) []proto.CuratedPluginInfo {
+	out := make([]proto.CuratedPluginInfo, len(cps))
+	for i, c := range cps {
+		out[i] = proto.CuratedPluginInfo{
+			Name:            c.Name,
+			Description:     c.Description,
+			SourceURL:       c.SourceURL,
+			Installed:       c.Installed,
+			Loaded:          c.Loaded,
+			UpdateAvailable: c.UpdateAvailable,
 		}
 	}
 	return out
