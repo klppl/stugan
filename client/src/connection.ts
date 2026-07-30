@@ -1,5 +1,6 @@
 import { reactive } from "vue";
 import { settings, LEGACY_MUTES_KEY, loadSettingsPayload } from "./settings";
+import { closeDrawers } from "./ui";
 import { stripFormatting } from "./links";
 import { refresh, canEnter } from "./auth";
 import {
@@ -1085,6 +1086,7 @@ export class Connection {
   }
 
   showSettings() {
+    closeDrawers();
     this.store.view = this.store.view === "settings" ? "chat" : "settings";
   }
 

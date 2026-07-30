@@ -849,10 +849,7 @@ body {
   font-weight: 700;
   flex-shrink: 0;
 }
-/* The topic-reveal caret only exists on phones, where the topic is hidden. */
-.topic-caret {
-  display: none;
-}
+
 .topic {
   color: var(--fg-dim);
   font-size: 13px;
@@ -2338,12 +2335,7 @@ body {
     overflow-wrap: anywhere;
     padding: 2px 0 4px;
   }
-  .buffer-name .topic-caret {
-    display: inline;
-    margin-left: 4px;
-    font-size: 10px;
-    color: var(--fg-dim);
-  }
+
   .topbar .buffer-name {
     flex: 0 1 auto;
     min-width: 0;

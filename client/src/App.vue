@@ -77,6 +77,7 @@ const mircStatus = computed(
       <SettingsView v-else @close="store.view = 'chat'" />
       <!-- Backdrop dims the chat while a drawer is open; tap closes both. -->
       <div
+        v-if="store.view !== 'settings'"
         class="drawer-backdrop"
         :class="{ visible: ui.sidebarOpen || ui.membersOpen }"
         @click="closeDrawers"

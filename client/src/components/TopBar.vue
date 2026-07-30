@@ -338,7 +338,7 @@ const bufferTitle = computed(() => {
 
     <template v-if="showBufferHeader && buffer">
       <span class="buffer-name" title="Channel Info & Topic Details" @click="showInspector = true">
-        {{ bufferTitle }}<span v-if="buffer.kind === 'channel'" class="topic-caret" aria-hidden="true">ℹ</span>
+        {{ bufferTitle }}
       </span>
       <button
         v-if="store.active"

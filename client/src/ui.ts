@@ -4,6 +4,7 @@
 // the protocol/store layer.
 
 import { onMounted, onUnmounted, reactive } from "vue";
+import { connection } from "./connection";
 
 const MOBILE_QUERY = "(max-width: 720px)";
 const mq = typeof window !== "undefined" ? window.matchMedia(MOBILE_QUERY) : null;
@@ -52,10 +53,12 @@ export function toggleMembers() {
 // dismisses the sidebar). Only one drawer is ever open, matching the
 // toggle* helpers above.
 function swipeRight() {
+  if (connection.store.view !== "chat") return;
   if (ui.membersOpen) ui.membersOpen = false;
   else ui.sidebarOpen = true;
 }
 function swipeLeft() {
+  if (connection.store.view !== "chat") return;
   if (ui.sidebarOpen) ui.sidebarOpen = false;
   else ui.membersOpen = true;
 }
