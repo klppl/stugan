@@ -33,9 +33,9 @@ func installBuiltinScripts(scriptsDir string, log *slog.Logger) {
 	}
 	for name, body := range scripts.Builtins {
 		p := filepath.Join(scriptsDir, name)
-		if _, err := os.Stat(p); err == nil {
-			continue // user already has it
-		} else if !errors.Is(err, os.ErrNotExist) {
+		if fi, err := os.Stat(p); err == nil && fi.Size() > 0 {
+			continue // user already has a non-empty script
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			log.Warn("stat builtin script", "name", name, "err", err)
 			continue
 		}

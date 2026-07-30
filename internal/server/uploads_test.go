@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/klippelism/stugan/internal/config"
 	"github.com/klippelism/stugan/internal/core"
 )
 
@@ -386,5 +387,147 @@ func TestStripJPEGTrailingData(t *testing.T) {
 	}
 	if bytes.Count(out, []byte{0x3F, 0x00, 0x42}) != 2 {
 		t.Error("scan data not preserved across both scans")
+	}
+}
+
+func TestParseCustomUploadResponse(t *testing.T) {
+	t.Run("plain text response", func(t *testing.T) {
+		body := []byte("https://x0.at/abcdef.png\n")
+		url, err := parseCustomUploadResponse(body, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://x0.at/abcdef.png" {
+			t.Errorf("got %q, want %q", url, "https://x0.at/abcdef.png")
+		}
+	})
+
+	t.Run("default JSON url key", func(t *testing.T) {
+		body := []byte(`{"url": "https://0x0.st/xyz.jpg"}`)
+		url, err := parseCustomUploadResponse(body, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://0x0.st/xyz.jpg" {
+			t.Errorf("got %q, want %q", url, "https://0x0.st/xyz.jpg")
+		}
+	})
+
+	t.Run("custom response field path", func(t *testing.T) {
+		body := []byte(`{"data": {"link": "https://custom.host/file.png"}}`)
+		url, err := parseCustomUploadResponse(body, "data.link")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://custom.host/file.png" {
+			t.Errorf("got %q, want %q", url, "https://custom.host/file.png")
+		}
+	})
+
+	t.Run("missing custom response field", func(t *testing.T) {
+		body := []byte(`{"data": {}}`)
+		if _, err := parseCustomUploadResponse(body, "data.link"); err == nil {
+			t.Error("expected error for missing field, got nil")
+		}
+	})
+}
+
+func TestCustomUploadHostEndToEnd(t *testing.T) {
+	// Mock custom upload endpoint (e.g. x0.at)
+	mockHost := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "bad method", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.Header.Get("X-Auth-Token") != "secretToken" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		file, hdr, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, "missing file", http.StatusBadRequest)
+			return
+		}
+		file.Close()
+		if hdr.Filename != "hello.txt" {
+			http.Error(w, "bad filename", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("https://x0.at/12345.txt\n"))
+	}))
+	defer mockHost.Close()
+
+	uploadDir := t.TempDir()
+	eng := core.New(core.Options{Sink: noopSink{}})
+	srv := New(SingleUser(&Tenant{Engine: eng}), Options{
+		UploadDir: uploadDir,
+		MaxUpload: 1 << 20,
+		Uploads: config.UploadsConfig{
+			Mode:      "custom",
+			URL:       mockHost.URL,
+			FieldName: "file",
+			Headers: map[string]string{
+				"X-Auth-Token": "secretToken",
+			},
+		},
+	})
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, _ := mw.CreateFormFile("file", "hello.txt")
+	fw.Write([]byte("hello world"))
+	mw.Close()
+
+	resp, err := http.Post(hs.URL+"/api/upload", mw.FormDataContentType(), &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("upload status = %d, want 200", resp.StatusCode)
+	}
+
+	var res struct {
+		URL  string `json:"url"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+
+	if res.URL != "https://x0.at/12345.txt" {
+		t.Errorf("got url %q, want \"https://x0.at/12345.txt\"", res.URL)
+	}
+	if res.Name != "hello.txt" {
+		t.Errorf("got name %q, want \"hello.txt\"", res.Name)
+	}
+
+	// Verify custom upload appears in /api/uploads listing
+	r, err := http.Get(hs.URL + "/api/uploads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	var list []struct {
+		URL  string `json:"url"`
+		Name string `json:"name"`
+		Size int64  `json:"size"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("listed %d uploads, want 1", len(list))
+	}
+	if list[0].URL != "https://x0.at/12345.txt" || list[0].Name != "hello.txt" || list[0].Size != int64(len("hello world")) {
+		t.Errorf("listed entry = %+v", list[0])
 	}
 }

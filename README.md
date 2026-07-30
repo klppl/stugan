@@ -22,8 +22,9 @@ the IRCv3 discipline of [Halloy](https://github.com/squidowl/halloy) and a
   reactions, message redaction, a channel browser (LIST), best-effort
   chathistory. See [docs/ircv3.md](docs/ircv3.md).
 - Link previews + inline image/video via a local proxy, drag-drop/paste
-  uploads, autocomplete (nicks/commands/channels/emoji), command aliases,
-  per-channel mute, a mentions view, configurable highlight rules.
+  uploads (local storage or custom upload hosts like `x0.at`), autocomplete
+  (nicks/commands/channels/emoji), command aliases, per-channel mute, a mentions
+  view, configurable highlight rules.
 - A **Lua plugin system** (weechat/irssi style): commands, message
   filters/rewrites, signal hooks, timers, persistent KV, hot-reload.
 - PWA: installable, mobile-responsive, Web Push + desktop notifications.

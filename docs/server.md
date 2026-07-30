@@ -129,13 +129,13 @@ hash for a `[[users]]` `password_hash`).
 - **Image/video proxy (`fetch.go`, `previews.go`)** — stream remote media back
   through the daemon to hide the client IP and avoid mixed-content warnings.
 - **Uploads (`uploads.go`)** — multipart `POST /api/upload` → a served
-  `/uploads/<random>.<ext>` URL. Each upload gets a sidecar record under
-  `uploads/.meta/` (owner, original name, upload time; never served — the
-  file server refuses dotted path segments) that backs the per-user
-  `GET /api/uploads` listing. Files are retained between 3 and 7 days by
-  size — `MIN_AGE + (MAX_AGE − MIN_AGE) × (1 − size/max_size)²`, so larger
-  files are deleted earlier — enforced by an hourly sweep (plus one at
-  startup) that also removes orphaned sidecars.
+  file URL. Supports `local` mode (files saved under `uploads/` with random names)
+  or `custom` mode (files posted to external upload services like `x0.at` or `0x0.st`).
+  Image files are stripped of EXIF/location metadata prior to storage/upload.
+  Each upload gets a sidecar record under `uploads/.meta/` (owner, original name,
+  upload time, size, external URL if custom; never served) backing `GET /api/uploads`.
+  Local files and sidecars are retained between 3 and 7 days by size
+  (`MIN_AGE + (MAX_AGE − MIN_AGE) × (1 − size/max_size)²`), enforced by an hourly sweep.
 - **Web Push (`push.go`)** — a VAPID keypair (persisted under the data dir) and
   per-user subscriptions. When a highlight arrives for a user with no attached
   browser, a push is sent; dead subscriptions are pruned on 404/410.

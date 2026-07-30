@@ -23,6 +23,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/klippelism/stugan/internal/auth"
+	"github.com/klippelism/stugan/internal/config"
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/proto"
 )
@@ -97,6 +98,7 @@ type Options struct {
 	StaticDir      string
 	UploadDir      string
 	MaxUpload      int64
+	Uploads        config.UploadsConfig
 	PushDir        string
 	// MagicWordHash, when non-empty, enables an outer site-wide password
 	// gate (the "magic word"). It must be a bcrypt hash; the daemon
@@ -116,6 +118,7 @@ type Server struct {
 	staticDir      string
 	uploadDir      string
 	maxUpload      int64
+	uploads        config.UploadsConfig
 	push           *pushManager
 
 	// magicHash and magicSessions implement the outer site-wide
@@ -153,6 +156,13 @@ func New(hub Hub, opts Options) *Server {
 	if err != nil {
 		log.Warn("web push disabled", "err", err)
 	}
+	uploads := opts.Uploads
+	if uploads.Mode == "" {
+		uploads.Mode = "local"
+	}
+	if uploads.FieldName == "" {
+		uploads.FieldName = "file"
+	}
 	s := &Server{
 		hub:            hub,
 		log:            log,
@@ -162,6 +172,7 @@ func New(hub Hub, opts Options) *Server {
 		staticDir:      opts.StaticDir,
 		uploadDir:      opts.UploadDir,
 		maxUpload:      maxUpload,
+		uploads:        uploads,
 		push:           push,
 		magicHash:      opts.MagicWordHash,
 		authLimit:      newAuthRateLimit(60*time.Second, 8),
@@ -189,9 +200,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/logout", s.handleLogout)
 	mux.HandleFunc("/api/preview", s.requireUser(s.handlePreview))
 	mux.HandleFunc("/api/proxy", s.requireUser(s.handleProxy))
-	if s.uploadDir != "" {
+	if s.uploadDir != "" || s.uploads.Mode == "custom" {
 		mux.HandleFunc("/api/upload", s.requireUser(s.handleUpload))
 		mux.HandleFunc("/api/uploads", s.requireUser(s.handleUploadList))
+	}
+	if s.uploadDir != "" {
 		mux.Handle("/uploads/", s.uploadFileServer())
 	}
 	if s.push != nil {
@@ -1040,8 +1053,8 @@ func (s *Server) connectedCount(user string) int {
 // caps lists the optional features this server supports.
 func (s *Server) caps() []string {
 	caps := []string{"previews", "search", "plugins"} // previews always wired; every tenant has a history store + plugin manager
-	if s.uploadDir != "" {
-		caps = append(caps, "uploads") // only when an upload dir is configured (else /api/upload is unregistered)
+	if s.uploadDir != "" || s.uploads.Mode == "custom" {
+		caps = append(caps, "uploads")
 	}
 	if s.push != nil {
 		caps = append(caps, "push")

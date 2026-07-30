@@ -8,6 +8,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -28,6 +29,7 @@ type Config struct {
 	Log     LogConfig     `toml:"log"`
 	Plugins PluginsConfig `toml:"plugins"`
 	History HistoryConfig `toml:"history"`
+	Uploads UploadsConfig `toml:"uploads"`
 
 	// Networks is the static list of IRC networks to connect on startup.
 	// In multi-user mode this moves into per-user state; for now it is a
@@ -56,6 +58,20 @@ type HistoryConfig struct {
 	// from every user's history (search index included). 0 (the default)
 	// keeps history forever.
 	RetentionDays int `toml:"retention_days"`
+}
+
+// UploadsConfig controls file upload storage (local or custom endpoint).
+type UploadsConfig struct {
+	// Mode is "local" (default) or "custom".
+	Mode string `toml:"mode"`
+	// URL is the target endpoint URL for custom mode (e.g., "https://x0.at").
+	URL string `toml:"url"`
+	// FieldName is the multipart form field name for custom mode (default "file").
+	FieldName string `toml:"field_name"`
+	// Headers holds custom HTTP request headers for custom mode POSTs.
+	Headers map[string]string `toml:"headers"`
+	// ResponseField is an optional JSON key/path to extract the URL from custom responses (e.g., "url" or "data.url").
+	ResponseField string `toml:"response_field"`
 }
 
 // UserConfig is one account in multi-user mode.
@@ -256,6 +272,12 @@ func (c *Config) withDefaults() {
 	if c.Log.Format == "" {
 		c.Log.Format = "text"
 	}
+	if c.Uploads.Mode == "" {
+		c.Uploads.Mode = "local"
+	}
+	if c.Uploads.FieldName == "" {
+		c.Uploads.FieldName = "file"
+	}
 }
 
 // validate reports configuration errors that should stop startup.
@@ -269,6 +291,20 @@ func (c *Config) validate() error {
 	case "text", "json":
 	default:
 		return fmt.Errorf("config: invalid log.format %q", c.Log.Format)
+	}
+	switch c.Uploads.Mode {
+	case "local", "custom":
+	default:
+		return fmt.Errorf("config: invalid uploads.mode %q", c.Uploads.Mode)
+	}
+	if c.Uploads.Mode == "custom" {
+		if c.Uploads.URL == "" {
+			return errors.New("config: uploads.url is required when uploads.mode is \"custom\"")
+		}
+		u, err := url.Parse(c.Uploads.URL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("config: invalid uploads.url %q (must be an http or https URL)", c.Uploads.URL)
+		}
 	}
 	if err := validateNetworks(c.Networks, "networks"); err != nil {
 		return err

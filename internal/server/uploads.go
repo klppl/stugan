@@ -8,7 +8,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -49,6 +51,8 @@ type uploadMeta struct {
 	Owner    string    `json:"owner"`
 	Name     string    `json:"name"` // original filename as uploaded
 	Uploaded time.Time `json:"uploaded"`
+	Size     int64     `json:"size,omitempty"`
+	URL      string    `json:"url,omitempty"`
 }
 
 func (s *Server) uploadMetaPath(stored string) string {
@@ -109,6 +113,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.uploads.Mode == "custom" {
+		s.handleCustomUpload(w, r, hdr.Filename, data)
+		return
+	}
+
 	if err := os.MkdirAll(s.uploadDir, 0o755); err != nil {
 		http.Error(w, "server error", http.StatusInternalServerError)
 		return
@@ -133,7 +142,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// it from its mtime regardless.
 	user, _ := s.userOf(r) // requireUser already vetted the request
 	now := time.Now().UTC()
-	if err := s.writeUploadMeta(name, uploadMeta{Owner: user, Name: hdr.Filename, Uploaded: now}); err != nil {
+	size := int64(len(data))
+	if err := s.writeUploadMeta(name, uploadMeta{Owner: user, Name: hdr.Filename, Uploaded: now, Size: size}); err != nil {
 		s.log.Warn("upload sidecar write failed", "file", name, "err", err)
 	}
 
@@ -141,8 +151,130 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"url":     "/uploads/" + name,
 		"name":    hdr.Filename,
-		"expires": now.Add(s.uploadTTL(int64(len(data)))).Format(time.RFC3339),
+		"expires": now.Add(s.uploadTTL(size)).Format(time.RFC3339),
 	})
+}
+
+func (s *Server) handleCustomUpload(w http.ResponseWriter, r *http.Request, filename string, data []byte) {
+	var bodyBuf bytes.Buffer
+	mw := multipart.NewWriter(&bodyBuf)
+	fieldName := s.uploads.FieldName
+	if fieldName == "" {
+		fieldName = "file"
+	}
+	fw, err := mw.CreateFormFile(fieldName, filename)
+	if err != nil {
+		http.Error(w, "failed to build upload request", http.StatusInternalServerError)
+		return
+	}
+	if _, err := fw.Write(data); err != nil {
+		http.Error(w, "failed to write upload payload", http.StatusInternalServerError)
+		return
+	}
+	mw.Close()
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, s.uploads.URL, &bodyBuf)
+	if err != nil {
+		http.Error(w, "failed to create custom upload request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	for k, v := range s.uploads.Headers {
+		req.Header.Set(k, v)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		s.log.Error("custom upload request failed", "url", s.uploads.URL, "err", err)
+		http.Error(w, "custom upload request failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		s.log.Warn("custom upload host returned error", "status", resp.StatusCode, "url", s.uploads.URL)
+		http.Error(w, fmt.Sprintf("custom upload server error (%d)", resp.StatusCode), http.StatusBadGateway)
+		return
+	}
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "failed to read custom upload response", http.StatusInternalServerError)
+		return
+	}
+
+	uploadURL, err := parseCustomUploadResponse(respBody, s.uploads.ResponseField)
+	if err != nil || uploadURL == "" {
+		s.log.Error("parse custom upload response failed", "err", err, "body", string(respBody))
+		http.Error(w, "failed to parse custom upload response", http.StatusBadGateway)
+		return
+	}
+
+	user, _ := s.userOf(r)
+	now := time.Now().UTC()
+	size := int64(len(data))
+	if s.uploadDir != "" && user != "" {
+		name := randomName()
+		if err := s.writeUploadMeta(name, uploadMeta{
+			Owner:    user,
+			Name:     filename,
+			Uploaded: now,
+			Size:     size,
+			URL:      uploadURL,
+		}); err != nil {
+			s.log.Warn("custom upload sidecar write failed", "err", err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"url":     uploadURL,
+		"name":    filename,
+		"expires": now.Add(s.uploadTTL(size)).Format(time.RFC3339),
+	})
+}
+
+// parseCustomUploadResponse extracts a target URL string from custom upload response body.
+func parseCustomUploadResponse(body []byte, responseField string) (string, error) {
+	trimmed := strings.TrimSpace(string(body))
+	if responseField != "" {
+		var obj any
+		if err := json.Unmarshal(body, &obj); err != nil {
+			return "", fmt.Errorf("response_field %q specified but body is not JSON: %w", responseField, err)
+		}
+		parts := strings.Split(responseField, ".")
+		cur := obj
+		for _, part := range parts {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("key %q in %q is not an object", part, responseField)
+			}
+			cur, ok = m[part]
+			if !ok {
+				return "", fmt.Errorf("key %q not found in response JSON", part)
+			}
+		}
+		str, ok := cur.(string)
+		if !ok {
+			return "", fmt.Errorf("field %q in response JSON is not a string", responseField)
+		}
+		return strings.TrimSpace(str), nil
+	}
+
+	// Default parsing: try JSON object for a string "url" field first.
+	var jsonMap map[string]any
+	if err := json.Unmarshal(body, &jsonMap); err == nil {
+		if val, ok := jsonMap["url"].(string); ok && strings.TrimSpace(val) != "" {
+			return strings.TrimSpace(val), nil
+		}
+	}
+
+	// Plain text URL response (e.g. x0.at, 0x0.st).
+	if trimmed == "" {
+		return "", errors.New("empty response body")
+	}
+	return trimmed, nil
 }
 
 // uploadEntry is one row of the per-user upload listing.
@@ -182,16 +314,24 @@ func (s *Server) handleUploadList(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(b, &m) != nil || m.Owner != user {
 			continue
 		}
-		info, err := os.Stat(filepath.Join(s.uploadDir, stored))
-		if err != nil {
-			continue // already swept (or sidecar orphaned by a failed write)
+		urlStr := "/uploads/" + stored
+		size := int64(0)
+		if m.URL != "" {
+			urlStr = m.URL
+			size = m.Size
+		} else {
+			info, err := os.Stat(filepath.Join(s.uploadDir, stored))
+			if err != nil {
+				continue // already swept (or sidecar orphaned by a failed write)
+			}
+			size = info.Size()
 		}
 		entries = append(entries, uploadEntry{
-			URL:      "/uploads/" + stored,
+			URL:      urlStr,
 			Name:     m.Name,
-			Size:     info.Size(),
+			Size:     size,
 			Uploaded: m.Uploaded,
-			Expires:  m.Uploaded.Add(s.uploadTTL(info.Size())),
+			Expires:  m.Uploaded.Add(s.uploadTTL(size)),
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Uploaded.After(entries[j].Uploaded) })
@@ -229,8 +369,26 @@ func (s *Server) sweepUploads(now time.Time) {
 		if !ok {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(s.uploadDir, stored)); errors.Is(err, os.ErrNotExist) {
+		b, err := os.ReadFile(s.uploadMetaPath(stored))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				os.Remove(s.uploadMetaPath(stored))
+			}
+			continue
+		}
+		var m uploadMeta
+		if err := json.Unmarshal(b, &m); err != nil {
 			os.Remove(s.uploadMetaPath(stored))
+			continue
+		}
+		if m.URL != "" {
+			if now.Sub(m.Uploaded) > s.uploadTTL(m.Size) {
+				os.Remove(s.uploadMetaPath(stored))
+			}
+		} else {
+			if _, err := os.Stat(filepath.Join(s.uploadDir, stored)); errors.Is(err, os.ErrNotExist) {
+				os.Remove(s.uploadMetaPath(stored))
+			}
 		}
 	}
 }

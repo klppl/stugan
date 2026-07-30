@@ -36,6 +36,22 @@ are optional — a missing config file is fine. A ready-to-edit example lives at
 |-----|------|---------|---------|
 | `retention_days` | int | `0` | Prune messages older than this many days from every user's history (search index included), hourly. `0` keeps history forever. |
 
+## `[uploads]`
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `mode` | string | `local` | Upload mode: `local` (store files on local server disk) or `custom` (stream uploads to an external endpoint). |
+| `url` | string | — | External HTTP POST endpoint URL when `mode = "custom"` (e.g. `https://x0.at`). Required in custom mode. |
+| `field_name` | string | `file` | Multipart form field name for custom upload POST request. |
+| `headers` | map[string]string | — | Optional custom HTTP headers sent with the upload POST (e.g., `Authorization = "Bearer token"`). |
+| `response_field` | string | — | Optional JSON field path to extract URL from host response (e.g. `url` or `data.url`). If omitted, plain-text response (or JSON `{"url":"..."}`) is used. |
+
+```toml
+[uploads]
+mode = "custom"
+url  = "https://x0.at"
+```
+
 ## `[plugins]`
 
 | Key | Type | Default | Meaning |

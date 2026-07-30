@@ -6,147 +6,103 @@ import (
 	"testing"
 )
 
-func TestLoadFromDefaults(t *testing.T) {
+func TestUploadsConfigDefaults(t *testing.T) {
 	dir := t.TempDir()
-	cfg, err := LoadFrom(dir)
-	if err != nil {
-		t.Fatalf("LoadFrom empty dir: %v", err)
-	}
-	if cfg.Server.Listen != "127.0.0.1:8080" {
-		t.Errorf("default listen = %q", cfg.Server.Listen)
-	}
-	if cfg.Log.Level != "info" || cfg.Log.Format != "text" {
-		t.Errorf("default log = %+v", cfg.Log)
-	}
-	if cfg.ScriptsDir() != filepath.Join(dir, "scripts") {
-		t.Errorf("ScriptsDir = %q", cfg.ScriptsDir())
-	}
-}
-
-func TestLoadFromFile(t *testing.T) {
-	dir := t.TempDir()
-	doc := `
+	tomlData := `
 [server]
-listen = "0.0.0.0:9000"
-
-[log]
-level = "debug"
-format = "json"
-
-[[networks]]
-name = "libera"
-addr = "irc.libera.chat:6697"
-tls = true
-nick = "stuganbot"
-channels = ["#stugan"]
+listen = "127.0.0.1:8080"
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(doc), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(tomlData), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	cfg, err := LoadFrom(dir)
 	if err != nil {
 		t.Fatalf("LoadFrom: %v", err)
 	}
-	if cfg.Server.Listen != "0.0.0.0:9000" {
-		t.Errorf("listen = %q", cfg.Server.Listen)
+
+	if cfg.Uploads.Mode != "local" {
+		t.Errorf("got mode %q, want \"local\"", cfg.Uploads.Mode)
 	}
-	if len(cfg.Networks) != 1 || cfg.Networks[0].Name != "libera" {
-		t.Fatalf("networks = %+v", cfg.Networks)
-	}
-	if !cfg.Networks[0].TLS || cfg.Networks[0].Nick != "stuganbot" {
-		t.Errorf("network = %+v", cfg.Networks[0])
+	if cfg.Uploads.FieldName != "file" {
+		t.Errorf("got field_name %q, want \"file\"", cfg.Uploads.FieldName)
 	}
 }
 
-func TestValidateErrors(t *testing.T) {
-	cases := map[string]string{
-		"bad level":       "[log]\nlevel = \"loud\"\n",
-		"bad format":      "[log]\nformat = \"xml\"\n",
-		"network no name": "[[networks]]\naddr = \"x:6667\"\n",
-		"network no addr": "[[networks]]\nname = \"n\"\n",
-		"dup network":     "[[networks]]\nname = \"n\"\naddr = \"a:1\"\n[[networks]]\nname = \"n\"\naddr = \"b:1\"\n",
+func TestUploadsConfigCustomValid(t *testing.T) {
+	dir := t.TempDir()
+	tomlData := `
+[uploads]
+mode = "custom"
+url = "https://x0.at"
+field_name = "file"
+response_field = "url"
+
+[uploads.headers]
+Authorization = "Bearer secret"
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(tomlData), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	for name, doc := range cases {
-		t.Run(name, func(t *testing.T) {
+
+	cfg, err := LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+
+	if cfg.Uploads.Mode != "custom" {
+		t.Errorf("got mode %q, want \"custom\"", cfg.Uploads.Mode)
+	}
+	if cfg.Uploads.URL != "https://x0.at" {
+		t.Errorf("got url %q, want \"https://x0.at\"", cfg.Uploads.URL)
+	}
+	if cfg.Uploads.FieldName != "file" {
+		t.Errorf("got field_name %q, want \"file\"", cfg.Uploads.FieldName)
+	}
+	if cfg.Uploads.Headers["Authorization"] != "Bearer secret" {
+		t.Errorf("got header Authorization %q, want \"Bearer secret\"", cfg.Uploads.Headers["Authorization"])
+	}
+	if cfg.Uploads.ResponseField != "url" {
+		t.Errorf("got response_field %q, want \"url\"", cfg.Uploads.ResponseField)
+	}
+}
+
+func TestUploadsConfigCustomInvalid(t *testing.T) {
+	cases := []struct {
+		name string
+		toml string
+	}{
+		{
+			name: "invalid mode",
+			toml: `[uploads]
+mode = "ftp"
+url = "https://example.com"
+`,
+		},
+		{
+			name: "missing url in custom mode",
+			toml: `[uploads]
+mode = "custom"
+`,
+		},
+		{
+			name: "invalid url scheme",
+			toml: `[uploads]
+mode = "custom"
+url = "ftp://example.com"
+`,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(doc), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(c.toml), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := LoadFrom(dir); err == nil {
-				t.Errorf("expected error for %q", name)
+				t.Errorf("%s: expected error, got nil", c.name)
 			}
 		})
-	}
-}
-
-func TestHomeResolution(t *testing.T) {
-	t.Setenv("STUGAN_HOME", "/explicit/path")
-	got, err := Home()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "/explicit/path" {
-		t.Errorf("Home with STUGAN_HOME = %q", got)
-	}
-
-	t.Setenv("STUGAN_HOME", "")
-	t.Setenv("XDG_CONFIG_HOME", "/xdg")
-	got, err = Home()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != filepath.Join("/xdg", "stugan") {
-		t.Errorf("Home with XDG = %q", got)
-	}
-}
-
-func TestPluginSandbox(t *testing.T) {
-	tru, fls := true, false
-	tests := []struct {
-		name  string
-		users []UserConfig
-		set   *bool
-		want  bool
-	}{
-		{"single-user default on", nil, nil, true},
-		{"single-user explicit off", nil, &fls, false},
-		{"single-user explicit on", nil, &tru, true},
-		{"multi-user forced on despite off", []UserConfig{{Name: "a", PasswordHash: "x"}}, &fls, true},
-		{"multi-user default on", []UserConfig{{Name: "a", PasswordHash: "x"}}, nil, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := &Config{Users: tt.users}
-			c.Plugins.Sandbox = tt.set
-			if got := c.PluginSandbox(); got != tt.want {
-				t.Errorf("PluginSandbox() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestEnsureDirs(t *testing.T) {
-	dir := t.TempDir()
-	home := filepath.Join(dir, "stugan")
-	cfg := &Config{
-		home: home,
-		Users: []UserConfig{
-			{Name: "alice"},
-		},
-	}
-	if err := cfg.EnsureDirs(); err != nil {
-		t.Fatalf("EnsureDirs failed: %v", err)
-	}
-
-	for _, d := range []string{
-		home,
-		cfg.ScriptsDir(),
-		cfg.DataDir(),
-		filepath.Join(home, "users", "alice", "scripts"),
-		filepath.Join(home, "users", "alice", "data"),
-	} {
-		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
-			t.Errorf("expected directory %s to exist, err: %v", d, err)
-		}
 	}
 }

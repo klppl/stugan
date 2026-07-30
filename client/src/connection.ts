@@ -1624,7 +1624,9 @@ export class Connection {
         return null;
       }
       const j = (await r.json()) as { url: string };
-      return location.origin + j.url;
+      return j.url.startsWith("http://") || j.url.startsWith("https://") || j.url.startsWith("//")
+        ? j.url
+        : location.origin + j.url;
     } catch {
       this.pushToast({ code: "upload", message: `Upload of ${file.name || "file"} failed — network error` });
       return null;

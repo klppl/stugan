@@ -109,6 +109,7 @@ func run() error {
 		OriginPatterns: cfg.Server.OriginPatterns,
 		TrustedProxies: cfg.Server.TrustedProxies,
 		UploadDir:      filepath.Join(cfg.DataDir(), "uploads"),
+		Uploads:        cfg.Uploads,
 		PushDir:        filepath.Join(cfg.DataDir(), "push"),
 		MagicWordHash:  magicHash,
 	})

@@ -19,6 +19,15 @@ format = "text"   # text | json
 [history]
 # retention_days = 90   # prune messages older than N days (0 = keep forever)
 
+# Custom file upload host (e.g. x0.at, 0x0.st, or user-defined HTTP POST services)
+# [uploads]
+# mode = "custom"            # "local" (default) | "custom"
+# url = "https://x0.at"      # HTTP POST endpoint URL
+# field_name = "file"        # multipart form field name (default "file")
+# response_field = "url"     # optional JSON field path (e.g. "url" or "data.url")
+# [uploads.headers]
+# Authorization = "Bearer secret"
+
 [plugins]
 enabled = true
 # sandbox = true   # default. Restricts the Lua stdlib (no os.execute/io/etc).
