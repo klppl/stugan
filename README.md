@@ -28,6 +28,7 @@ the IRCv3 discipline of [Halloy](https://github.com/squidowl/halloy) and a
 - A **Lua plugin system** (weechat/irssi style): commands, message
   filters/rewrites, signal hooks, timers, persistent KV, hot-reload.
 - PWA: installable, mobile-responsive, Web Push + desktop notifications.
+- **SSH Terminal UI**: Access your persistent session directly over SSH via a full-screen terminal UI (Bubble Tea/Wish) with mouse support, quick-switcher, and plugin manager.
 - Multi-user with bcrypt auth and full per-user isolation; an optional
   site-wide password gate.
 
@@ -108,6 +109,7 @@ See [plugins/README.md](plugins/README.md) for the plugin library catalog and [d
 | [theming](docs/theming.md) | Creating and installing custom themes |
 | [docker](docs/docker.md) | Pulling the GHCR image and running it on a server |
 | [plugins](docs/plugins.md) | The Lua plugin API |
+| [ssh](docs/ssh.md) | SSH Terminal UI setup and usage |
 | [config](docs/config.md) | Configuration reference |
 
 ## License
