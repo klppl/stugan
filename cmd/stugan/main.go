@@ -19,6 +19,7 @@ import (
 	"github.com/klippelism/stugan/internal/config"
 	"github.com/klippelism/stugan/internal/logging"
 	"github.com/klippelism/stugan/internal/server"
+	"github.com/klippelism/stugan/internal/tui"
 )
 
 func main() {
@@ -115,6 +116,24 @@ func run() error {
 	})
 	hub.registerSinks(srv)
 
+	// Optional SSH terminal UI. Built before the engines run so its per-user
+	// sinks are registered while the engine sink slice is still mutable.
+	var tuiSrv *tui.Server
+	if cfg.SSH.Enabled {
+		res := newSSHResolver(cfg, hub, log)
+		if !res.hasKeys() {
+			log.Warn("ssh enabled but no authorized_keys configured for any user; not starting SSH")
+		} else {
+			tuiSrv = tui.New(res, tui.Options{
+				Addr:        cfg.SSHListen(),
+				HostKeyPath: cfg.SSHHostKeyPath(),
+				Version:     "stugan/" + version(),
+				Logger:      log,
+			})
+			hub.registerTUISinks(tuiSrv)
+		}
+	}
+
 	log.Info("daemon ready", "users", len(hub.Users()), "auth", cfg.AuthEnabled())
 
 	// Run every user's engine and the HTTP server concurrently; if any
@@ -134,6 +153,9 @@ func run() error {
 		wg.Go(func() { defer cancel(); fail(eng.Run(ctx)) })
 	}
 	wg.Go(func() { defer cancel(); fail(srv.ListenAndServe(ctx, cfg.Server.Listen)) })
+	if tuiSrv != nil {
+		wg.Go(func() { defer cancel(); fail(tuiSrv.ListenAndServe(ctx)) })
+	}
 	if days := cfg.History.RetentionDays; days > 0 {
 		wg.Go(func() { hub.pruneHistoryLoop(ctx, days, log) })
 	}
