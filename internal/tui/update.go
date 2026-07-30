@@ -18,6 +18,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderMessages()
 		return m, nil
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
@@ -247,4 +250,36 @@ func (m *model) jumpNetwork(dir int) int {
 		}
 	}
 	return m.sel
+}
+
+func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.atBottom = false
+		m.vp.LineUp(3)
+		return m, nil
+	case tea.MouseButtonWheelDown:
+		m.vp.LineDown(3)
+		m.atBottom = m.vp.AtBottom()
+		return m, nil
+	case tea.MouseButtonLeft:
+		if (msg.Action == tea.MouseActionRelease || msg.Action == tea.MouseActionPress) && msg.X < sidebarWidth {
+			row := 0
+			for _, n := range m.snap.Networks {
+				row++ // network header row
+				for _, ch := range n.Channels {
+					if row == msg.Y {
+						ref := bufRef{net: n.ID, name: ch.Name}
+						for idx, b := range m.order {
+							if b.eq(ref) {
+								return m, m.selectIndex(idx)
+							}
+						}
+					}
+					row++
+				}
+			}
+		}
+	}
+	return m, nil
 }

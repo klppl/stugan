@@ -76,7 +76,7 @@ func (s *Server) program(sess ssh.Session) *tea.Program {
 	renderer := bm.MakeRenderer(sess)
 	m := newModel(tenant, renderer, s.log.With("user", userID), pty.Window.Width, pty.Window.Height)
 
-	opts := append(bm.MakeOptions(sess), tea.WithAltScreen())
+	opts := append(bm.MakeOptions(sess), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	p := tea.NewProgram(m, opts...)
 
 	entry := &session{user: userID, prog: p}

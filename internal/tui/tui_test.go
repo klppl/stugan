@@ -1,6 +1,10 @@
 package tui
 
-import "testing"
+import (
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 func TestRegistryAddRemove(t *testing.T) {
 	r := newRegistry()
@@ -80,3 +84,19 @@ func TestTruncate(t *testing.T) {
 		t.Fatalf("zero width = %q", got)
 	}
 }
+
+func TestPluginsOverlayTabs(t *testing.T) {
+	p := &pluginsOverlay{}
+	if p.tab != 0 {
+		t.Fatalf("initial tab = %d, want 0", p.tab)
+	}
+	p.Update(nil, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tab")})
+	if p.tab != 1 {
+		t.Fatalf("after tab key, tab = %d, want 1", p.tab)
+	}
+	p.Update(nil, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tab")})
+	if p.tab != 0 {
+		t.Fatalf("after second tab key, tab = %d, want 0", p.tab)
+	}
+}
+

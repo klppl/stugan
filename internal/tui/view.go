@@ -71,6 +71,12 @@ func (m *model) renderMain() string {
 
 func (m *model) renderTopic(w int) string {
 	ch := m.channelOf(m.active)
+	net := m.networkOf(m.active.net)
+	dot := m.st.help.Render("○")
+	if net != nil && net.State == core.StateRegistered {
+		dot = m.st.self.Render("●")
+	}
+
 	title := m.active.name
 	if m.active.zero() {
 		title = "stugan"
@@ -84,7 +90,8 @@ func (m *model) renderTopic(w int) string {
 			title = fmt.Sprintf("%s (%d)", title, n)
 		}
 	}
-	return m.st.topic.Width(w).Render(truncate(" "+title+sub, w))
+	header := fmt.Sprintf(" %s %s", dot, title)
+	return m.st.topic.Width(w).Render(truncate(header+sub, w))
 }
 
 func (m *model) renderStatus(w int) string {
@@ -101,7 +108,7 @@ func (m *model) renderStatus(w int) string {
 			left = fmt.Sprintf("%s@%s [%s]", nick, m.active.net, state)
 		}
 	}
-	right := "f1 help · ^k switch · ^o nets · ^l list · ^w members"
+	right := "f1 help · ^k switch · ^o nets · ^l list · ^g plugins · ^w members"
 	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
 		return m.st.statusBar.Width(w).Render(truncate(" "+left, w))
