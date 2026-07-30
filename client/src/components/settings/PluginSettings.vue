@@ -424,6 +424,53 @@ function handleInstallCurated(name: string) {
   border-color: #f59e0b;
 }
 
+.plugin-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.plugin-title,
+.curated-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.plugin-name {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--fg);
+}
+
+.plugin-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+}
+
+.plugin-badge.on {
+  background: color-mix(in srgb, #10b981 20%, transparent);
+  color: #34d399;
+}
+
+.plugin-badge.off {
+  background: color-mix(in srgb, var(--fg-dim) 20%, transparent);
+  color: var(--fg-dim);
+}
+
+.plugin-badge.disabled {
+  background: color-mix(in srgb, #ef4444 20%, transparent);
+  color: #f87171;
+}
+
 .category-curated {
   background: color-mix(in srgb, #3b82f6 20%, transparent);
   color: #60a5fa;
