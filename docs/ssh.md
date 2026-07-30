@@ -78,9 +78,3 @@ Press `Ctrl-G` to open the Plugin Overlay:
 * **`[ Installed ]` Tab**: View local Lua scripts, toggle load/unload (`Enter` / `Space`), and hot-reload scripts (`r`).
 * **`[ Library ]` Tab**: Browse official curated plugins from the Stugan plugin repository, download/install scripts with one keypress (`Enter` / `Space`), and check for updates (`u`).
 * **Tab Switch**: Press `Tab`, `←`, or `→` to toggle between Installed and Library tabs.
-
----
-
-## How it fits in the architecture
-
-`internal/tui` is the only package that imports wish and Bubble Tea; like `internal/irc` with girc, those terminal UI libraries never leak into the core engine or server. Each SSH session attaches to a per-user fan-out sink registered on the engine at startup, so committed lines reach every attached terminal without the engine needing to know SSH exists. The composition root (`cmd/stugan`) maps SSH public keys to stugan users and hands the TUI server each user's engine and history.
