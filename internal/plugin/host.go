@@ -697,6 +697,15 @@ func hashBytes(b []byte) string {
 }
 
 // DownloadPlugin downloads the named script from the official plugin repository
+func writeScriptFile(dst string, body []byte) error {
+	_ = os.Chmod(dst, 0o644)
+	if err := os.WriteFile(dst, body, 0o644); err != nil {
+		return fmt.Errorf("write plugin file %q: %w (check directory ownership/permissions)", dst, err)
+	}
+	return nil
+}
+
+// DownloadPlugin downloads the named script from the official plugin repository
 // into the scripts directory and loads it.
 func (h *Host) DownloadPlugin(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
@@ -715,12 +724,12 @@ func (h *Host) DownloadPlugin(ctx context.Context, name string) error {
 	}
 
 	if err := os.MkdirAll(h.dir, 0o755); err != nil {
-		return fmt.Errorf("create scripts dir: %w", err)
+		return fmt.Errorf("create scripts dir %q: %w (check directory ownership/permissions)", h.dir, err)
 	}
 
 	dst := filepath.Join(h.dir, name+".lua")
-	if err := os.WriteFile(dst, body, 0o644); err != nil {
-		return fmt.Errorf("write plugin file: %w", err)
+	if err := writeScriptFile(dst, body); err != nil {
+		return err
 	}
 
 	hash := hashBytes(body)
@@ -758,12 +767,12 @@ func (h *Host) ImportPlugin(ctx context.Context, rawURL, name string) error {
 	}
 
 	if err := os.MkdirAll(h.dir, 0o755); err != nil {
-		return fmt.Errorf("create scripts dir: %w", err)
+		return fmt.Errorf("create scripts dir %q: %w (check directory ownership/permissions)", h.dir, err)
 	}
 
 	dst := filepath.Join(h.dir, name+".lua")
-	if err := os.WriteFile(dst, body, 0o644); err != nil {
-		return fmt.Errorf("write plugin file: %w", err)
+	if err := writeScriptFile(dst, body); err != nil {
+		return err
 	}
 
 	hash := hashBytes(body)
@@ -808,12 +817,12 @@ func (h *Host) UpdatePlugin(ctx context.Context, name string) error {
 	}
 
 	if err := os.MkdirAll(h.dir, 0o755); err != nil {
-		return fmt.Errorf("create scripts dir: %w", err)
+		return fmt.Errorf("create scripts dir %q: %w (check directory ownership/permissions)", h.dir, err)
 	}
 
 	dst := filepath.Join(h.dir, name+".lua")
-	if err := os.WriteFile(dst, body, 0o644); err != nil {
-		return fmt.Errorf("write plugin file: %w", err)
+	if err := writeScriptFile(dst, body); err != nil {
+		return err
 	}
 
 	hash := hashBytes(body)
