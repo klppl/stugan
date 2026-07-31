@@ -700,7 +700,7 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 				return
 			}
 			err = c.tenant.Engine.ImportPlugin(ctx, d.URL, d.Name)
-		case "update":
+		case "update", "download":
 			if d.Name == "" {
 				c.sendError(env.ID, "bad_request", "plugin:action update requires name")
 				return

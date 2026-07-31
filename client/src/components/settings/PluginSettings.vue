@@ -10,6 +10,7 @@ const curated = computed<CuratedPluginInfo[]>(() => connection.store.curatedPlug
 const activeTab = ref<"installed" | "curated" | "import">("installed");
 const searchFilter = ref("");
 const isCheckingUpdates = ref(false);
+const updatingPlugins = ref<Record<string, boolean>>({});
 
 const importUrl = ref("");
 const importName = ref("");
@@ -78,11 +79,21 @@ function handleImport() {
 }
 
 function handleUpdate(name: string) {
+  if (updatingPlugins.value[name]) return;
+  updatingPlugins.value[name] = true;
   connection.updatePlugin(name);
+  setTimeout(() => {
+    delete updatingPlugins.value[name];
+  }, 2500);
 }
 
 function handleInstallCurated(name: string) {
-  connection.pluginAction(name, "load");
+  if (updatingPlugins.value[name]) return;
+  updatingPlugins.value[name] = true;
+  connection.updatePlugin(name);
+  setTimeout(() => {
+    delete updatingPlugins.value[name];
+  }, 2500);
 }
 </script>
 
@@ -96,14 +107,14 @@ function handleInstallCurated(name: string) {
 
       <div v-if="hasPlugins" class="header-actions">
         <button
-          class="btn btn-sm btn-outline"
+          class="btn btn-sm btn-outline check-updates-btn"
           :disabled="isCheckingUpdates"
           @click="handleCheckUpdates"
           title="Check remote sources for script updates"
         >
           <span v-if="isCheckingUpdates" class="spin">🔄</span>
           <span v-else>🔍</span>
-          {{ isCheckingUpdates ? "Checking..." : "Check for Updates" }}
+          <span>{{ isCheckingUpdates ? "Checking..." : "Check for Updates" }}</span>
         </button>
       </div>
     </div>
@@ -121,7 +132,7 @@ function handleInstallCurated(name: string) {
             :class="{ active: activeTab === 'installed' }"
             @click="activeTab = 'installed'"
           >
-            Installed Scripts ({{ plugins.length }})
+            Installed ({{ plugins.length }})
             <span v-if="updatesCount > 0" class="tab-update-badge">{{ updatesCount }} update{{ updatesCount > 1 ? 's' : '' }}</span>
           </button>
           <button
@@ -179,10 +190,12 @@ function handleInstallCurated(name: string) {
               <button
                 v-if="p.update_available || (p.source_url && p.source_type !== 'manual')"
                 class="btn btn-sm btn-accent-sm"
+                :disabled="updatingPlugins[p.name]"
                 @click="handleUpdate(p.name)"
                 title="Re-download latest script version from source URL"
               >
-                Update
+                <span v-if="updatingPlugins[p.name]" class="spin">🔄</span>
+                <span>{{ updatingPlugins[p.name] ? "Updating..." : "Update" }}</span>
               </button>
               <button
                 v-if="p.loaded && p.settings?.length"
@@ -199,7 +212,7 @@ function handleInstallCurated(name: string) {
 
           <p class="plugin-desc">{{ summary(p) }}</p>
           <p v-if="p.source_url" class="plugin-source-url">
-            <span class="url-label">Source:</span>
+            <span class="url-label">Source: </span>
             <a :href="p.source_url" target="_blank" rel="noopener noreferrer" class="url-link">{{ p.source_url }}</a>
           </p>
 
@@ -256,24 +269,29 @@ function handleInstallCurated(name: string) {
 
             <div class="curated-footer">
               <a :href="c.source_url" target="_blank" rel="noopener noreferrer" class="url-link font-sm">View Source</a>
+              
               <button
                 v-if="!c.installed"
                 class="btn btn-sm btn-primary"
+                :disabled="updatingPlugins[c.name]"
                 @click="handleInstallCurated(c.name)"
               >
-                Install & Load
+                <span v-if="updatingPlugins[c.name]" class="spin">🔄</span>
+                <span>{{ updatingPlugins[c.name] ? "Installing..." : "Install & Load" }}</span>
               </button>
               <button
                 v-else-if="c.update_available"
                 class="btn btn-sm btn-accent-sm"
+                :disabled="updatingPlugins[c.name]"
                 @click="handleUpdate(c.name)"
               >
-                Update
+                <span v-if="updatingPlugins[c.name]" class="spin">🔄</span>
+                <span>{{ updatingPlugins[c.name] ? "Updating..." : "Update" }}</span>
               </button>
               <button
                 v-else-if="!c.loaded"
                 class="btn btn-sm btn-ghost"
-                @click="handleInstallCurated(c.name)"
+                @click="connection.pluginAction(c.name, 'load')"
               >
                 Load
               </button>
@@ -323,7 +341,7 @@ function handleInstallCurated(name: string) {
           </div>
 
           <div class="import-actions">
-            <button class="btn btn-primary" @click="handleImport">
+            <button class="btn btn-primary import-submit-btn" @click="handleImport">
               Download, Save & Load
             </button>
           </div>
@@ -343,6 +361,12 @@ function handleInstallCurated(name: string) {
 
 .header-actions {
   flex-shrink: 0;
+}
+
+.check-updates-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .plugin-manager {
@@ -409,6 +433,7 @@ function handleInstallCurated(name: string) {
   border-radius: 6px;
   font-size: 13px;
   width: 180px;
+  box-sizing: border-box;
 }
 
 .plugin-card {
@@ -418,6 +443,7 @@ function handleInstallCurated(name: string) {
   margin-bottom: 12px;
   background: var(--bg);
   transition: border-color 0.2s ease;
+  overflow: hidden;
 }
 
 .plugin-card.has-update {
@@ -444,6 +470,7 @@ function handleInstallCurated(name: string) {
   font-weight: 700;
   font-size: 15px;
   color: var(--fg);
+  word-break: break-word;
 }
 
 .plugin-badge {
@@ -492,27 +519,49 @@ function handleInstallCurated(name: string) {
   font-weight: 700;
 }
 
+.plugin-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .btn-accent-sm {
   background: #f59e0b;
   color: #000;
   font-weight: 600;
   border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.btn-accent-sm:hover {
+.btn-accent-sm:hover:not(:disabled) {
   background: #d97706;
+}
+
+.btn-accent-sm:disabled {
+  opacity: 0.7;
+}
+
+.plugin-desc {
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .plugin-source-url {
   font-size: 12px;
   color: var(--fg-dim);
   margin-top: 4px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .url-link {
   color: var(--accent);
   text-decoration: none;
   word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .url-link:hover {
@@ -538,6 +587,7 @@ function handleInstallCurated(name: string) {
   flex-direction: column;
   justify-content: space-between;
   gap: 8px;
+  overflow: hidden;
 }
 
 .curated-card.installed {
@@ -548,12 +598,15 @@ function handleInstallCurated(name: string) {
   font-size: 13px;
   color: var(--fg-dim);
   line-height: 1.4;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .curated-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
@@ -570,6 +623,8 @@ function handleInstallCurated(name: string) {
   flex-direction: column;
   gap: 12px;
   max-width: 600px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .import-panel h4 {
@@ -601,6 +656,105 @@ function handleInstallCurated(name: string) {
 @keyframes spin {
   100% {
     transform: rotate(360deg);
+  }
+}
+
+/* Mobile Responsiveness (≤ 640px) */
+@media (max-width: 640px) {
+  .section-header-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .check-updates-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .plugin-nav-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .plugin-tabs {
+    overflow-x: auto;
+    width: 100%;
+    max-width: 100%;
+    white-space: nowrap;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+  }
+
+  .plugin-tab {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .plugin-search {
+    width: 100%;
+  }
+
+  .plugin-search-input {
+    width: 100%;
+    font-size: 16px; /* Prevents auto-zoom on iOS Safari */
+  }
+
+  .plugin-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .plugin-title {
+    width: 100%;
+  }
+
+  .plugin-actions {
+    width: 100%;
+    gap: 6px;
+  }
+
+  .plugin-actions .btn {
+    flex: 1 1 auto;
+    min-width: 70px;
+    justify-content: center;
+    text-align: center;
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+
+  .curated-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .curated-footer {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .curated-footer .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .import-panel {
+    width: 100%;
+  }
+
+  .setting-text-input,
+  .setting-input {
+    font-size: 16px; /* Prevents auto-zoom on iOS Safari */
+  }
+
+  .import-submit-btn {
+    width: 100%;
+    justify-content: center;
   }
 }
 </style>
