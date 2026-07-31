@@ -684,9 +684,13 @@ export class Connection {
   // Without this, sendError replies from server.route (bad payloads, failed
   // connects, etc.) are silently dropped and failures look like no-ops.
   private pushToast(err: WireError) {
+    this.showToast(err.message, err.code);
+  }
+
+  showToast(message: string, code?: string) {
     const id = ++this.toastSeq;
-    this.store.toasts.push({ id, code: err.code, message: err.message });
-    window.setTimeout(() => this.dismissToast(id), 6000);
+    this.store.toasts.push({ id, code: code ?? "", message });
+    window.setTimeout(() => this.dismissToast(id), 5000);
   }
 
   dismissToast(id: number) {

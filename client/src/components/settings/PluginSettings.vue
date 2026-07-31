@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { connection } from "../../connection";
 import type { PluginInfo, CuratedPluginInfo, PluginSetting } from "../../proto/events";
 
@@ -11,6 +11,7 @@ const activeTab = ref<"installed" | "curated" | "import">("installed");
 const searchFilter = ref("");
 const isCheckingUpdates = ref(false);
 const updatingPlugins = ref<Record<string, boolean>>({});
+const justUpdatedPlugins = ref<Record<string, boolean>>({});
 
 const importUrl = ref("");
 const importName = ref("");
@@ -19,8 +20,27 @@ const importStatus = ref<{ type: "success" | "error"; msg: string } | null>(null
 onMounted(() => {
   if (hasPlugins) {
     connection.listPlugins();
+    connection.checkPluginUpdates();
   }
 });
+
+// Watch plugins list to clear updating state & fire toast when update completes
+watch(
+  () => plugins.value,
+  () => {
+    for (const name in updatingPlugins.value) {
+      if (updatingPlugins.value[name]) {
+        delete updatingPlugins.value[name];
+        justUpdatedPlugins.value[name] = true;
+        connection.showToast(`Plugin "${name}" updated successfully!`, "success");
+        setTimeout(() => {
+          delete justUpdatedPlugins.value[name];
+        }, 4000);
+      }
+    }
+  },
+  { deep: true }
+);
 
 const filteredPlugins = computed(() => {
   if (!searchFilter.value.trim()) return plugins.value;
@@ -76,15 +96,19 @@ function handleImport() {
   importUrl.value = "";
   importName.value = "";
   activeTab.value = "installed";
+  connection.showToast("Script import initiated...", "info");
 }
 
 function handleUpdate(name: string) {
   if (updatingPlugins.value[name]) return;
   updatingPlugins.value[name] = true;
   connection.updatePlugin(name);
+  // Fallback timeout safety in case connection drops
   setTimeout(() => {
-    delete updatingPlugins.value[name];
-  }, 2500);
+    if (updatingPlugins.value[name]) {
+      delete updatingPlugins.value[name];
+    }
+  }, 6000);
 }
 
 function handleInstallCurated(name: string) {
@@ -92,8 +116,10 @@ function handleInstallCurated(name: string) {
   updatingPlugins.value[name] = true;
   connection.updatePlugin(name);
   setTimeout(() => {
-    delete updatingPlugins.value[name];
-  }, 2500);
+    if (updatingPlugins.value[name]) {
+      delete updatingPlugins.value[name];
+    }
+  }, 6000);
 }
 </script>
 
@@ -182,13 +208,15 @@ function handleInstallCurated(name: string) {
               <span v-else-if="p.loaded" class="plugin-badge on">loaded</span>
               <span v-else class="plugin-badge off">off</span>
 
-              <!-- Update Available Badge -->
+              <!-- Version Status Badge -->
               <span v-if="p.update_available" class="plugin-badge update-badge">⚡ Update available</span>
+              <span v-else-if="p.source_type !== 'manual' || p.source_url" class="plugin-badge up-to-date" title="Running latest version from remote source">✓ Up to date</span>
+              <span v-if="justUpdatedPlugins[p.name]" class="plugin-badge just-updated">✓ Updated just now!</span>
             </div>
 
             <div class="plugin-actions">
               <button
-                v-if="p.update_available || (p.source_url && p.source_type !== 'manual')"
+                v-if="p.update_available"
                 class="btn btn-sm btn-accent-sm"
                 :disabled="updatingPlugins[p.name]"
                 @click="handleUpdate(p.name)"
@@ -261,7 +289,10 @@ function handleInstallCurated(name: string) {
                 <span v-if="c.installed && c.loaded" class="plugin-badge on">loaded</span>
                 <span v-else-if="c.installed" class="plugin-badge off">installed</span>
                 <span v-else class="plugin-badge category-curated">official</span>
+                
                 <span v-if="c.update_available" class="plugin-badge update-badge">⚡ Update</span>
+                <span v-else-if="c.installed" class="plugin-badge up-to-date">✓ Up to date</span>
+                <span v-if="justUpdatedPlugins[c.name]" class="plugin-badge just-updated">✓ Updated just now!</span>
               </div>
             </div>
 
@@ -496,6 +527,18 @@ function handleInstallCurated(name: string) {
 .plugin-badge.disabled {
   background: color-mix(in srgb, #ef4444 20%, transparent);
   color: #f87171;
+}
+
+.plugin-badge.up-to-date {
+  background: color-mix(in srgb, #10b981 16%, transparent);
+  color: #10b981;
+  border: 1px solid color-mix(in srgb, #10b981 30%, transparent);
+}
+
+.plugin-badge.just-updated {
+  background: color-mix(in srgb, #3b82f6 25%, transparent);
+  color: #60a5fa;
+  border: 1px solid #3b82f6;
 }
 
 .category-curated {
