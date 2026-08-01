@@ -1,13 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref } from "vue";
+import { computed, nextTick, onUnmounted, reactive, ref, watch } from "vue";
 import type { Buffer } from "../connection";
-import { connection } from "../connection";
+import { bufKey, connection } from "../connection";
+import { readDraft, writeDraft } from "../drafts";
 import { emojiMatches, replaceEmoji } from "../emoji";
 import { ui } from "../ui";
 import UploadPreviewModal from "./UploadPreviewModal.vue";
 
 const props = defineProps<{ network: string; buffer: Buffer | null }>();
 const pastedImageFile = ref<File | null>(null);
+
+function targetKey(network: string, buffer: string): string {
+  return network && buffer ? bufKey(network, buffer) : "";
+}
 
 // Built-in slash commands exposed via Tab-completion. Mirrors the cases in
 // internal/core/command.go — keep them in rough sync, though the default
@@ -22,7 +27,8 @@ const BUILTINS = [
   "topic", "chathistory",
 ];
 
-const text = ref("");
+let activeDraftKey = targetKey(props.network, props.buffer?.name ?? "");
+const text = ref(readDraft(activeDraftKey));
 const inputEl = ref<HTMLTextAreaElement | null>(null);
 
 // The Enter/Shift+Enter hint only makes sense with a physical keyboard, and at
@@ -113,6 +119,32 @@ interface AC {
   end: number;
 }
 const ac = reactive<AC>({ open: false, items: [], labels: [], index: 0, start: 0, end: 0 });
+
+// Save the old target before restoring the new target's draft. ChatInput is
+// deliberately not keyed in ChatView, so without this transition a draft
+// typed in one buffer follows the component into whichever buffer is selected
+// next. Ending typing on the old target also prevents a stale indicator.
+watch(
+  () => [props.network, props.buffer?.name ?? ""] as const,
+  ([network, buffer], [oldNetwork, oldBuffer]) => {
+    writeDraft(activeDraftKey, text.value);
+    if (oldNetwork && oldBuffer && text.value.trim()) {
+      connection.sendTyping(oldNetwork, oldBuffer, "done");
+    }
+    activeDraftKey = targetKey(network, buffer);
+    histIdx = -1;
+    histDraft = "";
+    ac.open = false;
+    setText(readDraft(activeDraftKey));
+  },
+);
+
+onUnmounted(() => {
+  writeDraft(activeDraftKey, text.value);
+  if (props.buffer && text.value.trim()) {
+    connection.sendTyping(props.network, props.buffer.name, "done");
+  }
+});
 
 // recentNicks: members of the active channel, those who spoke recently first.
 const recentNicks = computed(() => {
@@ -272,6 +304,7 @@ function submit() {
   histIdx = -1;
   histDraft = "";
   text.value = "";
+  writeDraft(activeDraftKey, "");
   ac.open = false;
   reqSeq++;
   // Keep typing after a button-send: mousedown.prevent on the Send button
