@@ -9,9 +9,57 @@ import (
 	"encoding/pem"
 	"math/big"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestOutboundWriterDoesNotBlockAndPreservesOrder(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var mu sync.Mutex
+	var got []string
+	w := newOutboundWriter(func(req outboundRequest) {
+		if req.raw == "one" {
+			close(started)
+			<-release
+		}
+		mu.Lock()
+		got = append(got, req.raw)
+		mu.Unlock()
+	})
+	defer w.close()
+
+	if err := w.enqueue(outboundRequest{raw: "one"}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	begin := time.Now()
+	if err := w.enqueue(outboundRequest{raw: "two"}); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(begin); elapsed > 50*time.Millisecond {
+		t.Fatalf("enqueue blocked behind active write for %v", elapsed)
+	}
+	close(release)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		mu.Lock()
+		done := len(got) == 2
+		if done && (got[0] != "one" || got[1] != "two") {
+			t.Fatalf("dispatch order = %v", got)
+		}
+		mu.Unlock()
+		if done {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for queued writes")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
 
 // selfSignedPEM returns a cert+key concatenated PEM bundle, the form stugan
 // stores in NetworkParams.CertPEM for CertFP / SASL EXTERNAL.

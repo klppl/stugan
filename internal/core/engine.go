@@ -808,11 +808,11 @@ func (e *Engine) connFor(id string) IRCConn {
 // literal message. Otherwise it is an outbound message: it runs through
 // hooks, is sent to IRC, and is echoed locally (echo-message is off, so the
 // local echo is how the sender sees their own line).
-func (e *Engine) SendInput(network, buffer, text string) {
-	e.sendInput(network, buffer, text, 0)
+func (e *Engine) SendInput(network, buffer, text string) error {
+	return e.sendInput(network, buffer, text, 0)
 }
 
-func (e *Engine) sendInput(network, buffer, text string, depth int) {
+func (e *Engine) sendInput(network, buffer, text string, depth int) error {
 	if strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "//") {
 		rest := strings.TrimPrefix(text, "/")
 		name, argstr, _ := strings.Cut(rest, " ")
@@ -824,17 +824,26 @@ func (e *Engine) sendInput(network, buffer, text string, depth int) {
 			tmpl, ok := e.aliases[strings.ToLower(name)]
 			e.mu.RUnlock()
 			if ok && depth < 8 {
-				e.sendInput(network, buffer, expandAlias(tmpl, strings.Fields(argstr)), depth+1)
-				return
+				return e.sendInput(network, buffer, expandAlias(tmpl, strings.Fields(argstr)), depth+1)
 			}
 			e.HandleEvent(Event{
 				Type: EvCommand, Network: network, Buffer: buffer, Time: time.Now(),
 				Command: name, Args: strings.Fields(argstr), Text: argstr,
 			})
-			return
+			return nil
 		}
 	}
 	text = strings.TrimPrefix(text, "/") // "//foo" → "/foo"
+	e.mu.RLock()
+	n := e.user.Network(network)
+	registered := n != nil && n.State == StateRegistered && e.conns[network] != nil
+	e.mu.RUnlock()
+	if n == nil {
+		return fmt.Errorf("unknown network %q", network)
+	}
+	if !registered {
+		return fmt.Errorf("network %q is not connected — message not sent", network)
+	}
 	e.HandleEvent(Event{
 		Type:    EvMessageOut,
 		Network: network,
@@ -848,6 +857,7 @@ func (e *Engine) sendInput(network, buffer, text string, depth int) {
 			Self:    true,
 		},
 	})
+	return nil
 }
 
 // Snapshot returns a deep copy of the user state, safe to read from any
@@ -1485,10 +1495,13 @@ func (e *Engine) applyMessageOut(ev Event) {
 	_, created := n.getOrCreate(m.Buffer, bufferKind(m.Buffer))
 	e.mu.Unlock()
 
-	if conn := e.connFor(ev.Network); conn != nil {
-		if err := conn.Message(m.Buffer, m.Text); err != nil {
-			e.log.Warn("send failed", "network", ev.Network, "err", err)
-		}
+	conn := e.connFor(ev.Network)
+	if conn == nil {
+		return
+	}
+	if err := conn.Message(m.Buffer, m.Text); err != nil {
+		e.log.Warn("send failed", "network", ev.Network, "err", err)
+		return
 	}
 	if !echo {
 		e.broadcast(m)

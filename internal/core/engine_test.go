@@ -164,6 +164,18 @@ func TestApplyConnectDisconnect(t *testing.T) {
 	}
 }
 
+func TestSendInputRejectsDisconnectedNetwork(t *testing.T) {
+	e := New(Options{Sink: &captureSink{}})
+	e.AddNetwork(NetworkParams{ID: "net", Name: "net", Nick: "me"}, &fakeRuntimeConn{})
+
+	if err := e.SendInput("net", "#go", "hello"); err == nil {
+		t.Fatal("SendInput accepted a message while disconnected")
+	}
+	if err := e.SendInput("missing", "#go", "hello"); err == nil {
+		t.Fatal("SendInput accepted a message for an unknown network")
+	}
+}
+
 func TestApplyJoinPartQuit(t *testing.T) {
 	e, _ := newTestEngine(t)
 

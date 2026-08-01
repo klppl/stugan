@@ -205,8 +205,11 @@ func (m *model) submit() tea.Cmd {
 	if text == "" || m.active.zero() {
 		return nil
 	}
+	if err := m.eng.SendInput(m.active.net, m.active.name, text); err != nil {
+		m.setStatus(err.Error())
+		return nil
+	}
 	m.input.SetValue("")
-	m.eng.SendInput(m.active.net, m.active.name, text)
 	m.atBottom = true
 	return nil
 }

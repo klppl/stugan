@@ -88,6 +88,20 @@ func TestWebSocketLoop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = eng.Run(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for eng.SnapshotNetwork("libera").State != core.StateConnecting {
+		if time.Now().After(deadline) {
+			t.Fatal("network did not start connecting")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	eng.HandleEvent(core.Event{Type: core.EvConnect, Network: "libera", Nick: "me"})
+	for eng.SnapshotNetwork("libera").State != core.StateRegistered {
+		if time.Now().After(deadline) {
+			t.Fatal("network did not reach registered state")
+		}
+		time.Sleep(time.Millisecond)
+	}
 
 	hs := httptest.NewServer(srv.Handler())
 	defer hs.Close()

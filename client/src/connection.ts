@@ -1229,9 +1229,14 @@ export class Connection {
     });
   }
 
-  // send returns false (with a toast) when the socket is down, so the input
-  // can keep the draft instead of eating the message.
+  // send returns false (with a toast) when either the daemon socket or the
+  // selected IRC network is down, so the input keeps the draft.
   send(network: string, buffer: string, text: string): boolean {
+    const command = text.startsWith("/") && !text.startsWith("//");
+    if (!command && this.net(network)?.state !== "registered") {
+      this.pushToast({ code: "offline", message: `${network} is not connected — message not sent` });
+      return false;
+    }
     if (!this.sendFrame<MsgSend>(T.MsgSend, { network, buffer, text })) {
       this.pushToast({ code: "offline", message: "Not connected — message not sent" });
       return false;

@@ -8,11 +8,13 @@ package irc
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -85,6 +87,73 @@ type Conn struct {
 	// post-registration CAP ACK (see the CONNECTED handler); Connect restores
 	// it before every (re)connect.
 	mech *saslPlain
+	// outbound serializes user and command writes away from the engine loop.
+	// girc applies flood control synchronously, so calling Cmd methods directly
+	// from core can otherwise stall all networks for the duration of its delay.
+	outbound *outboundWriter
+}
+
+const outboundQueueSize = 256
+
+var errOutboundQueueFull = errors.New("IRC outbound queue is full")
+
+type outboundRequest struct {
+	raw    string
+	target string
+	text   string
+}
+
+// outboundWriter is a bounded, ordered single-writer queue. dispatch is the
+// only goroutine that enters girc's synchronous flood-control path.
+type outboundWriter struct {
+	queue    chan outboundRequest
+	done     chan struct{}
+	dispatch func(outboundRequest)
+	mu       sync.RWMutex
+	closed   bool
+}
+
+func newOutboundWriter(dispatch func(outboundRequest)) *outboundWriter {
+	w := &outboundWriter{
+		queue: make(chan outboundRequest, outboundQueueSize), done: make(chan struct{}),
+		dispatch: dispatch,
+	}
+	go w.run()
+	return w
+}
+
+func (w *outboundWriter) enqueue(req outboundRequest) error {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.closed {
+		return girc.ErrNotConnected
+	}
+	select {
+	case w.queue <- req:
+		return nil
+	default:
+		return errOutboundQueueFull
+	}
+}
+
+func (w *outboundWriter) run() {
+	for {
+		select {
+		case <-w.done:
+			return
+		case req := <-w.queue:
+			w.dispatch(req)
+		}
+	}
+}
+
+func (w *outboundWriter) close() {
+	w.mu.Lock()
+	if !w.closed {
+		w.closed = true
+		close(w.done)
+	}
+	w.mu.Unlock()
 }
 
 // multilineBatch accumulates the lines of one inbound draft/multiline message
@@ -193,6 +262,7 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		batches: map[string]*multilineBatch{},
 		mech:    mech,
 	}
+	c.outbound = newOutboundWriter(c.dispatchOutbound)
 	if mech != nil {
 		mech.client = c.client
 	}
@@ -479,14 +549,45 @@ func (c *Conn) advanceAddr() {
 	}
 }
 
-// SendRaw writes a raw IRC line.
-func (c *Conn) SendRaw(line string) error { return c.client.Cmd.SendRaw(line) }
+// SendRaw queues a raw IRC line without entering girc's synchronous flood
+// control on the caller's goroutine.
+func (c *Conn) SendRaw(line string) error {
+	if !c.client.IsConnected() {
+		return girc.ErrNotConnected
+	}
+	return c.outbound.enqueue(outboundRequest{raw: line})
+}
 
 // Message sends a PRIVMSG to target.
 func (c *Conn) Message(target, text string) error {
+	if !c.client.IsConnected() {
+		return girc.ErrNotConnected
+	}
+	return c.outbound.enqueue(outboundRequest{target: target, text: text})
+}
+
+// dispatchOutbound runs only on outboundWriter's goroutine. A request that
+// was accepted immediately before a transient disconnect waits for the same
+// Conn's reconnect rather than being silently discarded by girc.
+func (c *Conn) dispatchOutbound(req outboundRequest) {
+	for !c.client.IsConnected() {
+		select {
+		case <-c.outbound.done:
+			return
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	if req.raw != "" {
+		_ = c.client.Cmd.SendRaw(req.raw)
+		return
+	}
+	c.messageNow(req.target, req.text)
+}
+
+func (c *Conn) messageNow(target, text string) {
 	if !strings.Contains(text, "\n") {
 		c.client.Cmd.Message(target, text)
-		return nil
+		return
 	}
 	lines := strings.Split(text, "\n")
 	// On a server that negotiated draft/multiline, ship the lines as one logical
@@ -496,7 +597,7 @@ func (c *Conn) Message(target, text string) error {
 		for _, ln := range lines {
 			c.client.Cmd.Message(target, ln)
 		}
-		return nil
+		return
 	}
 	ref := "ml" + strconv.FormatUint(c.batchSeq.Add(1), 10)
 	_ = c.client.Cmd.SendRaw("BATCH +" + ref + " draft/multiline " + target)
@@ -504,7 +605,6 @@ func (c *Conn) Message(target, text string) error {
 		_ = c.client.Cmd.SendRaw("@batch=" + ref + " PRIVMSG " + target + " :" + ln)
 	}
 	_ = c.client.Cmd.SendRaw("BATCH -" + ref)
-	return nil
 }
 
 // handleBatch opens or closes a draft/multiline batch. Other batch types are
@@ -619,6 +719,7 @@ func (c *Conn) CurrentNick() string { return c.client.GetNick() }
 
 // Close terminates the connection.
 func (c *Conn) Close() error {
+	c.outbound.close()
 	c.client.Close()
 	return nil
 }

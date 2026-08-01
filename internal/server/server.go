@@ -569,7 +569,7 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	case proto.TMsgSend:
 		reqHandle(c, env, "msg:send requires network, buffer, text",
 			func(d proto.MsgSend) bool { return d.Network != "" && d.Buffer != "" && d.Text != "" },
-			func(d proto.MsgSend) error { c.tenant.Engine.SendInput(d.Network, d.Buffer, d.Text); return nil })
+			func(d proto.MsgSend) error { return c.tenant.Engine.SendInput(d.Network, d.Buffer, d.Text) })
 
 	case proto.TBacklogFetch:
 		s.handleBacklog(ctx, c, env)
