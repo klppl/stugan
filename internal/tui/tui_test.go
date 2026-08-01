@@ -66,6 +66,13 @@ func TestBufRef(t *testing.T) {
 	if a.key() == c.key() {
 		t.Fatal("keys must differ by buffer name")
 	}
+	rfc := bufRef{net: "libera", name: "#{GO}"}
+	if !a.eq(bufRef{net: "libera", name: "#GO"}) {
+		t.Fatal("ASCII case variants should compare equal")
+	}
+	if !(bufRef{net: "libera", name: "#[GO]"}).eq(rfc) || (bufRef{net: "libera", name: "#[GO]"}).key() != rfc.key() {
+		t.Fatal("RFC1459 bracket variants should share TUI identity")
+	}
 	if !(bufRef{}).zero() || a.zero() {
 		t.Fatal("zero() wrong")
 	}

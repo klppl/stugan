@@ -2,7 +2,6 @@ package tui
 
 import (
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -15,9 +14,9 @@ import (
 // bufRef identifies a buffer across networks.
 type bufRef struct{ net, name string }
 
-func (b bufRef) key() string      { return b.net + "\x00" + b.name }
+func (b bufRef) key() string      { return b.net + "\x00" + core.FoldIRC(b.name) }
 func (b bufRef) zero() bool       { return b.net == "" && b.name == "" }
-func (b bufRef) eq(o bufRef) bool { return b.net == o.net && b.name == o.name }
+func (b bufRef) eq(o bufRef) bool { return b.net == o.net && core.EqualIRC(b.name, o.name) }
 
 // buf is one buffer's loaded state: its messages and whether older history
 // remains to page in.
@@ -147,7 +146,7 @@ func (m *model) channelOf(b bufRef) *core.Channel {
 		return nil
 	}
 	for _, ch := range n.Channels {
-		if strings.EqualFold(ch.Name, b.name) {
+		if core.EqualIRC(ch.Name, b.name) {
 			return ch
 		}
 	}

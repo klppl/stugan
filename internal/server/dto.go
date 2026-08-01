@@ -1,7 +1,6 @@
 package server
 
 import (
-	"strings"
 	"time"
 
 	"github.com/klippelism/stugan/internal/core"
@@ -19,13 +18,13 @@ func applyUnread(state *proto.InitState, counts []core.UnreadCount) {
 	type key struct{ net, buf string }
 	byBuf := make(map[key]core.UnreadCount, len(counts))
 	for _, u := range counts {
-		byBuf[key{u.Network, strings.ToLower(u.Buffer)}] = u
+		byBuf[key{u.Network, core.FoldIRC(u.Buffer)}] = u
 	}
 	for ni := range state.Networks {
 		n := &state.Networks[ni]
 		for ci := range n.Channels {
 			c := &n.Channels[ci]
-			if u, ok := byBuf[key{n.ID, strings.ToLower(c.Name)}]; ok {
+			if u, ok := byBuf[key{n.ID, core.FoldIRC(c.Name)}]; ok {
 				c.Unread = u.Unread
 				c.Highlight = u.Highlight
 			}
@@ -133,7 +132,7 @@ func toNetworkDTO(n *core.Network) proto.NetworkDTO {
 		for _, nick := range n.Params.Monitor {
 			friends = append(friends, proto.FriendDTO{
 				Nick:   nick,
-				Online: n.MonitorOnline[strings.ToLower(nick)],
+				Online: n.MonitorOnline[core.FoldIRC(nick)],
 			})
 		}
 	}

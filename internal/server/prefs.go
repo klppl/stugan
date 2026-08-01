@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/proto"
 )
 
@@ -72,7 +73,7 @@ func loadMuted(t *Tenant) []proto.MuteRef {
 func setMuted(refs []proto.MuteRef, network, buffer string, muted bool) []proto.MuteRef {
 	out := make([]proto.MuteRef, 0, len(refs)+1)
 	for _, r := range refs {
-		if r.Network == network && strings.EqualFold(r.Buffer, buffer) {
+		if r.Network == network && core.EqualIRC(r.Buffer, buffer) {
 			continue // drop any existing entry; re-added below if muting
 		}
 		out = append(out, r)
@@ -86,7 +87,7 @@ func setMuted(refs []proto.MuteRef, network, buffer string, muted bool) []proto.
 // isMuted reports whether (network, buffer) is in the muted set.
 func isMuted(refs []proto.MuteRef, network, buffer string) bool {
 	for _, r := range refs {
-		if r.Network == network && strings.EqualFold(r.Buffer, buffer) {
+		if r.Network == network && core.EqualIRC(r.Buffer, buffer) {
 			return true
 		}
 	}

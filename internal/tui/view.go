@@ -205,7 +205,7 @@ func (m *model) renderMembers() string {
 		if list[i].rank != list[j].rank {
 			return list[i].rank < list[j].rank
 		}
-		return strings.ToLower(list[i].nick) < strings.ToLower(list[j].nick)
+		return core.FoldIRC(list[i].nick) < core.FoldIRC(list[j].nick)
 	})
 	var b strings.Builder
 	b.WriteString(m.st.label.Render(fmt.Sprintf("Members %d", len(list))))

@@ -54,13 +54,13 @@ func (s logSink) Typing(string, string, string, string) {}
 func (s logSink) React(string, string, string, string, string)  {}
 func (s logSink) Redact(string, string, string, string, string) {}
 
-// toLowerASCII folds a string for case-insensitive map keys using rfc1459
+// FoldIRC folds a string for case-insensitive identity using rfc1459
 // casemapping: ASCII A–Z plus []\~ fold to {}|^ (RFC 1459 §2.2 — those
 // bytes are "uppercase" in IRC because Scandinavian charsets mapped them to
 // letters). Virtually every server uses rfc1459 or its ascii subset, for
 // which this is also correct; honoring an explicit ISUPPORT CASEMAPPING
 // would need per-network folding and hasn't been worth the plumbing.
-func toLowerASCII(s string) string {
+func FoldIRC(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'A' && r <= 'Z':
@@ -77,3 +77,6 @@ func toLowerASCII(s string) string {
 		return r
 	}, s)
 }
+
+// EqualIRC compares two IRC nick/channel names under the same casemapping.
+func EqualIRC(a, b string) bool { return FoldIRC(a) == FoldIRC(b) }

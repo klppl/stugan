@@ -85,6 +85,23 @@ func TestMessageDTOServerIDProvenance(t *testing.T) {
 	}
 }
 
+func TestDTOUsesRFC1459Identity(t *testing.T) {
+	state := proto.InitState{Networks: []proto.NetworkDTO{{
+		ID: "n", Channels: []proto.ChannelDTO{{Name: "#{room}"}},
+	}}}
+	applyUnread(&state, []core.UnreadCount{{Network: "n", Buffer: "#[ROOM]", Unread: 3, Highlight: 1}})
+	if got := state.Networks[0].Channels[0]; got.Unread != 3 || got.Highlight != 1 {
+		t.Fatalf("RFC1459 unread projection = %+v", got)
+	}
+	net := toNetworkDTO(&core.Network{
+		ID: "n", Params: core.NetworkParams{Monitor: []string{"Nick[X]"}},
+		MonitorOnline: map[string]bool{core.FoldIRC("nick{x}"): true},
+	})
+	if len(net.Friends) != 1 || !net.Friends[0].Online {
+		t.Fatalf("RFC1459 monitor projection = %+v", net.Friends)
+	}
+}
+
 // readFrame reads one envelope with a timeout.
 func readFrame(t *testing.T, ctx context.Context, ws *websocket.Conn) proto.Envelope {
 	t.Helper()

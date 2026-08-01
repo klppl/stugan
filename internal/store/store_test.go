@@ -313,6 +313,40 @@ func TestBacklogAroundExactAnchorWithSharedTimestamp(t *testing.T) {
 	}
 }
 
+func TestRFC1459BufferIdentity(t *testing.T) {
+	s := openTest(t)
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	if err := s.MarkRead(context.Background(), "n", "#[Room]", base); err != nil {
+		t.Fatal(err)
+	}
+	m := msg("n", "#{ROOM}", "Nick[X]", "hello", core.MsgPrivmsg, base.Add(time.Second))
+	m.ID = "same-id"
+	m.Highlight = true
+	s.Print(m)
+	duplicate := m
+	duplicate.Buffer = "#[room]"
+	duplicate.Text = "duplicate"
+	s.Print(duplicate)
+
+	got, _, err := s.Backlog(context.Background(), "n", "#[room]", 0, 10)
+	if err != nil || len(got) != 1 || got[0].Text != "hello" {
+		t.Fatalf("RFC1459 backlog/dedup = %+v, err=%v", got, err)
+	}
+	counts, err := s.UnreadCounts(context.Background())
+	if err != nil || len(counts) != 1 || counts[0].Unread != 1 || counts[0].Highlight != 1 {
+		t.Fatalf("RFC1459 unread counts = %+v, err=%v", counts, err)
+	}
+	hits, err := s.Search(context.Background(), "from:nick{x}", "n", "#[ROOM]", 10)
+	if err != nil || len(hits) != 1 || hits[0].ID != "same-id" {
+		t.Fatalf("RFC1459 scoped search = %+v, err=%v", hits, err)
+	}
+	s.Redact("n", "#[ROOM]", "same-id", "", "")
+	got, _, err = s.Backlog(context.Background(), "n", "#{room}", 0, 10)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("RFC1459 redact left backlog = %+v, err=%v", got, err)
+	}
+}
+
 func TestSearch(t *testing.T) {
 	s := openTest(t)
 	now := time.Now()
@@ -614,9 +648,13 @@ func TestMsgidDedupMigration(t *testing.T) {
 	if _, err := s.db.Exec(`DROP INDEX idx_messages_msgid`); err != nil {
 		t.Fatal(err)
 	}
-	for range 3 {
+	for i := range 3 {
+		buffer := "#[c]"
+		if i%2 == 1 {
+			buffer = "#{c}"
+		}
 		if _, err := s.db.Exec(
-			`INSERT INTO messages(msgid, network, buffer, ts, kind, text) VALUES ('dup', 'n', '#c', 1, 'privmsg', 'hi')`,
+			`INSERT INTO messages(msgid, network, buffer, ts, kind, text) VALUES ('dup', 'n', ?, 1, 'privmsg', 'hi')`, buffer,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -628,7 +666,7 @@ func TestMsgidDedupMigration(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer s2.Close()
-	got, _, err := s2.Backlog(context.Background(), "n", "#c", 0, 10)
+	got, _, err := s2.Backlog(context.Background(), "n", "#{C}", 0, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,6 +680,34 @@ func TestMsgidDedupMigration(t *testing.T) {
 	}
 	if len(hits) != 1 {
 		t.Fatalf("FTS returned %d hits after dedup, want 1", len(hits))
+	}
+}
+
+func TestReadMarkerCasemappingMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "markers.db")
+	s, err := Open(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO read_markers(network, buffer, ts) VALUES
+		('n', '#[room]', 10), ('n', '#{ROOM}', 20)`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s, err = Open(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var buffer string
+	var ts int64
+	var count int
+	if err := s.db.QueryRow(`SELECT buffer, ts, COUNT(*) FROM read_markers WHERE network = 'n'`).Scan(&buffer, &ts, &count); err != nil {
+		t.Fatal(err)
+	}
+	if buffer != core.FoldIRC("#[room]") || ts != 20 || count != 1 {
+		t.Fatalf("migrated marker = buffer:%q ts:%d count:%d", buffer, ts, count)
 	}
 }
 

@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS messages (
   msgid     TEXT NOT NULL DEFAULT '',
   network   TEXT NOT NULL,
   buffer    TEXT NOT NULL,
+  buffer_fold TEXT NOT NULL DEFAULT '', -- RFC1459-folded buffer identity
   ts        INTEGER NOT NULL,            -- unix milliseconds
   from_nick TEXT NOT NULL DEFAULT '',
   account   TEXT NOT NULL DEFAULT '',
@@ -113,20 +114,31 @@ func Open(path string, log *slog.Logger) (*Store, error) {
 	// Tolerant migrations for databases created by earlier versions.
 	for _, alter := range []string{
 		`ALTER TABLE messages ADD COLUMN highlight INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE messages ADD COLUMN buffer_fold TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()
 			return nil, fmt.Errorf("migrate: %w", err)
 		}
 	}
+	if _, err := db.Exec(`UPDATE messages SET buffer_fold = ` + sqlFoldBuffer + ` WHERE buffer_fold = ''`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate buffer casemapping: %w", err)
+	}
+	if err := migrateReadMarkers(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate read-marker casemapping: %w", err)
+	}
 	// Deduplicate rows persisted before msgid uniqueness was enforced
 	// (chathistory playback re-inserted the same messages on every run),
 	// then add the unique index that makes replays no-ops in Print.
 	for _, stmt := range []string{
+		`DROP INDEX IF EXISTS idx_messages_msgid`,
 		`DELETE FROM messages WHERE msgid <> '' AND id NOT IN (
-		   SELECT MIN(id) FROM messages WHERE msgid <> '' GROUP BY network, buffer, msgid)`,
+		   SELECT MIN(id) FROM messages WHERE msgid <> '' GROUP BY network, buffer_fold, msgid)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_msgid
-		   ON messages(network, buffer, msgid) WHERE msgid <> ''`,
+		   ON messages(network, buffer_fold, msgid) WHERE msgid <> ''`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_buffer_fold ON messages(network, buffer_fold, id)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			db.Close()
@@ -134,6 +146,36 @@ func Open(path string, log *slog.Logger) (*Store, error) {
 		}
 	}
 	return &Store{db: db, log: log}, nil
+}
+
+const sqlFoldBuffer = `replace(replace(replace(replace(lower(buffer), '[', '{'), ']', '}'), '\', '|'), '~', '^')`
+const sqlFoldFrom = `replace(replace(replace(replace(lower(m.from_nick), '[', '{'), ']', '}'), '\', '|'), '~', '^')`
+
+// migrateReadMarkers canonicalizes existing marker keys to the RFC1459 fold.
+// Rebuilding is cheap (one row per visited buffer) and safely merges legacy
+// duplicate spellings by keeping their furthest read timestamp.
+func migrateReadMarkers(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, stmt := range []string{
+		`DROP TABLE IF EXISTS read_markers_folded`,
+		`CREATE TABLE read_markers_folded (
+		  network TEXT NOT NULL, buffer TEXT NOT NULL, ts INTEGER NOT NULL,
+		  PRIMARY KEY (network, buffer))`,
+		`INSERT INTO read_markers_folded(network, buffer, ts)
+		 SELECT network, ` + sqlFoldBuffer + `, MAX(ts)
+		 FROM read_markers GROUP BY network, ` + sqlFoldBuffer,
+		`DROP TABLE read_markers`,
+		`ALTER TABLE read_markers_folded RENAME TO read_markers`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // migrateSearchIndex replaces the original word-tokenized FTS table with a
@@ -197,9 +239,9 @@ func (s *Store) Print(m core.Message) {
 	// OR IGNORE: a message with a msgid we already hold (chathistory or
 	// bouncer replay of a line stored live) must not duplicate the row.
 	_, err := s.db.Exec(
-		`INSERT OR IGNORE INTO messages(msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.Network, m.Buffer, ts.UnixMilli(), m.From, m.Account,
+		`INSERT OR IGNORE INTO messages(msgid, network, buffer, buffer_fold, ts, from_nick, account, kind, text, self, highlight, tags)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.Network, m.Buffer, core.FoldIRC(m.Buffer), ts.UnixMilli(), m.From, m.Account,
 		string(m.Kind), m.Text, boolToInt(m.Self), boolToInt(m.Highlight), tags,
 	)
 	if err != nil {
@@ -236,8 +278,8 @@ func (s *Store) Redact(network, buffer, target, _, _ string) {
 		return
 	}
 	if _, err := s.db.Exec(
-		`DELETE FROM messages WHERE network = ? AND buffer = ? AND msgid = ?`,
-		network, buffer, target,
+		`DELETE FROM messages WHERE network = ? AND buffer_fold = ? AND msgid = ?`,
+		network, core.FoldIRC(buffer), target,
 	); err != nil {
 		s.log.Error("redact message", "network", network, "buffer", buffer, "msgid", target, "err", err)
 	}
@@ -362,7 +404,7 @@ func (s *Store) MarkRead(ctx context.Context, network, buffer string, ts time.Ti
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO read_markers(network, buffer, ts) VALUES(?, ?, ?)
 		 ON CONFLICT(network, buffer) DO UPDATE SET ts = MAX(ts, excluded.ts)`,
-		network, buffer, ts.UnixMilli())
+		network, core.FoldIRC(buffer), ts.UnixMilli())
 	return err
 }
 
@@ -376,12 +418,12 @@ func (s *Store) MarkRead(ctx context.Context, network, buffer string, ts time.Ti
 // page reload.
 func (s *Store) UnreadCounts(ctx context.Context) ([]core.UnreadCount, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT m.network, m.buffer, COUNT(*), COALESCE(SUM(m.highlight), 0)
+		`SELECT m.network, MIN(m.buffer), COUNT(*), COALESCE(SUM(m.highlight), 0)
 		 FROM messages m
-		 JOIN read_markers r ON r.network = m.network AND r.buffer = m.buffer
+		 JOIN read_markers r ON r.network = m.network AND r.buffer = m.buffer_fold
 		 WHERE m.ts > r.ts AND m.self = 0
 		   AND m.kind IN ('privmsg', 'notice', 'action')
-		 GROUP BY m.network, m.buffer`)
+		 GROUP BY m.network, m.buffer_fold`)
 	if err != nil {
 		return nil, fmt.Errorf("unread counts: %w", err)
 	}
@@ -413,7 +455,7 @@ func (s *Store) MissedHighlights(ctx context.Context, limit int) ([]core.Message
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+msgColsM+`
 		 FROM messages m
-		 JOIN read_markers r ON r.network = m.network AND r.buffer = m.buffer
+		 JOIN read_markers r ON r.network = m.network AND r.buffer = m.buffer_fold
 		 WHERE m.ts > r.ts AND m.self = 0 AND m.highlight = 1
 		   AND m.kind IN ('privmsg', 'notice', 'action')
 		 ORDER BY m.id DESC LIMIT ?`, limit)
@@ -462,9 +504,9 @@ func (s *Store) Backlog(ctx context.Context, network, buffer string, beforeSeq i
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+msgCols+`
 		 FROM messages
-		 WHERE network = ? AND buffer = ? AND id < ?
+		 WHERE network = ? AND buffer_fold = ? AND id < ?
 		 ORDER BY id DESC LIMIT ?`,
-		network, buffer, beforeSeq, limit+1,
+		network, core.FoldIRC(buffer), beforeSeq, limit+1,
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("backlog query: %w", err)
@@ -505,8 +547,8 @@ func (s *Store) BacklogAround(ctx context.Context, network, buffer, anchor strin
 	var anchorSeq int64
 	if anchor != "" {
 		err := s.db.QueryRowContext(ctx,
-			`SELECT id FROM messages WHERE network = ? AND buffer = ? AND msgid = ?`,
-			network, buffer, anchor,
+			`SELECT id FROM messages WHERE network = ? AND buffer_fold = ? AND msgid = ?`,
+			network, core.FoldIRC(buffer), anchor,
 		).Scan(&anchorSeq)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, false, false, fmt.Errorf("resolve backlog anchor: %w", err)
@@ -534,9 +576,9 @@ func (s *Store) BacklogAround(ctx context.Context, network, buffer, anchor strin
 	rowsA, err := s.db.QueryContext(ctx,
 		`SELECT `+msgCols+`
 		 FROM messages
-		 WHERE network = ? AND buffer = ? AND `+olderBoundary+`
+		 WHERE network = ? AND buffer_fold = ? AND `+olderBoundary+`
 		 ORDER BY id DESC LIMIT ?`,
-		network, buffer, boundary, beforeHalf+1,
+		network, core.FoldIRC(buffer), boundary, beforeHalf+1,
 	)
 	if err != nil {
 		return nil, false, false, fmt.Errorf("backlog around (older): %w", err)
@@ -567,9 +609,9 @@ func (s *Store) BacklogAround(ctx context.Context, network, buffer, anchor strin
 	rowsB, err := s.db.QueryContext(ctx,
 		`SELECT `+msgCols+`
 		 FROM messages
-		 WHERE network = ? AND buffer = ? AND `+newerBoundary+`
+		 WHERE network = ? AND buffer_fold = ? AND `+newerBoundary+`
 		 ORDER BY id ASC LIMIT ?`,
-		network, buffer, boundary, afterHalf+1,
+		network, core.FoldIRC(buffer), boundary, afterHalf+1,
 	)
 	if err != nil {
 		return nil, false, false, fmt.Errorf("backlog around (newer): %w", err)
@@ -698,15 +740,15 @@ func (s *Store) Search(ctx context.Context, query, network, buffer string, limit
 		args = append(args, network)
 	}
 	if buffer != "" {
-		q += " AND m.buffer = ?"
-		args = append(args, buffer)
+		q += " AND m.buffer_fold = ?"
+		args = append(args, core.FoldIRC(buffer))
 	} else if sf.inBuf != "" {
-		q += " AND lower(m.buffer) = lower(?)"
-		args = append(args, sf.inBuf)
+		q += " AND m.buffer_fold = ?"
+		args = append(args, core.FoldIRC(sf.inBuf))
 	}
 	if sf.from != "" {
-		q += " AND lower(m.from_nick) = lower(?)"
-		args = append(args, sf.from)
+		q += " AND " + sqlFoldFrom + " = ?"
+		args = append(args, core.FoldIRC(sf.from))
 	}
 	if sf.hasLink {
 		q += " AND (m.text LIKE '%http://%' OR m.text LIKE '%https://%')"

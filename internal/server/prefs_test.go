@@ -50,6 +50,11 @@ func TestSetMuted(t *testing.T) {
 	if len(refs) != 1 {
 		t.Fatalf("spurious unmute changed set: %v", refs)
 	}
+
+	refs = setMuted(refs, "libera", "#[ops]", true)
+	if !isMuted(refs, "libera", "#{OPS}") {
+		t.Error("RFC1459-equivalent buffer match should be muted")
+	}
 }
 
 func TestLoadMutedNilSafe(t *testing.T) {

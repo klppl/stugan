@@ -1981,7 +1981,7 @@ func isChannelName(name string) bool {
 	}
 }
 
-func lower(s string) string { return toLowerASCII(s) }
+func lower(s string) string { return FoldIRC(s) }
 
 // membershipPrefixOrder ranks channel prefix symbols highest-first
 // (owner, admin, op, half-op, voice) — matching the client's nicklist sort.
@@ -2041,7 +2041,12 @@ func updateChannelMode(current, change string) string {
 	}
 	var b strings.Builder
 	b.WriteByte('+')
+	modes := make([]rune, 0, len(modeSet))
 	for r := range modeSet {
+		modes = append(modes, r)
+	}
+	slices.Sort(modes)
+	for _, r := range modes {
 		b.WriteRune(r)
 	}
 	return b.String()
