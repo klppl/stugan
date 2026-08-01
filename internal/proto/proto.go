@@ -142,9 +142,10 @@ type ChannelDTO struct {
 
 // MemberDTO is the wire projection of core.Member.
 type MemberDTO struct {
-	Nick  string `json:"nick"`
-	Modes string `json:"modes"`
-	Away  bool   `json:"away"`
+	Nick    string `json:"nick"`
+	Account string `json:"account,omitempty"`
+	Modes   string `json:"modes"`
+	Away    bool   `json:"away"`
 }
 
 // MessageDTO is the wire projection of core.Message. Time is RFC3339.
@@ -162,6 +163,7 @@ type MessageDTO struct {
 	Buffer    string            `json:"buffer"`
 	Time      string            `json:"time"`
 	From      string            `json:"from"`
+	Account   string            `json:"account,omitempty"`
 	Kind      string            `json:"kind"`
 	Text      string            `json:"text"`
 	Self      bool              `json:"self"`

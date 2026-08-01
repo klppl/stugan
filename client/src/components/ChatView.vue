@@ -242,6 +242,14 @@ const members = computed(() => {
   });
 });
 
+function memberTitle(mem: MemberDTO): string {
+  const details = [mem.nick];
+  if (mem.account) details.push(`account: ${mem.account}`);
+  if (mem.away) details.push("away");
+  details.push("click to DM; right-click for more");
+  return details.join(" · ");
+}
+
 let stick = true;
 let prependHeight = 0;
 let lastScrollTop = 0;
@@ -678,7 +686,7 @@ function applyFilterHint(prefix: string) {
               :key="mem.nick"
               class="long-press-target"
               :class="{ away: mem.away }"
-              :title="mem.away ? mem.nick + ' (away)' : 'click to DM; right-click for more'"
+              :title="memberTitle(mem)"
               @click="openQuery(mem.nick)"
               @contextmenu="memberCtx.onContext(mem, $event)"
               @touchstart.passive="memberCtx.onTouchStart(mem, $event)"

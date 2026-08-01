@@ -47,6 +47,7 @@ func toMessageDTO(m core.Message) proto.MessageDTO {
 		Buffer:    m.Buffer,
 		Time:      t,
 		From:      m.From,
+		Account:   m.Account,
 		Kind:      string(m.Kind),
 		Text:      m.Text,
 		Self:      m.Self,
@@ -213,7 +214,7 @@ func toPluginSettings(ss []core.PluginSetting) []proto.PluginSetting {
 func toChannelDTO(c *core.Channel) proto.ChannelDTO {
 	mems := make([]proto.MemberDTO, 0, len(c.Members))
 	for _, m := range c.Members {
-		mems = append(mems, proto.MemberDTO{Nick: m.Nick, Modes: m.Modes, Away: m.Away})
+		mems = append(mems, proto.MemberDTO{Nick: m.Nick, Account: m.Account, Modes: m.Modes, Away: m.Away})
 	}
 	tTime := ""
 	if !c.TopicTime.IsZero() {

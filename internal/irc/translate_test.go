@@ -288,6 +288,17 @@ func TestToEventAway(t *testing.T) {
 	}
 }
 
+func TestMessageAccountTag(t *testing.T) {
+	ev, ok := toEvent("n", girc.ParseEvent("@account=alice :alice!u@h PRIVMSG #go :hi"), "me")
+	if !ok || ev.Message == nil || ev.Message.Account != "alice" {
+		t.Fatalf("authenticated message account = %+v, ok=%v", ev.Message, ok)
+	}
+	ev, ok = toEvent("n", girc.ParseEvent("@account=* :guest!u@h PRIVMSG #go :hi"), "me")
+	if !ok || ev.Message == nil || ev.Message.Account != "" {
+		t.Fatalf("unauthenticated message account = %+v, ok=%v", ev.Message, ok)
+	}
+}
+
 func TestChannelModeEvent(t *testing.T) {
 	const prefix = "(qaohv)~&@%+"
 	const chanmodes = "eIbq,k,flj,CFLMPQScgimnprstuz" // Libera-ish

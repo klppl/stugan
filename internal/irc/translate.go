@@ -237,13 +237,17 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			}
 		}
 
+		account := tag(e, "account")
+		if account == "*" {
+			account = ""
+		}
 		msg := &core.Message{
 			ID:      tag(e, "msgid"),
 			Network: network,
 			Buffer:  buffer,
 			Time:    when,
 			From:    from,
-			Account: tag(e, "account"),
+			Account: account,
 			Kind:    kind,
 			Text:    text,
 			Tags:    copyTags(e.Tags),

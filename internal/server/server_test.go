@@ -69,9 +69,19 @@ func TestMessageDTOServerIDProvenance(t *testing.T) {
 	if toMessageDTO(core.Message{ID: "loc-123"}).ServerID {
 		t.Fatal("synthetic message id exposed as a server reaction/redaction target")
 	}
-	server := toMessageDTO(core.Message{ID: "abc", Tags: map[string]string{"msgid": "abc"}})
+	server := toMessageDTO(core.Message{ID: "abc", Account: "alice", Tags: map[string]string{"msgid": "abc"}})
 	if !server.ServerID {
 		t.Fatal("server msgid was not exposed as an interactive target")
+	}
+	if server.Account != "alice" {
+		t.Fatalf("message account = %q, want alice", server.Account)
+	}
+
+	channel := toChannelDTO(&core.Channel{Members: map[string]*core.Member{
+		"alice": {Nick: "Alice", Account: "alice"},
+	}})
+	if len(channel.Members) != 1 || channel.Members[0].Account != "alice" {
+		t.Fatalf("member account projection = %+v", channel.Members)
 	}
 }
 

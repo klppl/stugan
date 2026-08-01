@@ -171,6 +171,7 @@ export interface ChannelDTO {
 
 export interface MemberDTO {
   nick: string;
+  account?: string;
   modes: string;
   away: boolean;
 }
@@ -188,6 +189,7 @@ export interface MessageDTO {
   buffer: string;
   time: string;
   from: string;
+  account?: string;
   kind: string;
   text: string;
   self: boolean;

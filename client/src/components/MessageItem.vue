@@ -13,6 +13,10 @@ const props = defineProps<{ msg: MessageDTO; showBuffer?: boolean; showDate?: bo
 // toggle any reaction already present.
 const QUICK_REACTS = ["👍", "❤️", "😂", "🎉", "😮", "😢"];
 const showReactPicker = ref(false);
+const senderTitle = computed(() => {
+  const account = props.msg.account ? `account: ${props.msg.account} · ` : "";
+  return `${account}right-click (or long-press) for nick options`;
+});
 
 // Reactions for this message (keyed by network, buffer, and msgid). Returns one entry per
 // distinct emoji with its count and whether we reacted, sorted for stability.
@@ -161,7 +165,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
           class="from long-press-target"
           :class="{ self: msg.self }"
           :style="{ color: fromColor(msg.from) }"
-          title="right-click (or long-press) for nick options"
+          :title="senderTitle"
           @contextmenu="nickCtx.onContext(msg.from, $event)"
           @touchstart.passive="nickCtx.onTouchStart(msg.from, $event)"
           @touchmove.passive="nickCtx.onTouchMove($event)"
@@ -195,7 +199,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
         class="from long-press-target"
         :class="{ self: msg.self }"
         :style="{ color: fromColor(msg.from) }"
-        title="right-click (or long-press) for nick options"
+        :title="senderTitle"
         @contextmenu="nickCtx.onContext(msg.from, $event)"
         @touchstart.passive="nickCtx.onTouchStart(msg.from, $event)"
         @touchmove.passive="nickCtx.onTouchMove($event)"
