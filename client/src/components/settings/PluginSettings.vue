@@ -42,10 +42,15 @@ watch(
   { deep: true }
 );
 
+const sortedPlugins = computed(() => [...plugins.value].sort((a, b) => {
+  if (a.loaded !== b.loaded) return a.loaded ? -1 : 1;
+  return a.name.localeCompare(b.name);
+}));
+
 const filteredPlugins = computed(() => {
-  if (!searchFilter.value.trim()) return plugins.value;
+  if (!searchFilter.value.trim()) return sortedPlugins.value;
   const q = searchFilter.value.toLowerCase();
-  return plugins.value.filter(
+  return sortedPlugins.value.filter(
     (p) => p.name.toLowerCase().includes(q) || (p.description && p.description.toLowerCase().includes(q))
   );
 });
@@ -120,6 +125,12 @@ function handleInstallCurated(name: string) {
       delete updatingPlugins.value[name];
     }
   }, 6000);
+}
+
+function handleUninstall(name: string) {
+  if (!window.confirm(`Uninstall "${name}" and permanently remove its script file?`)) return;
+  connection.pluginAction(name, "uninstall");
+  if (openPlugin.value === name) openPlugin.value = null;
 }
 </script>
 
@@ -235,6 +246,7 @@ function handleInstallCurated(name: string) {
               <button v-if="p.loaded" class="btn btn-sm btn-ghost" @click="connection.pluginAction(p.name, 'reload')">Reload</button>
               <button v-if="p.loaded" class="btn btn-sm btn-ghost btn-danger-ghost" @click="connection.pluginAction(p.name, 'unload')">Unload</button>
               <button v-else class="btn btn-sm btn-primary" @click="connection.pluginAction(p.name, 'load')">Load</button>
+              <button v-if="!p.loaded" class="btn btn-sm btn-ghost btn-danger-ghost" @click="handleUninstall(p.name)">Uninstall</button>
             </div>
           </div>
 

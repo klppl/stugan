@@ -366,7 +366,7 @@ export interface NetConfig {
 
 export interface PluginAction {
   name?: string;
-  action: "load" | "unload" | "reload" | "import" | "update" | "check_updates";
+  action: "load" | "unload" | "uninstall" | "reload" | "import" | "update" | "check_updates";
   url?: string;
 }
 

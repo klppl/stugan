@@ -659,6 +659,27 @@ func (h *Host) UnloadPlugin(name string) error {
 	return nil
 }
 
+// UninstallPlugin removes an unloaded plugin's script from the scripts dir.
+// Requiring it to be unloaded keeps teardown explicit and avoids racing the
+// file watcher while Lua code is still active.
+func (h *Host) UninstallPlugin(name string) error {
+	path, err := h.scriptPath(name)
+	if err != nil {
+		return err
+	}
+	if h.isLoaded(name) {
+		return fmt.Errorf("plugin %q must be unloaded before uninstalling", name)
+	}
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("no such plugin %q", name)
+		}
+		return fmt.Errorf("remove plugin %q: %w", name, err)
+	}
+	h.do(func() { delete(h.updates, name) })
+	return nil
+}
+
 // ReloadPlugin re-reads a script from disk, dropping its old hooks first.
 func (h *Host) ReloadPlugin(name string) error { return h.LoadPlugin(name) }
 

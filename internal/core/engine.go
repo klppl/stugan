@@ -297,9 +297,10 @@ func (e *Engine) Complete(network, buffer, word string) []string {
 // LoadPlugin, UnloadPlugin, and ReloadPlugin manage a single script at
 // runtime by name (no path separators). They delegate to the plugin host,
 // which runs them on its own goroutine; IRC connections are untouched.
-func (e *Engine) LoadPlugin(name string) error   { return e.host.LoadPlugin(name) }
-func (e *Engine) UnloadPlugin(name string) error { return e.host.UnloadPlugin(name) }
-func (e *Engine) ReloadPlugin(name string) error { return e.host.ReloadPlugin(name) }
+func (e *Engine) LoadPlugin(name string) error      { return e.host.LoadPlugin(name) }
+func (e *Engine) UnloadPlugin(name string) error    { return e.host.UnloadPlugin(name) }
+func (e *Engine) UninstallPlugin(name string) error { return e.host.UninstallPlugin(name) }
+func (e *Engine) ReloadPlugin(name string) error    { return e.host.ReloadPlugin(name) }
 func (e *Engine) DownloadPlugin(ctx context.Context, name string) error {
 	return e.host.DownloadPlugin(ctx, name)
 }

@@ -688,6 +688,12 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 				return
 			}
 			err = c.tenant.Engine.UnloadPlugin(d.Name)
+		case "uninstall":
+			if d.Name == "" {
+				c.sendError(env.ID, "bad_request", "plugin:action uninstall requires name")
+				return
+			}
+			err = c.tenant.Engine.UninstallPlugin(d.Name)
 		case "reload":
 			if d.Name == "" {
 				c.sendError(env.ID, "bad_request", "plugin:action reload requires name")

@@ -108,6 +108,7 @@ type PluginHost interface {
 	// name is a bare script name (no path separators).
 	LoadPlugin(name string) error
 	UnloadPlugin(name string) error
+	UninstallPlugin(name string) error
 	ReloadPlugin(name string) error
 	// DownloadPlugin downloads the named script from the official plugin
 	// repository into the scripts directory and loads it.
@@ -138,6 +139,7 @@ func (nopHost) Plugins() []PluginInfo                              { return nil 
 func (nopHost) CuratedPlugins() []CuratedPluginInfo                { return nil }
 func (nopHost) LoadPlugin(string) error                            { return errors.New("plugins are disabled") }
 func (nopHost) UnloadPlugin(string) error                          { return errors.New("plugins are disabled") }
+func (nopHost) UninstallPlugin(string) error                       { return errors.New("plugins are disabled") }
 func (nopHost) ReloadPlugin(string) error                          { return errors.New("plugins are disabled") }
 func (nopHost) DownloadPlugin(context.Context, string) error {
 	return errors.New("plugins are disabled")

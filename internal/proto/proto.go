@@ -402,8 +402,8 @@ type NetConfig struct {
 }
 
 // PluginAction is a client→server request to load, unload, reload, import,
-// update, or check for updates of plugin scripts at runtime. Action is "load",
-// "unload", "reload", "import", "update", or "check_updates". Name is a bare
+// update, uninstall, or check for updates of plugin scripts at runtime. Action is "load",
+// "unload", "uninstall", "reload", "import", "update", or "check_updates". Name is a bare
 // script name (the filename without ".lua"). URL is supplied for "import".
 // The reply is a plugin:list frame with the refreshed list.
 type PluginAction struct {

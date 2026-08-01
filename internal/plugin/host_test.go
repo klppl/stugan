@@ -166,6 +166,25 @@ func TestPluginManagement(t *testing.T) {
 	if err := h.UnloadPlugin("greet"); err == nil {
 		t.Error("UnloadPlugin twice should error")
 	}
+	if err := h.UninstallPlugin("greet"); err != nil {
+		t.Fatalf("UninstallPlugin: %v", err)
+	}
+	if _, ok := byName()["greet"]; ok {
+		t.Error("greet still listed after uninstall")
+	}
+	if err := h.LoadPlugin("greet"); err == nil {
+		t.Error("LoadPlugin after uninstall should error")
+	}
+
+	// A running plugin must be unloaded before its script can be removed.
+	if err := h.UninstallPlugin("filter"); err == nil {
+		t.Error("UninstallPlugin of loaded plugin should error")
+	}
+
+	// Restore greet for the remaining reload assertions.
+	if err := os.WriteFile(filepath.Join(h.dir, "greet.lua"), []byte(`stugan.hook_command("greet", function() end)`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := h.LoadPlugin("greet"); err != nil {
 		t.Fatalf("LoadPlugin: %v", err)
 	}
