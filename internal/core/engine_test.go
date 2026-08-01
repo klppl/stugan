@@ -287,6 +287,12 @@ func TestApplyMode(t *testing.T) {
 		t.Errorf("alice modes after -o = %q, want +", got)
 	}
 
+	// Channel settings without a membership change still update channel state.
+	e.apply(Event{Type: EvMode, Network: "net", Buffer: "#go", Nick: "x", Text: "+mt"})
+	if got := net0(e).Channel("#go").Mode; got != "+mt" {
+		t.Errorf("channel mode after +mt = %q, want +mt", got)
+	}
+
 	// Each mode change leaves a system line in the channel buffer.
 	var sysLines int
 	for _, m := range sink.msgs {
@@ -294,8 +300,8 @@ func TestApplyMode(t *testing.T) {
 			sysLines++
 		}
 	}
-	if sysLines != 3 {
-		t.Errorf("mode system lines = %d, want 3", sysLines)
+	if sysLines != 4 {
+		t.Errorf("mode system lines = %d, want 4", sysLines)
 	}
 }
 
@@ -774,10 +780,25 @@ func TestApplyNickRename(t *testing.T) {
 }
 
 func TestApplyTopic(t *testing.T) {
-	e, _ := newTestEngine(t)
+	e, sink := newTestEngine(t)
 	e.apply(Event{Type: EvTopic, Network: "net", Buffer: "#go", Text: "hello world", Nick: "op"})
 	if got := net0(e).Channel("#go").Topic; got != "hello world" {
 		t.Errorf("topic = %q", got)
+	}
+	e.apply(Event{Type: EvTopic, Network: "net", Buffer: "#go", Text: "", Nick: "op"})
+	if got := net0(e).Channel("#go").Topic; got != "" {
+		t.Errorf("cleared topic = %q, want empty", got)
+	}
+	if got := sink.msgs[len(sink.msgs)-1].Text; got != "op cleared the topic" {
+		t.Errorf("topic clear line = %q", got)
+	}
+
+	// The metadata-only 333 reply must update attribution without clearing the
+	// topic value supplied by the preceding 332 reply.
+	e.apply(Event{Type: EvTopic, Network: "net", Buffer: "#go", Text: "restored"})
+	e.apply(Event{Type: EvTopic, Network: "net", Buffer: "#go", Nick: "setter", TopicMeta: true})
+	if got := net0(e).Channel("#go").Topic; got != "restored" {
+		t.Errorf("topic metadata cleared value: %q", got)
 	}
 }
 

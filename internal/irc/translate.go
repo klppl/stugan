@@ -81,8 +81,8 @@ func isServerSource(s *girc.Source) bool {
 // membership-prefix changes (op/voice/half-op/...) it makes. prefix and
 // chanmodes are the server's ISUPPORT PREFIX and CHANMODES, used only to
 // consume mode arguments correctly so prefix-mode nicks pair to the right
-// argument. ok is false for a user-mode MODE (target is our nick, not a
-// channel) or a line that makes no membership change.
+// argument. ok is false only for a user-mode MODE (target is our nick, not a
+// channel); ordinary channel setting/list changes are still meaningful.
 func channelModeEvent(network string, e *girc.Event, prefix, chanmodes string) (core.Event, bool) {
 	if len(e.Params) < 2 || !isChannel(e.Params[0]) {
 		return core.Event{}, false
@@ -98,9 +98,6 @@ func channelModeEvent(network string, e *girc.Event, prefix, chanmodes string) (
 	flags := e.Params[1]
 	args := e.Params[2:]
 	mods := membershipModeChanges(prefix, chanmodes, flags, args)
-	if len(mods) == 0 {
-		return core.Event{}, false
-	}
 	return core.Event{
 		Type: core.EvMode, Network: network, Time: when,
 		Buffer: e.Params[0], Nick: from,
@@ -451,6 +448,17 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			Buffer: e.Params[1], Text: e.Last(),
 		}, true
 
+	case girc.RPL_NOTOPIC:
+		// 331: <me> <channel> :No topic is set. Treat this as an explicit
+		// empty topic so a stale value from an earlier session is cleared.
+		if len(e.Params) < 2 {
+			return core.Event{}, false
+		}
+		return core.Event{
+			Type: core.EvTopic, Network: network, Time: when,
+			Buffer: e.Params[1], Text: "",
+		}, true
+
 	case "333": // RPL_TOPICWHOTIME: <me> <channel> <setter> <timestamp>
 		if len(e.Params) < 4 {
 			return core.Event{}, false
@@ -462,7 +470,7 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		}
 		return core.Event{
 			Type: core.EvTopic, Network: network, Time: t,
-			Buffer: e.Params[1], Nick: e.Params[2], Text: "",
+			Buffer: e.Params[1], Nick: e.Params[2], Text: "", TopicMeta: true,
 		}, true
 
 	case girc.RPL_CHANNELMODEIS: // 324: <me> <channel> <mode> [params]

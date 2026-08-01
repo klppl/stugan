@@ -183,6 +183,18 @@ func TestToEvent(t *testing.T) {
 			want: core.Event{Type: core.EvTopic, Network: "n", Buffer: "#go", Text: "the existing topic", Nick: ""},
 		},
 		{
+			name: "empty topic clears",
+			raw:  ":op!u@h TOPIC #go :",
+			ok:   true,
+			want: core.Event{Type: core.EvTopic, Network: "n", Buffer: "#go", Text: "", Nick: "op"},
+		},
+		{
+			name: "rpl_notopic clears stale topic",
+			raw:  ":serv 331 me #go :No topic is set",
+			ok:   true,
+			want: core.Event{Type: core.EvTopic, Network: "n", Buffer: "#go", Text: "", Nick: ""},
+		},
+		{
 			name: "unmodeled numeric ignored",
 			raw:  ":serv 001 me :Welcome",
 			ok:   false,
@@ -316,9 +328,9 @@ func TestChannelModeEvent(t *testing.T) {
 			ok:   true,
 		},
 		{
-			name: "only channel settings → no membership change",
+			name: "only channel settings",
 			raw:  ":Chan!u@h MODE #c +mt",
-			ok:   false,
+			ok:   true,
 		},
 		{
 			name: "user mode (not a channel) ignored",

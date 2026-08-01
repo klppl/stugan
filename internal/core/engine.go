@@ -1861,7 +1861,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 
 	case EvTopic:
 		c, _ := n.getOrCreate(ev.Buffer, KindChannel)
-		if ev.Text != "" {
+		if !ev.TopicMeta {
 			c.Topic = ev.Text
 		}
 		if ev.Nick != "" {
@@ -1869,8 +1869,12 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 			if !ev.Time.IsZero() {
 				c.TopicTime = ev.Time
 			}
-			if ev.Text != "" {
+			if ev.TopicMeta {
+				// 333 carries only the setter/time for the topic received in 332.
+			} else if ev.Text != "" {
 				sys(ev.Buffer, fmt.Sprintf("%s set topic: %s", ev.Nick, ev.Text))
+			} else {
+				sys(ev.Buffer, fmt.Sprintf("%s cleared the topic", ev.Nick))
 			}
 		}
 		netChanged = true

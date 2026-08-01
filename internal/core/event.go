@@ -99,6 +99,10 @@ type Event struct {
 	Account string
 	Text    string
 	State   ConnState
+	// TopicMeta distinguishes the metadata-only 333 topic setter/time reply
+	// from a real topic value. A real topic may legitimately be empty when it
+	// clears the channel topic.
+	TopicMeta bool
 	// Target is a message id the event refers to (EvReact / EvRedact).
 	Target string
 	// Kicker is who issued an EvKick (Nick is the removed member).
