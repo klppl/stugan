@@ -28,15 +28,15 @@ func (m *model) loadUnread() tea.Msg {
 	return unreadMsg{counts: counts}
 }
 
-// loadBacklog returns a command that pages the newest backlogPage lines for a
-// buffer from history.
-func (m *model) loadBacklog(b bufRef) tea.Cmd {
+// loadBacklog returns a command that pages backlogPage lines before beforeSeq;
+// zero requests the newest page.
+func (m *model) loadBacklog(b bufRef, beforeSeq int64) tea.Cmd {
 	hist := m.hist
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		msgs, more, err := hist.Backlog(ctx, b.net, b.name, 0, backlogPage)
-		return backlogMsg{network: b.net, buffer: b.name, msgs: msgs, more: more, err: err}
+		msgs, more, err := hist.Backlog(ctx, b.net, b.name, beforeSeq, backlogPage)
+		return backlogMsg{network: b.net, buffer: b.name, beforeSeq: beforeSeq, msgs: msgs, more: more, err: err}
 	}
 }
 

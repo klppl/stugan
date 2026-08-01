@@ -22,9 +22,10 @@ func (b bufRef) eq(o bufRef) bool { return b.net == o.net && b.name == o.name }
 // buf is one buffer's loaded state: its messages and whether older history
 // remains to page in.
 type buf struct {
-	msgs   []core.Message
-	loaded bool
-	more   bool
+	msgs    []core.Message
+	loaded  bool
+	loading bool
+	more    bool
 }
 
 // overlay is a modal layered over the main view (network manager, channel
@@ -168,8 +169,14 @@ func (m *model) selectIndex(i int) tea.Cmd {
 	m.vp.GotoBottom()
 
 	var cmds []tea.Cmd
-	if b := m.bufs[m.active.key()]; b == nil || !b.loaded {
-		cmds = append(cmds, m.loadBacklog(m.active))
+	b := m.bufs[m.active.key()]
+	if b == nil {
+		b = &buf{}
+		m.bufs[m.active.key()] = b
+	}
+	if !b.loaded && !b.loading {
+		b.loading = true
+		cmds = append(cmds, m.loadBacklog(m.active, 0))
 	}
 	cmds = append(cmds, m.markRead(m.active))
 	return tea.Batch(cmds...)
@@ -188,7 +195,9 @@ func (m *model) appendMessage(msg core.Message) tea.Cmd {
 	b := bufRef{net: msg.Network, name: msg.Buffer}
 	bb := m.bufs[b.key()]
 	if bb == nil {
-		bb = &buf{loaded: true}
+		// A live line is not a history load. Keep loaded false so the first
+		// visit still fetches the preceding backlog.
+		bb = &buf{}
 		m.bufs[b.key()] = bb
 	}
 	bb.msgs = append(bb.msgs, msg)

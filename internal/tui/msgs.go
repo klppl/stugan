@@ -36,6 +36,7 @@ type redactMsg struct{ network, buffer, target, nick, reason string }
 // backlogMsg is the result of a lazy history load for a buffer.
 type backlogMsg struct {
 	network, buffer string
+	beforeSeq       int64
 	msgs            []core.Message
 	more            bool // older history exists before the returned page
 	err             error

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,23 +51,32 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.appendMessage(msg.m)
 
 	case backlogMsg:
-		if msg.err != nil {
-			m.setStatus("history: " + msg.err.Error())
-			return m, nil
-		}
 		b := bufRef{net: msg.network, name: msg.buffer}
 		bb := m.bufs[b.key()]
 		if bb == nil {
 			bb = &buf{}
 			m.bufs[b.key()] = bb
 		}
-		// Prepend the historical page ahead of any live lines already buffered.
-		bb.msgs = append(append([]core.Message{}, msg.msgs...), bb.msgs...)
+		bb.loading = false
+		if msg.err != nil {
+			m.setStatus("history: " + msg.err.Error())
+			return m, nil
+		}
+		oldLines, oldOffset := m.vp.TotalLineCount(), m.vp.YOffset
+		// A live line can be persisted while the async backlog query is in
+		// flight. Merge by stable identity so that overlap is shown only once.
+		bb.msgs = mergeBacklog(msg.msgs, bb.msgs)
 		bb.loaded = true
 		bb.more = msg.more
 		if b.eq(m.active) {
 			m.renderMessages()
-			m.vp.GotoBottom()
+			if msg.beforeSeq == 0 {
+				m.vp.GotoBottom()
+			} else {
+				// Keep the previously visible line stationary when older content is
+				// inserted above it.
+				m.vp.SetYOffset(oldOffset + m.vp.TotalLineCount() - oldLines)
+			}
 		}
 		return m, nil
 
@@ -185,6 +196,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.PageUp):
 		m.atBottom = false
 		m.vp.HalfViewUp()
+		if m.vp.AtTop() {
+			return m, m.loadOlder()
+		}
 		return m, nil
 	case key.Matches(msg, m.keys.PageDown):
 		m.vp.HalfViewDown()
@@ -212,6 +226,56 @@ func (m *model) submit() tea.Cmd {
 	m.input.SetValue("")
 	m.atBottom = true
 	return nil
+}
+
+// loadOlder requests the next history page for the active buffer. The oldest
+// persisted rowid is the exact keyset cursor; live-only rows have Seq zero and
+// are skipped when choosing it.
+func (m *model) loadOlder() tea.Cmd {
+	bb := m.bufs[m.active.key()]
+	if bb == nil || !bb.loaded || !bb.more || bb.loading {
+		return nil
+	}
+	var beforeSeq int64
+	for _, msg := range bb.msgs {
+		if msg.Seq > 0 {
+			beforeSeq = msg.Seq
+			break
+		}
+	}
+	if beforeSeq == 0 {
+		return nil
+	}
+	bb.loading = true
+	return m.loadBacklog(m.active, beforeSeq)
+}
+
+// mergeBacklog prepends a history page while removing any line already
+// present in the live tail. IDs are stable across the sink/store paths; Seq is
+// a fallback for persisted rows without a message id.
+func mergeBacklog(history, existing []core.Message) []core.Message {
+	seen := make(map[string]struct{}, len(history)+len(existing))
+	key := func(msg core.Message) string {
+		if msg.ID != "" {
+			return "id\x00" + msg.ID
+		}
+		if msg.Seq > 0 {
+			return "seq\x00" + strconv.FormatInt(msg.Seq, 10)
+		}
+		return fmt.Sprintf("line\x00%d\x00%s\x00%s\x00%s\x00%t", msg.Time.UnixNano(), msg.From, msg.Kind, msg.Text, msg.Self)
+	}
+	out := make([]core.Message, 0, len(history)+len(existing))
+	for _, msgs := range [][]core.Message{history, existing} {
+		for _, msg := range msgs {
+			k := key(msg)
+			if _, ok := seen[k]; ok {
+				continue
+			}
+			seen[k] = struct{}{}
+			out = append(out, msg)
+		}
+	}
+	return out
 }
 
 // closeActive closes the active buffer (parting a channel, closing a query).
@@ -260,6 +324,9 @@ func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case tea.MouseButtonWheelUp:
 		m.atBottom = false
 		m.vp.LineUp(3)
+		if m.vp.AtTop() {
+			return m, m.loadOlder()
+		}
 		return m, nil
 	case tea.MouseButtonWheelDown:
 		m.vp.LineDown(3)
