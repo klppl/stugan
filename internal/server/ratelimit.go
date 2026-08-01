@@ -17,7 +17,8 @@ import (
 // older entries are pruned on every read, and `allow` reports whether
 // the count for an IP is still under `max` within `window`. Successful
 // attempts deliberately don't consume budget, so a user typo'ing once
-// won't be locked out.
+// won't be locked out. The IP map is capped; when a flood exhausts it, stale
+// buckets are swept and then the least-recently-failed bucket is evicted.
 //
 // X-Forwarded-For is honoured only when the direct peer is a configured
 // trusted proxy (server.trusted_proxies); from any other peer the header is
@@ -28,10 +29,17 @@ type authRateLimit struct {
 	hits   map[string][]time.Time
 	window time.Duration
 	max    int
+	maxIPs int
 }
 
-func newAuthRateLimit(window time.Duration, max int) *authRateLimit {
-	return &authRateLimit{hits: map[string][]time.Time{}, window: window, max: max}
+const defaultRateLimitIPs = 10_000
+
+func newAuthRateLimit(window time.Duration, max int, maxIPs ...int) *authRateLimit {
+	cap := defaultRateLimitIPs
+	if len(maxIPs) > 0 && maxIPs[0] > 0 {
+		cap = maxIPs[0]
+	}
+	return &authRateLimit{hits: map[string][]time.Time{}, window: window, max: max, maxIPs: cap}
 }
 
 // allow reports whether another attempt from ip is permitted right now.
@@ -54,7 +62,37 @@ func (r *authRateLimit) fail(ip string) {
 	defer r.mu.Unlock()
 	now := time.Now()
 	r.pruneLocked(ip, now.Add(-r.window))
+	if _, exists := r.hits[ip]; !exists && len(r.hits) >= r.maxIPs {
+		r.pruneAllLocked(now.Add(-r.window))
+		if len(r.hits) >= r.maxIPs {
+			r.evictOldestLocked()
+		}
+	}
 	r.hits[ip] = append(r.hits[ip], now)
+}
+
+func (r *authRateLimit) pruneAllLocked(cutoff time.Time) {
+	for ip := range r.hits {
+		r.pruneLocked(ip, cutoff)
+	}
+}
+
+func (r *authRateLimit) evictOldestLocked() {
+	var oldestIP string
+	var oldest time.Time
+	for ip, hits := range r.hits {
+		if len(hits) == 0 {
+			delete(r.hits, ip)
+			continue
+		}
+		last := hits[len(hits)-1]
+		if oldestIP == "" || last.Before(oldest) {
+			oldestIP, oldest = ip, last
+		}
+	}
+	if oldestIP != "" {
+		delete(r.hits, oldestIP)
+	}
 }
 
 func (r *authRateLimit) pruneLocked(ip string, cutoff time.Time) {

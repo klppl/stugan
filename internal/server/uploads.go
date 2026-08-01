@@ -454,21 +454,166 @@ func (n noListFS) Open(name string) (http.File, error) {
 // not be parsed well enough to guarantee its metadata was removed.
 var errBadImage = errors.New("malformed image")
 
-// stripImageMetadata removes embedded metadata from JPEG and PNG uploads,
+// stripImageMetadata removes embedded metadata from JPEG, PNG, GIF, and WebP,
 // losslessly (image pixels are copied verbatim, never re-encoded). The format
 // is detected from the leading magic bytes, not the filename, so a mislabelled
-// extension can't smuggle metadata past the filter. Non-image data and image
-// formats we don't rewrite (e.g. GIF, WebP) are returned unchanged. A
-// recognised image that fails to parse returns errBadImage so the caller can
-// fail closed rather than store a file with its metadata intact.
+// extension can't smuggle metadata past the filter. Metadata-heavy TIFF and
+// HEIF-family images are rejected because losslessly rewriting their item
+// graphs is not safe here. Other non-image data is returned unchanged. Any
+// recognised image that cannot be sanitized returns errBadImage.
 func stripImageMetadata(data []byte) ([]byte, error) {
 	switch {
 	case bytes.HasPrefix(data, []byte{0xFF, 0xD8, 0xFF}):
 		return stripJPEG(data)
 	case bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")):
 		return stripPNG(data)
+	case bytes.HasPrefix(data, []byte("GIF87a")), bytes.HasPrefix(data, []byte("GIF89a")):
+		return stripGIF(data)
+	case len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP":
+		return stripWebP(data)
+	case isUnsafeImageContainer(data):
+		return nil, errBadImage
 	}
 	return data, nil
+}
+
+func stripGIF(data []byte) ([]byte, error) {
+	if len(data) < 13 {
+		return nil, errBadImage
+	}
+	i := 13
+	if data[10]&0x80 != 0 { // global colour table
+		i += 3 * (1 << ((data[10] & 0x07) + 1))
+	}
+	if i > len(data) {
+		return nil, errBadImage
+	}
+	out := append([]byte(nil), data[:i]...)
+	for i < len(data) {
+		start := i
+		switch data[i] {
+		case 0x3B: // trailer; discard anything appended after it
+			return append(out, 0x3B), nil
+		case 0x2C: // image descriptor + optional local table + image sub-blocks
+			if i+10 > len(data) {
+				return nil, errBadImage
+			}
+			i += 10
+			if data[start+9]&0x80 != 0 {
+				i += 3 * (1 << ((data[start+9] & 0x07) + 1))
+			}
+			if i >= len(data) {
+				return nil, errBadImage
+			}
+			i++ // LZW minimum code size
+			end, ok := gifSubBlocksEnd(data, i)
+			if !ok {
+				return nil, errBadImage
+			}
+			i = end
+			out = append(out, data[start:i]...)
+		case 0x21: // extension
+			if i+2 > len(data) {
+				return nil, errBadImage
+			}
+			label := data[i+1]
+			i += 2
+			end, ok := gifSubBlocksEnd(data, i)
+			if !ok {
+				return nil, errBadImage
+			}
+			drop := label == 0xFE // comment extension
+			if label == 0xFF {    // application extension: preserve animation loop only
+				drop = true
+				if i < len(data) && data[i] == 11 && i+12 <= len(data) {
+					app := string(data[i+1 : i+12])
+					drop = app != "NETSCAPE2.0" && app != "ANIMEXTS1.0"
+				}
+			}
+			i = end
+			if !drop {
+				out = append(out, data[start:i]...)
+			}
+		default:
+			return nil, errBadImage
+		}
+	}
+	return nil, errBadImage
+}
+
+func gifSubBlocksEnd(data []byte, i int) (int, bool) {
+	for i < len(data) {
+		n := int(data[i])
+		i++
+		if n == 0 {
+			return i, true
+		}
+		if i+n > len(data) {
+			return 0, false
+		}
+		i += n
+	}
+	return 0, false
+}
+
+func stripWebP(data []byte) ([]byte, error) {
+	total := int(binary.LittleEndian.Uint32(data[4:8])) + 8
+	if total < 12 || total > len(data) {
+		return nil, errBadImage
+	}
+	out := append([]byte(nil), data[:12]...)
+	for i := 12; i < total; {
+		if i+8 > total {
+			return nil, errBadImage
+		}
+		size := int(binary.LittleEndian.Uint32(data[i+4 : i+8]))
+		end := i + 8 + size
+		padded := end + size%2
+		if size < 0 || end < i || padded > total {
+			return nil, errBadImage
+		}
+		typ := string(data[i : i+4])
+		if typ != "EXIF" && typ != "XMP " && typ != "ICCP" {
+			chunkStart := len(out)
+			out = append(out, data[i:padded]...)
+			if typ == "VP8X" {
+				if size < 1 {
+					return nil, errBadImage
+				}
+				out[chunkStart+8] &^= 0x2C // clear ICC, EXIF, and XMP feature flags
+			}
+		}
+		i = padded
+	}
+	binary.LittleEndian.PutUint32(out[4:8], uint32(len(out)-8))
+	return out, nil
+}
+
+func isUnsafeImageContainer(data []byte) bool {
+	if bytes.HasPrefix(data, []byte("II*\x00")) || bytes.HasPrefix(data, []byte("MM\x00*")) ||
+		bytes.HasPrefix(data, []byte("II+\x00")) || bytes.HasPrefix(data, []byte("MM\x00+")) {
+		return true // TIFF
+	}
+	if len(data) < 12 || string(data[4:8]) != "ftyp" {
+		return false
+	}
+	imageBrands := map[string]bool{
+		"avif": true, "avis": true, "heic": true, "heix": true,
+		"hevc": true, "hevx": true, "mif1": true, "msf1": true,
+	}
+	if imageBrands[string(data[8:12])] {
+		return true
+	}
+	end := len(data)
+	if boxSize := int(binary.BigEndian.Uint32(data[:4])); boxSize >= 16 && boxSize < end {
+		end = boxSize
+	}
+	for i := 16; i+4 <= end; i += 4 {
+		if imageBrands[string(data[i:i+4])] {
+			return true
+		}
+	}
+	return false
 }
 
 // stripJPEG drops every APPn (0xE0–0xEF, which holds EXIF/GPS, XMP, ICC, JFIF

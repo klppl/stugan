@@ -1,9 +1,31 @@
 package server
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
+
+func TestAuthRateLimitBoundsIPState(t *testing.T) {
+	r := newAuthRateLimit(time.Minute, 3, 4)
+	for i := range 100 {
+		r.fail(fmt.Sprintf("192.0.2.%d", i))
+	}
+	if got := len(r.hits); got != 4 {
+		t.Fatalf("tracked IPs = %d, want hard cap 4", got)
+	}
+
+	// Stale buckets are pruned before an active bucket must be evicted.
+	stale := time.Now().Add(-2 * r.window)
+	for ip := range r.hits {
+		r.hits[ip] = []time.Time{stale}
+	}
+	r.fail("198.51.100.1")
+	if got := len(r.hits); got != 1 {
+		t.Fatalf("tracked IPs after stale sweep = %d, want 1", got)
+	}
+}
 
 // TestClientIPTrustedProxy verifies that X-Forwarded-For is honoured only when
 // the direct peer is a configured trusted proxy, and that the real client is

@@ -112,6 +112,77 @@ func TestStripPNG(t *testing.T) {
 	}
 }
 
+func TestStripGIFMetadata(t *testing.T) {
+	data := []byte("GIF89a")
+	data = append(data, 1, 0, 1, 0, 0, 0, 0) // logical screen, no colour table
+	data = append(data, 0x21, 0xFE, 6)
+	data = append(data, []byte("secret")...)
+	data = append(data, 0) // comment terminator
+	data = append(data, 0x21, 0xFF, 11)
+	data = append(data, []byte("NETSCAPE2.0")...)
+	data = append(data, 3, 1, 0, 0, 0) // looping extension
+	data = append(data, 0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0)
+	data = append(data, 2, 1, 0, 0, 0x3B) // LZW size, data block, terminator, trailer
+
+	out, err := stripImageMetadata(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(out, []byte("secret")) {
+		t.Fatal("GIF comment metadata survived")
+	}
+	if !bytes.Contains(out, []byte("NETSCAPE2.0")) || !bytes.Contains(out, []byte{0x2C}) {
+		t.Fatal("GIF animation/image data was not preserved")
+	}
+}
+
+func webPChunk(typ string, payload []byte) []byte {
+	out := append([]byte(typ), 0, 0, 0, 0)
+	binary.LittleEndian.PutUint32(out[4:8], uint32(len(payload)))
+	out = append(out, payload...)
+	if len(payload)%2 != 0 {
+		out = append(out, 0)
+	}
+	return out
+}
+
+func TestStripWebPMetadata(t *testing.T) {
+	data := append([]byte("RIFF\x00\x00\x00\x00WEBP"), webPChunk("VP8X", append([]byte{0x2C}, make([]byte, 9)...))...)
+	data = append(data, webPChunk("EXIF", []byte("secret gps"))...)
+	data = append(data, webPChunk("XMP ", []byte("private xmp"))...)
+	data = append(data, webPChunk("VP8 ", []byte("pixels"))...)
+	binary.LittleEndian.PutUint32(data[4:8], uint32(len(data)-8))
+	data = append(data, []byte("trailing private bytes")...)
+
+	out, err := stripImageMetadata(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(out, []byte("secret gps")) || bytes.Contains(out, []byte("private xmp")) {
+		t.Fatal("WebP metadata survived")
+	}
+	if !bytes.Contains(out, []byte("pixels")) {
+		t.Fatal("WebP image data was dropped")
+	}
+	if out[20]&0x2C != 0 {
+		t.Fatalf("VP8X metadata flags survived: %#x", out[20])
+	}
+	if got := int(binary.LittleEndian.Uint32(out[4:8])) + 8; got != len(out) {
+		t.Fatalf("WebP RIFF size = %d, output len = %d", got, len(out))
+	}
+}
+
+func TestUnsafeImageContainersFailClosed(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"tiff": []byte("II*\x00private exif"),
+		"avif": append([]byte{0, 0, 0, 20}, []byte("ftypavif\x00\x00\x00\x00avif")...),
+	} {
+		if _, err := stripImageMetadata(data); err != errBadImage {
+			t.Errorf("%s: got %v, want errBadImage", name, err)
+		}
+	}
+}
+
 func TestUploadStripsEXIFEndToEnd(t *testing.T) {
 	scan := []byte{0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x3F, 0x00, 0x42}
 	var img bytes.Buffer
