@@ -129,6 +129,20 @@ var curatedPlugins = []core.CuratedPluginInfo{
 	},
 }
 
+func curatedPlugin(name string) (core.CuratedPluginInfo, bool) {
+	for _, p := range curatedPlugins {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return core.CuratedPluginInfo{}, false
+}
+
+func isExactCuratedSource(name, rawURL string) bool {
+	p, ok := curatedPlugin(name)
+	return ok && p.SourceURL == rawURL
+}
+
 // KV is the persistence seam for stugan.kv. The plugin host caches values
 // in memory for fast access; if a KV is provided it loads on first touch
 // and writes through on every set/delete so values survive daemon restart.
@@ -155,20 +169,24 @@ type Options struct {
 	Dir      string                    // scripts directory
 	Settings map[string]map[string]any // per-script config, by name
 	Sandbox  bool                      // restrict the Lua stdlib
-	Timeout  time.Duration             // per-hook timeout (0 = default)
-	KV       KV                        // optional persistence for stugan.kv
-	HTTP     HTTPDoer                  // optional client for stugan.http (nil disables it)
+	// TrustedOnly rejects arbitrary remote scripts. Use this whenever users
+	// are mutually untrusted: same-process Lua is not a hard isolation boundary.
+	TrustedOnly bool
+	Timeout     time.Duration // per-hook timeout (0 = default)
+	KV          KV            // optional persistence for stugan.kv
+	HTTP        HTTPDoer      // optional client for stugan.http (nil disables it)
 }
 
 // Host is a Lua implementation of core.PluginHost.
 type Host struct {
-	api      core.API
-	log      *slog.Logger
-	dir      string
-	settings map[string]map[string]any
-	sandbox  bool
-	timeout  time.Duration
-	kvStore  KV
+	api         core.API
+	log         *slog.Logger
+	dir         string
+	settings    map[string]map[string]any
+	sandbox     bool
+	trustedOnly bool
+	timeout     time.Duration
+	kvStore     KV
 
 	httpClient HTTPDoer
 	httpSem    chan struct{} // bounds concurrent stugan.http requests
@@ -263,6 +281,7 @@ func New(opts Options) (*Host, error) {
 		dir:         opts.Dir,
 		settings:    opts.Settings,
 		sandbox:     opts.Sandbox,
+		trustedOnly: opts.TrustedOnly,
 		timeout:     timeout,
 		kvStore:     opts.KV,
 		httpClient:  opts.HTTP,
@@ -717,7 +736,6 @@ func hashBytes(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// DownloadPlugin downloads the named script from the official plugin repository
 func writeScriptFile(dst string, body []byte) error {
 	_ = os.Chmod(dst, 0o644)
 	if err := os.WriteFile(dst, body, 0o644); err != nil {
@@ -738,7 +756,11 @@ func (h *Host) DownloadPlugin(ctx context.Context, name string) error {
 		return errors.New("no scripts directory configured")
 	}
 
-	rawURL := fmt.Sprintf("https://raw.githubusercontent.com/klppl/stugan/main/plugins/%s.lua", name)
+	curated, ok := curatedPlugin(name)
+	if !ok {
+		return fmt.Errorf("plugin %q is not in the curated library", name)
+	}
+	rawURL := curated.SourceURL
 	body, err := h.downloadScriptFromURL(ctx, rawURL)
 	if err != nil {
 		return err
@@ -764,6 +786,9 @@ func (h *Host) DownloadPlugin(ctx context.Context, name string) error {
 
 // ImportPlugin downloads a script from rawURL, saves it as name.lua (or derived name), and loads it.
 func (h *Host) ImportPlugin(ctx context.Context, rawURL, name string) error {
+	if h.trustedOnly {
+		return errors.New("remote plugin imports are disabled in multi-user mode")
+	}
 	rawURL = strings.TrimSpace(rawURL)
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -798,11 +823,8 @@ func (h *Host) ImportPlugin(ctx context.Context, rawURL, name string) error {
 
 	hash := hashBytes(body)
 	srcType := "remote"
-	for _, c := range curatedPlugins {
-		if c.SourceURL == rawURL || c.Name == name {
-			srcType = "curated"
-			break
-		}
+	if isExactCuratedSource(name, rawURL) {
+		srcType = "curated"
 	}
 
 	h.do(func() {
@@ -830,6 +852,9 @@ func (h *Host) UpdatePlugin(ctx context.Context, name string) error {
 	})
 	if srcURL == "" {
 		return fmt.Errorf("plugin %q has no remote source URL", name)
+	}
+	if h.trustedOnly && (srcType != "curated" || !isExactCuratedSource(name, srcURL)) {
+		return fmt.Errorf("plugin %q is not from the curated library", name)
 	}
 
 	body, err := h.downloadScriptFromURL(ctx, srcURL)
@@ -879,11 +904,14 @@ func (h *Host) CheckPluginUpdates(ctx context.Context, name string) error {
 	}
 
 	for _, n := range toCheck {
-		var srcURL string
+		var srcURL, srcType string
 		h.do(func() {
-			srcURL, _ = h.getScriptMetaLocked(n)
+			srcURL, srcType = h.getScriptMetaLocked(n)
 		})
 		if srcURL == "" {
+			continue
+		}
+		if h.trustedOnly && (srcType != "curated" || !isExactCuratedSource(n, srcURL)) {
 			continue
 		}
 		localPath := filepath.Join(h.dir, n+".lua")

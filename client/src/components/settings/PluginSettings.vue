@@ -4,6 +4,7 @@ import { connection } from "../../connection";
 import type { PluginInfo, CuratedPluginInfo, PluginSetting } from "../../proto/events";
 
 const hasPlugins = connection.hasCap("plugins");
+const canImport = connection.hasCap("plugin-import");
 const plugins = computed<PluginInfo[]>(() => connection.store.plugins);
 const curated = computed<CuratedPluginInfo[]>(() => connection.store.curatedPlugins);
 
@@ -119,7 +120,7 @@ function handleUpdate(name: string) {
 function handleInstallCurated(name: string) {
   if (updatingPlugins.value[name]) return;
   updatingPlugins.value[name] = true;
-  connection.updatePlugin(name);
+  connection.downloadPlugin(name);
   setTimeout(() => {
     if (updatingPlugins.value[name]) {
       delete updatingPlugins.value[name];
@@ -139,7 +140,7 @@ function handleUninstall(name: string) {
     <div class="section-header-row">
       <div class="section-header">
         <h3 class="section-title">🔌 Lua Plugins</h3>
-        <p class="section-desc">Manage Lua scripts, official curated extensions, and remote script imports.</p>
+        <p class="section-desc">Manage Lua scripts and official curated extensions<span v-if="canImport">, including trusted remote imports</span>.</p>
       </div>
 
       <div v-if="hasPlugins" class="header-actions">
@@ -180,6 +181,7 @@ function handleUninstall(name: string) {
             Curated Library ({{ curated.length }})
           </button>
           <button
+            v-if="canImport"
             class="plugin-tab"
             :class="{ active: activeTab === 'import' }"
             @click="activeTab = 'import'"
@@ -345,7 +347,7 @@ function handleUninstall(name: string) {
       </div>
 
       <!-- Tab 3: Import Script from URL -->
-      <div v-else-if="activeTab === 'import'" class="settings-card">
+      <div v-else-if="canImport && activeTab === 'import'" class="settings-card">
         <div class="import-panel">
           <h4>Import Lua Script from Remote URL</h4>
           <p class="hint">

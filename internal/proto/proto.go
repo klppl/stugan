@@ -45,7 +45,7 @@ const (
 	TNetEdit      = "net:edit"       // c2s
 	TNetConnect   = "net:connect"    // c2s
 	TList         = "list"           // c2s
-	TPluginAction = "plugin:action"  // c2s — load/unload/reload a plugin
+	TPluginAction = "plugin:action"  // c2s — manage or install a plugin
 	TPluginSet    = "plugin:setting" // c2s — set a plugin's declared setting
 	TRead         = "read"           // c2s mark a buffer read; s2c broadcast of that to the user's other tabs
 	THighlightSet = "highlight:set"  // c2s — replace the highlight ruleset
@@ -408,9 +408,8 @@ type NetConfig struct {
 }
 
 // PluginAction is a client→server request to load, unload, reload, import,
-// update, uninstall, or check for updates of plugin scripts at runtime. Action is "load",
-// "unload", "uninstall", "reload", "import", "update", or "check_updates". Name is a bare
-// script name (the filename without ".lua"). URL is supplied for "import".
+// download, update, uninstall, or check plugin scripts at runtime. Name is a
+// bare script name; URL is supplied only for single-user "import".
 // The reply is a plugin:list frame with the refreshed list.
 type PluginAction struct {
 	Name   string `json:"name,omitempty"`

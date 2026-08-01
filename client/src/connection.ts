@@ -1540,6 +1540,10 @@ export class Connection {
     this.sendFrame<PluginAction>(T.PluginAction, { action: "update", name });
   }
 
+  downloadPlugin(name: string) {
+    this.sendFrame<PluginAction>(T.PluginAction, { action: "download", name });
+  }
+
   // checkPluginUpdates checks remote URLs for updates to installed/curated plugins.
   checkPluginUpdates(name?: string) {
     this.sendFrame<PluginAction>(T.PluginAction, { action: "check_updates", name: name || undefined });

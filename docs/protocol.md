@@ -62,7 +62,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `net:connect`   | `NetConnect`   | connect/disconnect a network |
 | `net:info`      | (ref)          | request a network's full config |
 | `plugin:list`   | (none)         | request the plugin manager list |
-| `plugin:action` | `PluginAction` | load/unload/reload a plugin by name |
+| `plugin:action` | `PluginAction` | manage, install, or update a plugin |
 | `plugin:setting`| `PluginSettingReq` | set one declared setting of a plugin (replies with `plugin:list`) |
 | `complete:req`  | `CompleteReq`  | ask plugins for tab-completion candidates (`seq`-correlated) |
 | `read`          | `ReadMark`     | mark a buffer read up to now (advances the persisted read marker) |
@@ -148,7 +148,7 @@ type React  struct { Network, Buffer, Target, Nick, Reaction string }  // Target
 type Redact struct { Network, Buffer, Target, By, Reason string }
 type Presence struct { Visible bool }
 
-type PluginAction struct { Name, Action string }   // Action: load|unload|reload
+type PluginAction struct { Name, Action, URL string } // Action: load|unload|uninstall|reload|import|download|update|check_updates
 type PluginSettingReq struct { Name, Key, Value string } // set Key=Value on plugin Name
 type PluginSetting struct {
     Name, Type       string     // Type: text|number|select

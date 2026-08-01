@@ -102,6 +102,17 @@ func TestDTOUsesRFC1459Identity(t *testing.T) {
 	}
 }
 
+func TestPluginImportCapabilityIsSingleUserOnly(t *testing.T) {
+	single := New(SingleUser(&Tenant{}), Options{})
+	if !slices.Contains(single.caps(), "plugin-import") {
+		t.Fatal("single-user server should advertise trusted remote imports")
+	}
+	multi := New(&fakeHub{}, Options{})
+	if slices.Contains(multi.caps(), "plugin-import") {
+		t.Fatal("multi-user server advertised arbitrary remote code imports")
+	}
+}
+
 // readFrame reads one envelope with a timeout.
 func readFrame(t *testing.T, ctx context.Context, ws *websocket.Conn) proto.Envelope {
 	t.Helper()

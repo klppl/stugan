@@ -326,18 +326,17 @@ links posted in a channel.
 - **Per-call timeout:** hook invocations run with a context deadline; a hook
   that exceeds it is interrupted (gopher-lua `LState` context cancellation)
   and the script flagged. Protects the single plugin goroutine.
-- **Sandboxing:** `[plugins].sandbox` knob, **default `true`**. The sandbox is
-  a restricted environment that removes the globals `io`, `package`, `require`,
-  `load`, `loadstring`, `loadfile`, `dofile`, `debug`, and the
-  process-affecting `os.*` functions (`execute`, `exit`, `remove`, `rename`,
-  `setenv`, `tmpname`, `getenv`). The rest of the Lua stdlib stays available
-  (`os.time`/`os.date`, `string`, `table`, `math`, …). Multi-user mode is
+- **Sandboxing:** `[plugins].sandbox` knob, **default `true`**. The sandbox
+  opens only the base, table, string, math, coroutine, and restricted OS
+  libraries. It removes dynamic loading, module and debug access, console
+  output, garbage-collector controls, and process-affecting `os.*` functions;
+  safe helpers such as `os.time` and `os.date` remain available. Multi-user mode is
   **always** sandboxed regardless of the knob — tenants share the process.
-  Single-user mode may set `sandbox = false` to opt into the full stdlib for
-  its own trusted local scripts; each unsandboxed load is logged.
-  > TODO(multi-user): for hard isolation, a WASM host (wazero) implements the
-  > same `PluginHost` interface — no API changes for script authors using the
-  > documented surface.
+  In multi-user mode, arbitrary URL imports and previously imported remote
+  scripts are disabled; only operator-installed scripts and exact allowlisted
+  curated sources may execute. This avoids treating same-process Lua as a hard
+  isolation boundary. Single-user mode may still import trusted remote code or
+  set `sandbox = false`; each unsandboxed load is logged.
 
 ## 3.8 Official Plugin Library (shipped in plugins/)
 

@@ -759,6 +759,62 @@ func TestBuiltinScriptsLoadCleanly(t *testing.T) {
 	})
 }
 
+func TestSandboxOpensOnlySafeLibraries(t *testing.T) {
+	dir := t.TempDir()
+	script := `
+		assert(io == nil and package == nil and require == nil and debug == nil)
+		assert(load == nil and loadfile == nil and dofile == nil and collectgarbage == nil)
+		assert(os and os.time and os.date)
+		assert(os.execute == nil and os.getenv == nil and os.remove == nil and os.setlocale == nil)
+		assert(table and string and math and coroutine)
+		stugan.describe("sandboxed")
+	`
+	if err := os.WriteFile(filepath.Join(dir, "safe.lua"), []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, err := New(Options{API: &fakeAPI{}, Dir: dir, Sandbox: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	if !h.isLoaded("safe") {
+		t.Fatal("safe-library sandbox script did not load")
+	}
+}
+
+func TestTrustedOnlyRejectsRemoteScripts(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"manual", "remote", "greet"} {
+		if err := os.WriteFile(filepath.Join(dir, name+".lua"), []byte(`stugan.describe("`+name+`")`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kv := newFakeKV()
+	_ = kv.Set("remote", "_source_type", "remote")
+	_ = kv.Set("remote", "_source_url", "https://example.com/remote.lua")
+	// A curated name alone must not launder an arbitrary source URL.
+	_ = kv.Set("greet", "_source_type", "curated")
+	_ = kv.Set("greet", "_source_url", "https://evil.example/greet.lua")
+
+	h, err := New(Options{API: &fakeAPI{}, Dir: dir, Sandbox: true, TrustedOnly: true, KV: kv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	if !h.isLoaded("manual") {
+		t.Fatal("operator-installed manual script should remain available")
+	}
+	if h.isLoaded("remote") || h.isLoaded("greet") {
+		t.Fatal("untrusted remote script loaded in trusted-only mode")
+	}
+	if err := h.ImportPlugin(context.Background(), "https://example.com/new.lua", "new"); err == nil {
+		t.Fatal("remote import succeeded in trusted-only mode")
+	}
+	if err := h.UpdatePlugin(context.Background(), "remote"); err == nil {
+		t.Fatal("remote update succeeded in trusted-only mode")
+	}
+}
+
 func TestHostCreatesNonExistentScriptsDir(t *testing.T) {
 	api := &fakeAPI{}
 	dir := filepath.Join(t.TempDir(), "nested", "scripts")
@@ -787,7 +843,7 @@ func TestDownloadPlugin(t *testing.T) {
 
 	doer := mockDoer{
 		fn: func(req *http.Request) (*http.Response, error) {
-			if strings.HasSuffix(req.URL.Path, "/testdownload.lua") {
+			if strings.HasSuffix(req.URL.Path, "/greet.lua") {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`stugan.describe("test script")`)),
@@ -814,12 +870,12 @@ func TestDownloadPlugin(t *testing.T) {
 	}
 
 	// Test downloading valid plugin
-	if err := h.DownloadPlugin(ctx, "testdownload"); err != nil {
+	if err := h.DownloadPlugin(ctx, "greet"); err != nil {
 		t.Fatalf("DownloadPlugin failed: %v", err)
 	}
 
 	// Verify file was saved to disk
-	savedPath := filepath.Join(dir, "testdownload.lua")
+	savedPath := filepath.Join(dir, "greet.lua")
 	content, err := os.ReadFile(savedPath)
 	if err != nil {
 		t.Fatalf("read saved plugin file: %v", err)
@@ -829,8 +885,8 @@ func TestDownloadPlugin(t *testing.T) {
 	}
 
 	// Verify plugin is loaded
-	if !h.isLoaded("testdownload") {
-		t.Errorf("expected plugin 'testdownload' to be loaded")
+	if !h.isLoaded("greet") {
+		t.Errorf("expected curated plugin 'greet' to be loaded")
 	}
 }
 

@@ -14,15 +14,44 @@ const defaultPriority = 500
 
 // newState creates a fresh LState for a script, optionally sandboxed.
 func (h *Host) newState() *lua.LState {
-	L := lua.NewState()
-	if h.sandbox {
-		for _, g := range []string{"dofile", "loadfile", "load", "loadstring", "require", "io", "package", "debug"} {
-			L.SetGlobal(g, lua.LNil)
-		}
-		if osT, ok := L.GetGlobal("os").(*lua.LTable); ok {
-			for _, k := range []string{"execute", "exit", "remove", "rename", "setenv", "tmpname", "getenv"} {
-				osT.RawSetString(k, lua.LNil)
-			}
+	if !h.sandbox {
+		return lua.NewState()
+	}
+	// Start empty and open only the libraries plugins need. This is stronger
+	// than opening everything and deleting globals: package.loaded/require can
+	// otherwise retain paths back to privileged modules.
+	const registrySize = 256 * 20
+	L := lua.NewState(lua.Options{
+		SkipOpenLibs:        true,
+		CallStackSize:       128,
+		RegistrySize:        registrySize,
+		RegistryMaxSize:     registrySize,
+		MinimizeStackMemory: true,
+	})
+	for _, lib := range []struct {
+		name string
+		open lua.LGFunction
+	}{
+		{lua.BaseLibName, lua.OpenBase},
+		{lua.TabLibName, lua.OpenTable},
+		{lua.StringLibName, lua.OpenString},
+		{lua.MathLibName, lua.OpenMath},
+		{lua.CoroutineLibName, lua.OpenCoroutine},
+		{lua.OsLibName, lua.OpenOs},
+	} {
+		L.Push(L.NewFunction(lib.open))
+		L.Push(lua.LString(lib.name))
+		L.Call(1, 0)
+	}
+	for _, g := range []string{
+		"dofile", "loadfile", "load", "loadstring", "require", "io", "package", "debug",
+		"collectgarbage", "_printregs", "print",
+	} {
+		L.SetGlobal(g, lua.LNil)
+	}
+	if osT, ok := L.GetGlobal("os").(*lua.LTable); ok {
+		for _, k := range []string{"execute", "exit", "remove", "rename", "setenv", "tmpname", "getenv", "setlocale"} {
+			osT.RawSetString(k, lua.LNil)
 		}
 	}
 	return L
@@ -34,6 +63,10 @@ func (h *Host) newState() *lua.LState {
 func (h *Host) loadScript(path string) {
 	name := scriptName(path)
 	h.unloadScript(name)
+	if h.trustedOnly && !h.trustedScriptLocked(name) {
+		h.log.Warn("plugin skipped: untrusted remote source in multi-user mode", "script", name)
+		return
+	}
 
 	s := &script{name: name, path: path, L: h.newState()}
 	s.L.SetGlobal("stugan", h.buildAPI(s))
@@ -51,6 +84,18 @@ func (h *Host) loadScript(path string) {
 	}
 	h.scripts[name] = s
 	h.log.Info("plugin loaded", "script", name)
+}
+
+func (h *Host) trustedScriptLocked(name string) bool {
+	sourceURL, sourceType := h.getScriptMetaLocked(name)
+	switch sourceType {
+	case "", "manual":
+		return true // installed on disk by the daemon operator
+	case "curated":
+		return isExactCuratedSource(name, sourceURL)
+	default:
+		return false
+	}
 }
 
 // unloadScript removes a script's hooks and timers and closes its LState.

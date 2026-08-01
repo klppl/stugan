@@ -704,17 +704,27 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			}
 			err = c.tenant.Engine.ReloadPlugin(d.Name)
 		case "import":
+			if s.hub.AuthEnabled() {
+				c.sendError(env.ID, "forbidden", "remote plugin imports are disabled in multi-user mode")
+				return
+			}
 			if d.URL == "" {
 				c.sendError(env.ID, "bad_request", "plugin:action import requires url")
 				return
 			}
 			err = c.tenant.Engine.ImportPlugin(ctx, d.URL, d.Name)
-		case "update", "download":
+		case "update":
 			if d.Name == "" {
 				c.sendError(env.ID, "bad_request", "plugin:action update requires name")
 				return
 			}
 			err = c.tenant.Engine.UpdatePlugin(ctx, d.Name)
+		case "download":
+			if d.Name == "" {
+				c.sendError(env.ID, "bad_request", "plugin:action download requires name")
+				return
+			}
+			err = c.tenant.Engine.DownloadPlugin(ctx, d.Name)
 		case "check_updates":
 			err = c.tenant.Engine.CheckPluginUpdates(ctx, d.Name)
 		default:
@@ -1077,6 +1087,9 @@ func (s *Server) setClientVisible(c *client, visible bool) {
 // caps lists the optional features this server supports.
 func (s *Server) caps() []string {
 	caps := []string{"previews", "search", "plugins"} // previews always wired; every tenant has a history store + plugin manager
+	if !s.hub.AuthEnabled() {
+		caps = append(caps, "plugin-import")
+	}
 	if s.uploadDir != "" || s.uploads.Mode == "custom" {
 		caps = append(caps, "uploads")
 	}

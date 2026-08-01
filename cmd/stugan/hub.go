@@ -175,13 +175,14 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 
 		if cfg.PluginsEnabled() {
 			host, err := plugin.New(plugin.Options{
-				API:      eng.API(),
-				Logger:   log.With("user", u.Name),
-				Dir:      scriptsDir,
-				Settings: cfg.Plugins.Settings,
-				Sandbox:  sandbox,
-				KV:       pluginKV{db},
-				HTTP:     safehttp.New(), // stugan.http, SSRF-guarded
+				API:         eng.API(),
+				Logger:      log.With("user", u.Name),
+				Dir:         scriptsDir,
+				Settings:    cfg.Plugins.Settings,
+				Sandbox:     sandbox,
+				TrustedOnly: cfg.AuthEnabled(),
+				KV:          pluginKV{db},
+				HTTP:        safehttp.New(), // stugan.http, SSRF-guarded
 			})
 			if err != nil {
 				return nil, nil, err

@@ -129,10 +129,9 @@ func (c *Config) PluginsEnabled() bool {
 
 // PluginSandbox reports whether the Lua stdlib should be restricted for
 // plugins. Multi-user mode is always sandboxed: tenants are mutually
-// untrusted and share the daemon process, so a script must never reach
-// os/io. Single-user mode also defaults to sandboxed; the operator may opt
-// out with an explicit `sandbox = false` since the scripts are their own
-// code on their own machine.
+// untrusted and share the daemon process, so only operator-installed and
+// curated scripts run there (enforced by plugin.TrustedOnly as well). Single-
+// user mode defaults to sandboxed; the operator may explicitly opt out.
 func (c *Config) PluginSandbox() bool {
 	if c.AuthEnabled() {
 		return true
@@ -217,8 +216,9 @@ type PluginsConfig struct {
 	// Sandbox restricts the Lua stdlib exposed to scripts. A nil pointer
 	// (the field omitted) means "use the default" — see PluginSandbox,
 	// which defaults to sandboxed (true). Multi-user mode is always
-	// sandboxed regardless of this value.
-	// TODO(multi-user): back the sandbox with a WASM host.
+	// sandboxed regardless of this value. Arbitrary URL imports are also
+	// disabled in multi-user mode because in-process Lua is not a hard
+	// isolation boundary.
 	Sandbox *bool `toml:"sandbox"`
 	// Settings holds arbitrary per-plugin configuration tables, keyed by
 	// script name. Exposed read-only to scripts via stugan.config.
