@@ -388,7 +388,7 @@ function tryJump() {
   }
   if (!j.fetched) {
     j.fetched = true;
-    connection.fetchAround(j.network, j.buffer, j.time);
+    connection.fetchAround(j.network, j.buffer, j.id, j.time);
   } else {
     // Window arrived but the id still isn't here — pruned, or a stale
     // reference; bail out silently.

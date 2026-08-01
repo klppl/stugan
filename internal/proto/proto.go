@@ -150,6 +150,10 @@ type MemberDTO struct {
 // MessageDTO is the wire projection of core.Message. Time is RFC3339.
 type MessageDTO struct {
 	ID string `json:"id"`
+	// ServerID is true only when ID came from the IRC server's msgid tag.
+	// Locally synthesized IDs remain useful for deduplication and navigation,
+	// but cannot be sent back to IRCv3 reaction/redaction commands.
+	ServerID bool `json:"server_id,omitempty"`
 	// Seq is the store's monotonic rowid for a persisted message, used by the
 	// client as the keyset cursor when paging history backward (BacklogFetch.
 	// BeforeSeq). Omitted (0) for live messages not read back from the store.
@@ -181,39 +185,38 @@ type MsgSend struct {
 // messages with a smaller Seq. Paging on Seq rather than time is exact even
 // when many messages share a millisecond timestamp.
 //
-// Around, when set, asks for a window of context centered on that time —
-// roughly Limit/2 messages with ts ≤ Around plus Limit/2 strictly newer,
-// returned oldest-first. Used for "jump to this message" navigation from
-// mentions and search results. When Around is non-empty it takes
-// precedence over BeforeSeq.
+// Anchor, when set, asks for a window centered on that exact message id.
+// Around is retained as a fallback for stale/pruned anchors and rolling
+// compatibility. A centered request takes precedence over BeforeSeq.
 //
 // Carry an Envelope.ID to correlate the reply.
 type BacklogFetch struct {
 	Network   string `json:"network"`
 	Buffer    string `json:"buffer"`
 	BeforeSeq int64  `json:"before_seq,omitempty"`
+	Anchor    string `json:"anchor,omitempty"`
 	Around    string `json:"around,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 }
 
 // BacklogResp answers a BacklogFetch with a page of history, oldest-first.
 // More reports whether older history remains before this page. MoreNewer
-// reports whether an Around-style page stops before the live tail. Around is
-// echoed so the client can distinguish a centered window from a paged reply.
+// reports whether a centered page stops before the live tail. Anchor/Around
+// are echoed so the client can distinguish it from a paged reply.
 type BacklogResp struct {
 	Network   string       `json:"network"`
 	Buffer    string       `json:"buffer"`
 	Messages  []MessageDTO `json:"messages"`
 	More      bool         `json:"more"`
 	MoreNewer bool         `json:"more_newer"`
+	Anchor    string       `json:"anchor,omitempty"`
 	Around    string       `json:"around,omitempty"`
 }
 
 // ContextFetch asks for a window of messages surrounding a single anchor
 // message, so a mention/search result can be expanded inline without leaving
-// the list. ID is the anchor message's id (echoed back in ContextResp so the
-// client attaches the window to the right row); Around is the anchor's time,
-// which the server centers the window on (see Store.BacklogAround). Carry an
+// the list. ID is the exact anchor message id and is echoed in ContextResp;
+// Around is a fallback timestamp if that row has since been pruned. Carry an
 // Envelope.ID to correlate the reply.
 type ContextFetch struct {
 	Network string `json:"network"`

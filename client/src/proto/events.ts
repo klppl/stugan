@@ -177,6 +177,9 @@ export interface MemberDTO {
 
 export interface MessageDTO {
   id: string;
+  // True only for an IRC server-provided msgid. Locally synthesized ids can
+  // navigate/dedupe but cannot be reaction or redaction targets on the wire.
+  server_id?: boolean;
   // seq is the store's monotonic rowid for a persisted message, used as the
   // keyset cursor when paging history backward (BacklogFetch.before_seq).
   // Absent (0) for live messages not yet read back from the store.
@@ -205,9 +208,9 @@ export interface BacklogFetch {
   // message the client holds (0/absent = most recent page). Paging on seq
   // rather than time is exact when messages share a millisecond timestamp.
   before_seq?: number;
-  // around, when set, asks for a window of context centered on that time
-  // — roughly limit/2 messages with ts ≤ around plus limit/2 strictly
-  // newer. Takes precedence over `before_seq`. Used for jump-to-message.
+  // anchor requests a window centered on this exact message id. around is a
+  // fallback for stale/pruned ids and compatibility with older servers.
+  anchor?: string;
   around?: string;
   limit?: number;
 }
@@ -217,12 +220,13 @@ export interface BacklogResp {
   buffer: string;
   messages: MessageDTO[];
   more: boolean;
-  // True only when an Around-style result has messages beyond its newer edge.
+  // True only when a centered result has messages beyond its newer edge.
   // False means the centered result already reaches the live tail.
   more_newer: boolean;
-  // Echoed from the request when this page was an Around-style window,
+  // Echoed from the request when this page was a centered window,
   // so the client can tell a centered fetch apart from a paged-backward
   // reply (they're handled differently — see Connection.applyBacklog).
+  anchor?: string;
   around?: string;
 }
 

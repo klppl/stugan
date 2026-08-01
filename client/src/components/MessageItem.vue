@@ -5,7 +5,7 @@ import { segments, extractURLs, isImage, isVideo, proxied, stripFormatting } fro
 import { getPreview, fetchPreview, type Preview } from "../previews";
 import { settings } from "../settings";
 import { nickColor } from "../nickColor";
-import { connection } from "../connection";
+import { connection, messageRefKey } from "../connection";
 
 const props = defineProps<{ msg: MessageDTO; showBuffer?: boolean; showDate?: boolean }>();
 
@@ -14,10 +14,12 @@ const props = defineProps<{ msg: MessageDTO; showBuffer?: boolean; showDate?: bo
 const QUICK_REACTS = ["👍", "❤️", "😂", "🎉", "😮", "😢"];
 const showReactPicker = ref(false);
 
-// Reactions for this message (keyed globally by msgid). Returns one entry per
+// Reactions for this message (keyed by network, buffer, and msgid). Returns one entry per
 // distinct emoji with its count and whether we reacted, sorted for stability.
 const reactions = computed(() => {
-  const byEmoji = props.msg.id ? connection.store.reactions[props.msg.id] : undefined;
+  const byEmoji = props.msg.id
+    ? connection.store.reactions[messageRefKey(props.msg.network, props.msg.buffer, props.msg.id)]
+    : undefined;
   if (!byEmoji) return [];
   const me = connection.nickOn(props.msg.network).toLowerCase();
   return Object.entries(byEmoji)
@@ -34,7 +36,7 @@ const reactions = computed(() => {
 // the live buffer (not search/mention previews), on networks that negotiated
 // the relevant cap.
 const interactive = computed(
-  () => !props.showBuffer && !!props.msg.id && (props.msg.kind === "privmsg" || props.msg.kind === "notice" || props.msg.kind === "action"),
+  () => !props.showBuffer && !!props.msg.server_id && (props.msg.kind === "privmsg" || props.msg.kind === "notice" || props.msg.kind === "action"),
 );
 const canReact = computed(
   () => settings.reactions && interactive.value && connection.hasNetCap(props.msg.network, "message-tags"),

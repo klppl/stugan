@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -489,36 +490,53 @@ func (s *Store) Backlog(ctx context.Context, network, buffer string, beforeSeq i
 	return desc, more, nil
 }
 
-// BacklogAround returns a window of messages centered on the around time,
-// oldest-first. Roughly limit/2 messages with ts ≤ around (including the
-// anchor) plus limit/2 strictly newer are returned. more reports whether
-// older history exists before the window, so the client can still page
-// upward from the head of the result.
+// BacklogAround returns a window centered on an exact, scoped message id,
+// oldest-first. If the anchor has been pruned or was produced by an older
+// client, around is used as a timestamp fallback. Roughly limit/2 messages
+// through the anchor plus limit/2 newer messages are returned. more reports
+// whether older history exists before the window.
 //
 // Used to land the user on the conversation surrounding a specific
 // message — e.g. clicking a mention — in a single round trip.
-func (s *Store) BacklogAround(ctx context.Context, network, buffer string, around time.Time, limit int) ([]core.Message, bool, bool, error) {
+func (s *Store) BacklogAround(ctx context.Context, network, buffer, anchor string, around time.Time, limit int) ([]core.Message, bool, bool, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	if around.IsZero() {
+	var anchorSeq int64
+	if anchor != "" {
+		err := s.db.QueryRowContext(ctx,
+			`SELECT id FROM messages WHERE network = ? AND buffer = ? AND msgid = ?`,
+			network, buffer, anchor,
+		).Scan(&anchorSeq)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, false, false, fmt.Errorf("resolve backlog anchor: %w", err)
+		}
+	}
+	if anchorSeq == 0 && around.IsZero() {
 		// Equivalent to "give me the most recent page" — defer to Backlog
 		// so callers don't have to branch.
 		msgs, more, err := s.Backlog(ctx, network, buffer, 0, limit)
 		return msgs, more, false, err
 	}
-	aroundMS := around.UnixMilli()
 	beforeHalf := max(limit/2, 1)
 	afterHalf := limit - beforeHalf
+	olderBoundary := "ts <= ?"
+	newerBoundary := "ts > ?"
+	boundary := any(around.UnixMilli())
+	if anchorSeq != 0 {
+		olderBoundary = "id <= ?"
+		newerBoundary = "id > ?"
+		boundary = anchorSeq
+	}
 
 	// Older half (and the anchor row), newest-first. Fetch beforeHalf+1 so
 	// the (limit/2 + 1)-th row tells us whether older history still exists.
 	rowsA, err := s.db.QueryContext(ctx,
 		`SELECT `+msgCols+`
 		 FROM messages
-		 WHERE network = ? AND buffer = ? AND ts <= ?
+		 WHERE network = ? AND buffer = ? AND `+olderBoundary+`
 		 ORDER BY id DESC LIMIT ?`,
-		network, buffer, aroundMS, beforeHalf+1,
+		network, buffer, boundary, beforeHalf+1,
 	)
 	if err != nil {
 		return nil, false, false, fmt.Errorf("backlog around (older): %w", err)
@@ -549,9 +567,9 @@ func (s *Store) BacklogAround(ctx context.Context, network, buffer string, aroun
 	rowsB, err := s.db.QueryContext(ctx,
 		`SELECT `+msgCols+`
 		 FROM messages
-		 WHERE network = ? AND buffer = ? AND ts > ?
+		 WHERE network = ? AND buffer = ? AND `+newerBoundary+`
 		 ORDER BY id ASC LIMIT ?`,
-		network, buffer, aroundMS, afterHalf+1,
+		network, buffer, boundary, afterHalf+1,
 	)
 	if err != nil {
 		return nil, false, false, fmt.Errorf("backlog around (newer): %w", err)

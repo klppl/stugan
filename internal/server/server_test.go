@@ -51,7 +51,7 @@ type fakeHistory struct {
 func (f *fakeHistory) Backlog(_ context.Context, _, _ string, _ int64, _ int) ([]core.Message, bool, error) {
 	return f.msgs, f.more, nil
 }
-func (f *fakeHistory) BacklogAround(_ context.Context, _, _ string, _ time.Time, _ int) ([]core.Message, bool, bool, error) {
+func (f *fakeHistory) BacklogAround(_ context.Context, _, _, _ string, _ time.Time, _ int) ([]core.Message, bool, bool, error) {
 	return f.msgs, f.more, false, nil
 }
 func (f *fakeHistory) Search(_ context.Context, _, _, _ string, _ int) ([]core.Message, error) {
@@ -63,6 +63,16 @@ func (f *fakeHistory) UnreadCounts(_ context.Context) ([]core.UnreadCount, error
 }
 func (f *fakeHistory) MissedHighlights(_ context.Context, _ int) ([]core.Message, error) {
 	return f.msgs, nil
+}
+
+func TestMessageDTOServerIDProvenance(t *testing.T) {
+	if toMessageDTO(core.Message{ID: "loc-123"}).ServerID {
+		t.Fatal("synthetic message id exposed as a server reaction/redaction target")
+	}
+	server := toMessageDTO(core.Message{ID: "abc", Tags: map[string]string{"msgid": "abc"}})
+	if !server.ServerID {
+		t.Fatal("server msgid was not exposed as an interactive target")
+	}
 }
 
 // readFrame reads one envelope with a timeout.

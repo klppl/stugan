@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -227,7 +228,7 @@ func TestBacklogAround(t *testing.T) {
 
 	// Window of 6 centered on message index 5 (text "f"): expects
 	// roughly 3 ≤ around (indices 3,4,5) and 3 strictly newer (6,7,8).
-	got, more, moreNewer, err := s.BacklogAround(ctx, "n", "#c", base.Add(5*time.Minute), 6)
+	got, more, moreNewer, err := s.BacklogAround(ctx, "n", "#c", "", base.Add(5*time.Minute), 6)
 	if err != nil {
 		t.Fatalf("around: %v", err)
 	}
@@ -245,7 +246,7 @@ func TestBacklogAround(t *testing.T) {
 	}
 
 	// Anchor at the very first message: nothing older, after-half fills out.
-	got, more, moreNewer, err = s.BacklogAround(ctx, "n", "#c", base, 6)
+	got, more, moreNewer, err = s.BacklogAround(ctx, "n", "#c", "", base, 6)
 	if err != nil {
 		t.Fatalf("around-first: %v", err)
 	}
@@ -264,7 +265,7 @@ func TestBacklogAround(t *testing.T) {
 	}
 
 	// Anchor at the very last message: nothing newer, before-half fills out.
-	got, more, moreNewer, err = s.BacklogAround(ctx, "n", "#c", base.Add(9*time.Minute), 6)
+	got, more, moreNewer, err = s.BacklogAround(ctx, "n", "#c", "", base.Add(9*time.Minute), 6)
 	if err != nil {
 		t.Fatalf("around-last: %v", err)
 	}
@@ -279,7 +280,7 @@ func TestBacklogAround(t *testing.T) {
 	}
 
 	// Zero around → falls back to most-recent page semantics.
-	got, _, moreNewer, err = s.BacklogAround(ctx, "n", "#c", time.Time{}, 4)
+	got, _, moreNewer, err = s.BacklogAround(ctx, "n", "#c", "", time.Time{}, 4)
 	if err != nil {
 		t.Fatalf("around-zero: %v", err)
 	}
@@ -288,6 +289,27 @@ func TestBacklogAround(t *testing.T) {
 	}
 	if moreNewer {
 		t.Errorf("zero-around moreNewer = true, want false")
+	}
+}
+
+func TestBacklogAroundExactAnchorWithSharedTimestamp(t *testing.T) {
+	s := openTest(t)
+	when := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	for i := range 12 {
+		m := msg("n", "#c", "u", text(i), core.MsgPrivmsg, when)
+		m.ID = fmt.Sprintf("msg-%d", i)
+		s.Print(m)
+	}
+
+	got, more, moreNewer, err := s.BacklogAround(context.Background(), "n", "#c", "msg-6", when, 6)
+	if err != nil {
+		t.Fatalf("around exact anchor: %v", err)
+	}
+	if len(got) != 6 || got[0].ID != "msg-4" || got[2].ID != "msg-6" || got[5].ID != "msg-9" {
+		t.Fatalf("window ids = %+v, want msg-4..msg-9 centered on msg-6", got)
+	}
+	if !more || !moreNewer {
+		t.Fatalf("more, moreNewer = %v, %v, want true, true", more, moreNewer)
 	}
 }
 

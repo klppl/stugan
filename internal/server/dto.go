@@ -41,6 +41,7 @@ func toMessageDTO(m core.Message) proto.MessageDTO {
 	}
 	return proto.MessageDTO{
 		ID:        m.ID,
+		ServerID:  m.Tags["msgid"] != "",
 		Seq:       m.Seq,
 		Network:   m.Network,
 		Buffer:    m.Buffer,

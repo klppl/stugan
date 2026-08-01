@@ -163,14 +163,13 @@ export interface Store {
   view: View;
   mentions: MessageDTO[];
   // Inline expand/collapse context for mention and search rows, keyed by the
-  // anchor message id (shared between the two lists since ids are unique).
+  // scoped network/buffer/message reference.
   context: Record<string, MentionContext>;
   search: { query: string; results: MessageDTO[]; busy: boolean };
   netConfigs: Record<string, NetConfig>; // network id → settings (from net:info)
   channelList: { network: string; channels: ListChannel[]; busy: boolean };
   typing: Record<string, string[]>; // bufKey → nicks currently typing
-  // reactions: msgid → reaction emoji → nicks who reacted. Ephemeral
-  // (session-lived), keyed globally by msgid since those are unique.
+  // reactions: scoped message reference → emoji → nicks who reacted.
   reactions: Record<string, Record<string, string[]>>;
   jump: Jump | null;
   // Transient error/notice overlay; appended by the s2c `error` handler and
@@ -236,6 +235,12 @@ const CONVERSATIONAL = new Set(["privmsg", "notice", "action"]);
 // always {network, buffer} pairs, rebuilt through bufKey on each load.
 function bufKey(network: string, buffer: string): string {
   return network + "\x1f" + foldTarget(buffer);
+}
+
+// IRC msgids are only guaranteed unique within their network/target scope.
+// Keep all message-addressed client state under the same composite key.
+export function messageRefKey(network: string, buffer: string, id: string): string {
+  return bufKey(network, buffer) + "\x1f" + id;
 }
 
 // foldTarget folds an IRC channel/nick for case-insensitive comparison using
@@ -596,7 +601,7 @@ export class Connection {
         break;
       case T.Context: {
         const d = env.d as ContextResp;
-        const cur = this.store.context[d.id];
+        const cur = this.store.context[messageRefKey(d.network, d.buffer, d.id)];
         if (cur) {
           cur.messages = d.messages;
           cur.loading = false;
@@ -994,7 +999,7 @@ export class Connection {
     buf.loaded = true;
     buf.more = resp.more;
     buf.backlogPending = false; // a reply landed — release the auto-load guard
-    if (resp.around) {
+    if (resp.anchor || resp.around) {
       // A centered reply is only a historical window when newer messages
       // actually exist beyond it. Highlights near the live tail commonly fit
       // in the centered page; keeping those in normal tail mode avoids a bogus
@@ -1143,16 +1148,17 @@ export class Connection {
   // toggleContext expands or collapses the inline chat surrounding a mention
   // or search result. The first open fetches a window of messages around the
   // anchor (context:fetch → applyContext); later toggles just flip the
-  // disclosure without refetching. Keyed by the anchor id, so reopening is
-  // instant and two rows for the same line stay in step.
+  // disclosure without refetching. Keyed by the scoped anchor reference, so
+  // identical msgids on other networks or targets cannot collide.
   toggleContext(m: MessageDTO) {
     if (!m.id || !m.time) return; // need a stable id + time anchor
-    const cur = this.store.context[m.id];
+    const key = messageRefKey(m.network, m.buffer, m.id);
+    const cur = this.store.context[key];
     if (cur) {
       cur.open = !cur.open;
       return;
     }
-    this.store.context[m.id] = { open: true, loading: true, messages: [] };
+    this.store.context[key] = { open: true, loading: true, messages: [] };
     this.sendFrame<ContextFetch>(T.ContextFetch, {
       network: m.network, buffer: m.buffer, id: m.id, around: m.time, limit: 11,
     });
@@ -1161,14 +1167,14 @@ export class Connection {
   // contextFor returns the expansion state for a mention/search row, or null
   // if it has never been opened. Used by the template to render the disclosure.
   contextFor(m: MessageDTO): MentionContext | null {
-    return (m.id && this.store.context[m.id]) || null;
+    return (m.id && this.store.context[messageRefKey(m.network, m.buffer, m.id)]) || null;
   }
 
-  // fetchAround requests a window of context centered on around (RFC3339).
-  // The reply lands in applyBacklog with resp.around set, which replaces
+  // fetchAround requests a window centered on an exact message id, retaining
+  // its RFC3339 time as a fallback. The centered reply replaces
   // buf.messages with the window and flips buf.windowed = true.
-  fetchAround(network: string, buffer: string, around: string) {
-    this.sendFrame<BacklogFetch>(T.BacklogFetch, { network, buffer, around, limit: 100 });
+  fetchAround(network: string, buffer: string, anchor: string, around: string) {
+    this.sendFrame<BacklogFetch>(T.BacklogFetch, { network, buffer, anchor, around, limit: 100 });
   }
 
   // backToLatest exits windowed mode for the given buffer by re-fetching
@@ -1433,7 +1439,8 @@ export class Connection {
   // re-send as a toggle, which matches how the affordance is clicked.
   private applyReact(r: React) {
     if (!r.target || !r.reaction || !r.nick) return;
-    const byEmoji = (this.store.reactions[r.target] ??= {});
+    const key = messageRefKey(r.network, r.buffer, r.target);
+    const byEmoji = (this.store.reactions[key] ??= {});
     const nicks = byEmoji[r.reaction] ?? [];
     const i = nicks.findIndex((n) => foldTarget(n) === foldTarget(r.nick!));
     if (i >= 0) {
@@ -1443,21 +1450,45 @@ export class Connection {
     } else {
       byEmoji[r.reaction] = [...nicks, r.nick];
     }
-    if (!Object.keys(byEmoji).length) delete this.store.reactions[r.target];
+    if (!Object.keys(byEmoji).length) delete this.store.reactions[key];
   }
 
-  // applyRedact removes the redacted message from its buffer and drops any
-  // reactions it carried.
+  // applyRedact removes every local projection of the message and reconciles
+  // unread/highlight counters when the removed line was still unread.
   private applyRedact(r: Redact) {
     const buf = this.buf(r.network, r.buffer);
     if (buf) {
       const i = buf.messages.findIndex((m) => m.id && m.id === r.target);
       if (i >= 0) {
-        if (buf.unreadMarker === buf.messages[i]) buf.unreadMarker = null;
+        const removed = buf.messages[i];
+        const markerIndex = buf.unreadMarker ? buf.messages.indexOf(buf.unreadMarker) : -1;
+        const pendingStart = buf.markerPending > 0 ? Math.max(0, buf.messages.length - buf.markerPending) : -1;
+        const wasUnread =
+          !removed.self && CONVERSATIONAL.has(removed.kind) &&
+          ((markerIndex >= 0 && i >= markerIndex) || (pendingStart >= 0 && i >= pendingStart));
         buf.messages.splice(i, 1);
+        if (wasUnread) {
+          buf.unread = Math.max(0, buf.unread - 1);
+          if (removed.highlight) buf.highlight = Math.max(0, buf.highlight - 1);
+          if (buf.markerPending > 0) buf.markerPending = Math.min(buf.markerPending - 1, buf.unread);
+        }
+        if (buf.unreadMarker === removed) {
+          buf.unreadMarker = buf.unread > 0
+            ? (buf.messages.slice(i).find((m) => !m.self && CONVERSATIONAL.has(m.kind)) ?? null)
+            : null;
+        }
       }
     }
-    delete this.store.reactions[r.target];
+    const same = (m: MessageDTO) =>
+      m.network === r.network && foldTarget(m.buffer) === foldTarget(r.buffer) && m.id === r.target;
+    this.store.mentions = this.store.mentions.filter((m) => !same(m));
+    this.store.search.results = this.store.search.results.filter((m) => !same(m));
+    const key = messageRefKey(r.network, r.buffer, r.target);
+    delete this.store.context[key];
+    for (const ctx of Object.values(this.store.context)) {
+      ctx.messages = ctx.messages.filter((m) => !same(m));
+    }
+    delete this.store.reactions[key];
   }
 
   // react sends an emoji reaction to a message (toggles on re-send). The
