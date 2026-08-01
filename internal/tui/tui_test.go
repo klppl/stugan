@@ -18,6 +18,16 @@ func (h *historyStub) Backlog(_ context.Context, _, _ string, before int64, _ in
 func (*historyStub) UnreadCounts(context.Context) ([]core.UnreadCount, error)  { return nil, nil }
 func (*historyStub) MarkRead(context.Context, string, string, time.Time) error { return nil }
 
+type tuiConnStub struct{ raw chan string }
+
+func (*tuiConnStub) Connect(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+func (c *tuiConnStub) SendRaw(line string) error       { c.raw <- line; return nil }
+func (*tuiConnStub) Message(string, string) error      { return nil }
+func (*tuiConnStub) Caps() []string                    { return nil }
+func (*tuiConnStub) CurrentNick() string               { return "me" }
+func (*tuiConnStub) Autojoin()                         {}
+func (*tuiConnStub) Close() error                      { return nil }
+
 func TestRegistryAddRemove(t *testing.T) {
 	r := newRegistry()
 	a := &session{user: "alice"}
@@ -103,6 +113,49 @@ func TestMergeBacklogDeduplicatesLiveOverlap(t *testing.T) {
 	got := mergeBacklog(history, live)
 	if len(got) != 3 || got[0].ID != "old" || got[1].ID != "same" || got[2].ID != "new" {
 		t.Fatalf("merged backlog = %+v", got)
+	}
+}
+
+func TestRedactRemovesCachedTUILine(t *testing.T) {
+	b := bufRef{net: "libera", name: "#go"}
+	m := &model{
+		active: bufRef{net: "libera", name: "#other"},
+		bufs: map[string]*buf{b.key(): {msgs: []core.Message{
+			{ID: "keep"}, {ID: "gone"}, {ID: "also-keep"},
+		}}},
+	}
+	m.Update(redactMsg{network: b.net, buffer: b.name, target: "gone"})
+	got := m.bufs[b.key()].msgs
+	if len(got) != 2 || got[0].ID != "keep" || got[1].ID != "also-keep" {
+		t.Fatalf("cached lines after redact = %+v", got)
+	}
+}
+
+func TestCloseActiveChannelSendsPart(t *testing.T) {
+	conn := &tuiConnStub{raw: make(chan string, 4)}
+	eng := core.New(core.Options{})
+	eng.AddNetwork(core.NetworkParams{ID: "libera", Name: "libera", Nick: "me"}, conn)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = eng.Run(ctx) }()
+
+	active := bufRef{net: "libera", name: "#go"}
+	m := &model{
+		eng: eng, active: active, bufs: map[string]*buf{active.key(): {}},
+		snap: &core.User{Networks: []*core.Network{{
+			ID: "libera", Channels: []*core.Channel{{Name: "#go", Kind: core.KindChannel}},
+		}}},
+	}
+	if cmd := m.closeActive(); cmd != nil {
+		t.Fatal("channel close should wait for the PART-driven snapshot update")
+	}
+	select {
+	case got := <-conn.raw:
+		if got != "PART #go" {
+			t.Fatalf("raw close command = %q, want PART #go", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("closeActive did not send PART")
 	}
 }
 

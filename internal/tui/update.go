@@ -110,7 +110,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case redactMsg:
-		return m, m.refreshSnapshot
+		b := bufRef{net: msg.network, name: msg.buffer}
+		if bb := m.bufs[b.key()]; bb != nil {
+			kept := bb.msgs[:0]
+			for _, line := range bb.msgs {
+				if line.ID != msg.target {
+					kept = append(kept, line)
+				}
+			}
+			bb.msgs = kept
+			if b.eq(m.active) {
+				m.renderMessages()
+			}
+		}
+		return m, nil
 
 	case channelListMsg:
 		if b, ok := m.ov.(*browserOverlay); ok {
@@ -284,6 +297,14 @@ func (m *model) closeActive() tea.Cmd {
 		return nil
 	}
 	b := m.active
+	if ch := m.channelOf(b); ch != nil && ch.Kind == core.KindChannel {
+		// Channel buffers disappear only after the server confirms our PART;
+		// the ensuing network update refreshes the sidebar and cache ownership.
+		if err := m.eng.SendInput(b.net, b.name, "/part"); err != nil {
+			m.setStatus("part: " + err.Error())
+		}
+		return nil
+	}
 	if err := m.eng.CloseBuffer(b.net, b.name); err != nil {
 		m.setStatus("close: " + err.Error())
 		return nil
