@@ -29,6 +29,13 @@ interface SettingCategory {
   cap?: string;
 }
 
+interface SettingSearchItem {
+  tab: SettingTabId;
+  label: string;
+  desc: string;
+  keywords?: string;
+}
+
 const categories: SettingCategory[] = [
   {
     id: "appearance",
@@ -86,19 +93,50 @@ const categories: SettingCategory[] = [
 const activeTab = ref<SettingTabId>("appearance");
 const searchQuery = ref("");
 
+const settingSearchItems: SettingSearchItem[] = [
+  { tab: "appearance", label: "Theme", desc: "Choose your preferred visual theme", keywords: "colors dark light" },
+  { tab: "appearance", label: "Install Custom Theme", desc: "Create or paste CSS theme variables", keywords: "preset custom css remove" },
+  { tab: "appearance", label: "Text Size", desc: "Change the font size for messages and buffers", keywords: "font" },
+  { tab: "chat", label: "Fold Join / Part Events", desc: "Group join, part, and quit messages", keywords: "collapse events" },
+  { tab: "chat", label: "Expand Link Previews", desc: "Show rich previews for HTTP links", keywords: "url cards" },
+  { tab: "chat", label: "Colored Nicks", desc: "Assign consistent colors to user nicknames", keywords: "names users" },
+  { tab: "chat", label: "Reactions", desc: "Add and view emoji reactions on messages", keywords: "emoji ircv3" },
+  { tab: "chat", label: "Send Typing Notifications", desc: "Broadcast a typing indicator while you type", keywords: "status" },
+  { tab: "chat", label: "Show Others' Typing", desc: "Display typing indicators from other users", keywords: "status" },
+  { tab: "highlights", label: "Highlight Keywords", desc: "Regular expressions that trigger highlights and notifications", keywords: "mentions regex patterns" },
+  { tab: "highlights", label: "Highlight Exceptions", desc: "Patterns that prevent a highlight", keywords: "ignore regex exclusions" },
+  { tab: "aliases", label: "Alias Rules", desc: "Configure slash-command shortcuts", keywords: "commands expansion" },
+  { tab: "plugins", label: "Installed Plugins", desc: "Load, unload, configure, update, or uninstall Lua scripts", keywords: "extensions scripts" },
+  { tab: "plugins", label: "Curated Plugin Library", desc: "Browse and install official plugins", keywords: "extensions scripts" },
+  { tab: "plugins", label: "Import Plugin from URL", desc: "Download a Lua script from a remote URL", keywords: "extensions scripts remote" },
+  { tab: "uploads", label: "Stored Uploads", desc: "View uploaded files and retention expiry", keywords: "media storage files" },
+  { tab: "account", label: "Desktop & Push Notifications", desc: "Receive notifications for mentions and highlights", keywords: "webpush browser alerts" },
+  { tab: "account", label: "User Session", desc: "View authentication status or log out", keywords: "account login sign out" },
+];
+
 const availableCategories = computed(() =>
   categories.filter((cat) => !cat.cap || connection.hasCap(cat.cap))
 );
 
-const filteredCategories = computed(() => {
+const searchResults = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
-  if (!q) return availableCategories.value;
-  return availableCategories.value.filter(
-    (cat) =>
-      cat.label.toLowerCase().includes(q) ||
-      cat.desc.toLowerCase().includes(q) ||
-      cat.id.toLowerCase().includes(q)
+  if (!q) return [];
+  const available = new Set(availableCategories.value.map((cat) => cat.id));
+  const declaredPluginSettings: SettingSearchItem[] = connection.store.plugins.flatMap((plugin) =>
+    (plugin.settings ?? []).map((setting) => ({
+      tab: "plugins" as const,
+      label: setting.label || setting.name,
+      desc: setting.help || `Configure the ${plugin.name} plugin`,
+      keywords: `${plugin.name} ${setting.name} plugin`,
+    }))
   );
+
+  return [...settingSearchItems, ...declaredPluginSettings]
+    .filter((item) => available.has(item.tab))
+    .filter((item) => {
+      const category = categories.find((cat) => cat.id === item.tab);
+      return `${item.label} ${item.desc} ${item.keywords ?? ""} ${category?.label ?? ""}`.toLowerCase().includes(q);
+    });
 });
 
 const currentCategory = computed(
@@ -110,6 +148,15 @@ const currentCategory = computed(
 function closeSettings() {
   connection.store.view = "chat";
   emit("close");
+}
+
+function selectSearchResult(result: SettingSearchItem) {
+  activeTab.value = result.tab;
+  searchQuery.value = "";
+}
+
+function openFirstSearchResult() {
+  if (searchResults.value[0]) selectSearchResult(searchResults.value[0]);
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -128,12 +175,13 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
     <header class="settings-header">
       <div class="settings-header-left">
         <button
-          class="btn btn-ghost back-btn"
+          class="btn back-btn"
           aria-label="Back to Chat"
           title="Back to Chat (Esc)"
           @click="closeSettings"
         >
-          ← <span class="back-text">Back to Chat</span>
+          <span class="back-arrow" aria-hidden="true">←</span>
+          <span class="back-text">Back to Chat</span>
         </button>
         <h2 class="settings-title">Settings</h2>
       </div>
@@ -143,7 +191,9 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           v-model="searchQuery"
           type="search"
           class="settings-search-input"
-          placeholder="Filter categories…"
+          placeholder="Search all settings…"
+          aria-label="Search all settings"
+          @keydown.enter.prevent="openFirstSearchResult"
         />
       </div>
 
@@ -156,24 +206,43 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
     <!-- Main settings split body -->
     <div class="settings-body">
       <!-- Left sidebar navigation -->
-      <nav class="settings-sidebar" aria-label="Settings categories">
-        <button
-          v-for="cat in filteredCategories"
-          :key="cat.id"
-          class="settings-nav-item"
-          :class="{ active: activeTab === cat.id }"
-          @click="activeTab = cat.id"
-        >
-          <span class="nav-item-icon" aria-hidden="true">{{ cat.icon }}</span>
-          <div class="nav-item-text">
-            <span class="nav-item-label">{{ cat.label }}</span>
-            <span class="nav-item-desc">{{ cat.desc }}</span>
-          </div>
-        </button>
+      <nav class="settings-sidebar" :class="{ 'search-active': searchQuery.trim() }" aria-label="Settings categories">
+        <template v-if="!searchQuery.trim()">
+          <button
+            v-for="cat in availableCategories"
+            :key="cat.id"
+            class="settings-nav-item"
+            :class="{ active: activeTab === cat.id }"
+            @click="activeTab = cat.id"
+          >
+            <span class="nav-item-icon" aria-hidden="true">{{ cat.icon }}</span>
+            <div class="nav-item-text">
+              <span class="nav-item-label">{{ cat.label }}</span>
+              <span class="nav-item-desc">{{ cat.desc }}</span>
+            </div>
+          </button>
+        </template>
 
-        <p v-if="filteredCategories.length === 0" class="no-cat-hint">
-          No categories match "{{ searchQuery }}"
-        </p>
+        <template v-else>
+          <p class="settings-results-label">Settings results</p>
+          <button
+            v-for="(result, index) in searchResults"
+            :key="`${result.tab}-${result.label}-${index}`"
+            class="settings-nav-item settings-search-result"
+            @click="selectSearchResult(result)"
+          >
+            <span class="nav-item-icon" aria-hidden="true">{{ categories.find((cat) => cat.id === result.tab)?.icon }}</span>
+            <div class="nav-item-text">
+              <span class="nav-item-label">{{ result.label }}</span>
+              <span class="nav-item-desc">{{ result.desc }}</span>
+              <span class="search-result-category">{{ categories.find((cat) => cat.id === result.tab)?.label }}</span>
+            </div>
+          </button>
+
+          <p v-if="searchResults.length === 0" class="no-cat-hint">
+            No settings match "{{ searchQuery }}"
+          </p>
+        </template>
       </nav>
 
       <!-- Main sub-page view -->
