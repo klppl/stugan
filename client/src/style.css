@@ -1511,17 +1511,15 @@ body {
   padding: 8px 14px;
   border-radius: 6px;
   border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #fff;
+  background: var(--bg-alt);
+  color: var(--accent);
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .back-btn:hover {
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-alt));
   border-color: var(--accent);
-  filter: brightness(1.12);
 }
 
 .back-arrow {
