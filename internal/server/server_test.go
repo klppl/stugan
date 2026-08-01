@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"maps"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -397,6 +399,33 @@ func TestNetInfo(t *testing.T) {
 	}
 	if cfg.Addr != "irc.libera.chat:6697" || !cfg.TLS || cfg.SASLUser != "acct" || len(cfg.Channels) != 1 {
 		t.Fatalf("net:info config = %+v", cfg)
+	}
+}
+
+func TestNetConfigParamsPreservesNonEditableState(t *testing.T) {
+	existing := core.NetworkParams{
+		ID: "libera", Name: "libera", Addr: "old:6697",
+		Monitor:         []string{"alice"},
+		ChannelKeys:     map[string]string{"#private": "secret"},
+		Pos:             3,
+		BufferOrder:     []string{"#private", "#public"},
+		JoinHoldTimeout: 90,
+	}
+	d := proto.NetConfig{
+		Network: "libera", Addr: "new:6697", Fallbacks: []string{"fallback:6697"},
+		TLS: true, Insecure: true, Nick: "newnick", Channels: []string{"#private"},
+	}
+
+	got := netConfigParams(d, existing)
+	if !slices.Equal(got.Monitor, existing.Monitor) ||
+		!maps.Equal(got.ChannelKeys, existing.ChannelKeys) ||
+		got.Pos != existing.Pos ||
+		!slices.Equal(got.BufferOrder, existing.BufferOrder) ||
+		got.JoinHoldTimeout != existing.JoinHoldTimeout {
+		t.Fatalf("non-editable state was not preserved: %+v", got)
+	}
+	if got.Addr != d.Addr || !slices.Equal(got.Fallbacks, d.Fallbacks) || !got.Insecure {
+		t.Fatalf("editable state was not applied: %+v", got)
 	}
 }
 

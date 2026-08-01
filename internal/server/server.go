@@ -660,7 +660,10 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	case proto.TNetEdit:
 		reqHandle(c, env, "net:edit requires network and addr",
 			func(d proto.NetConfig) bool { return d.Network != "" && d.Addr != "" },
-			func(d proto.NetConfig) error { return c.tenant.Engine.UpdateNetwork(netConfigParams(d)) })
+			func(d proto.NetConfig) error {
+				existing, _ := c.tenant.Engine.NetworkConfig(d.Network)
+				return c.tenant.Engine.UpdateNetwork(netConfigParams(d, existing))
+			})
 
 	case proto.TPluginList:
 		s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{

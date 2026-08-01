@@ -445,6 +445,8 @@ func TestNeedsReconnect(t *testing.T) {
 	// Connection-level changes must force a reconnect.
 	for name, p := range map[string]NetworkParams{
 		"addr":          {ID: "n", Addr: "b:1", Nick: "me"},
+		"fallbacks":     {ID: "n", Addr: "a:1", Nick: "me", Fallbacks: []string{"b:1"}},
+		"insecure":      {ID: "n", Addr: "a:1", Nick: "me", Insecure: true},
 		"server_pass":   {ID: "n", Addr: "a:1", Nick: "me", ServerPass: "x"},
 		"sasl_external": {ID: "n", Addr: "a:1", Nick: "me", SASLExternal: true},
 		"cert_pem":      {ID: "n", Addr: "a:1", Nick: "me", CertPEM: "PEM"},

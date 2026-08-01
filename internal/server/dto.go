@@ -78,15 +78,21 @@ func netAddParams(d proto.NetAdd) core.NetworkParams {
 
 // netConfigParams converts a net:edit/net:info config into runtime params; the
 // Network field identifies the existing network being edited.
-func netConfigParams(d proto.NetConfig) core.NetworkParams {
-	return core.NetworkParams{
-		ID: d.Network, Name: d.Network, Addr: d.Addr, Fallbacks: d.Fallbacks,
-		TLS: d.TLS, Insecure: d.Insecure,
-		Nick: d.Nick, User: d.User, Realname: d.Realname,
-		SASLUser: d.SASLUser, SASLPass: d.SASLPass, Channels: d.Channels,
-		ServerPass: d.ServerPass, Perform: d.Perform,
-		SASLExternal: d.SASLExternal, CertPEM: d.CertPEM,
-	}
+func netConfigParams(d proto.NetConfig, existing core.NetworkParams) core.NetworkParams {
+	// NetConfig intentionally contains only fields editable by the web form.
+	// Start from the current full configuration so server-owned state such as
+	// friends, manual ordering, join keys, and plugin timing survives an edit.
+	p := existing
+	p.ID, p.Name = d.Network, d.Network
+	p.Addr, p.Fallbacks = d.Addr, append([]string(nil), d.Fallbacks...)
+	p.TLS, p.Insecure = d.TLS, d.Insecure
+	p.Nick, p.User, p.Realname = d.Nick, d.User, d.Realname
+	p.SASLUser, p.SASLPass = d.SASLUser, d.SASLPass
+	p.Channels = append([]string(nil), d.Channels...)
+	p.ServerPass = d.ServerPass
+	p.Perform = append([]string(nil), d.Perform...)
+	p.SASLExternal, p.CertPEM = d.SASLExternal, d.CertPEM
+	return p
 }
 
 // netConfigDTO projects runtime params onto the editable NetConfig wire form

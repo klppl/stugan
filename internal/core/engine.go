@@ -526,6 +526,7 @@ func (e *Engine) UpdateNetwork(p NetworkParams) error {
 // connection-level setting that can only take effect on a fresh connection.
 func needsReconnect(old, p NetworkParams) bool {
 	return old.Addr != p.Addr || old.TLS != p.TLS ||
+		!slices.Equal(old.Fallbacks, p.Fallbacks) || old.Insecure != p.Insecure ||
 		old.User != p.User || old.Realname != p.Realname ||
 		old.SASLUser != p.SASLUser || old.SASLPass != p.SASLPass ||
 		old.ServerPass != p.ServerPass || old.SASLExternal != p.SASLExternal ||
