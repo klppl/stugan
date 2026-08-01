@@ -859,6 +859,9 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			func(d proto.BufReorder) bool { return d.Network != "" },
 			func(d proto.BufReorder) error { return c.tenant.Engine.ReorderBuffers(d.Network, d.Buffers) })
 
+	case proto.TPresence:
+		bestHandle(env, nil, func(d proto.Presence) { s.setClientVisible(c, d.Visible) })
+
 	case proto.TPing:
 		// App-level liveness probe. The client can't see protocol pongs from
 		// JS, so it sends this frame and reconnects if no reply arrives; echo a
@@ -1053,10 +1056,22 @@ func (s *Server) broadcast(user, t string, d any) {
 	}
 }
 
-func (s *Server) connectedCount(user string) int {
+func (s *Server) visibleClientCount(user string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.clients[user])
+	n := 0
+	for c := range s.clients[user] {
+		if c.visible {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *Server) setClientVisible(c *client, visible bool) {
+	s.mu.Lock()
+	c.visible = visible
+	s.mu.Unlock()
 }
 
 // caps lists the optional features this server supports.

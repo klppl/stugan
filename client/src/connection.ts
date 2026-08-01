@@ -49,6 +49,7 @@ import {
   type BufClose,
   type NetReorder,
   type BufReorder,
+  type Presence,
 } from "./proto/events";
 
 export interface Buffer {
@@ -385,6 +386,7 @@ export class Connection {
     if (this.everConnected) this.resyncPending = true;
     this.everConnected = true;
     this.startHeartbeat();
+    this.reportPresence();
   }
 
   private onClose() {
@@ -427,6 +429,7 @@ export class Connection {
     this.lifecycleBound = true;
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", () => {
+        this.reportPresence();
         if (document.visibilityState === "visible") {
           this.checkLiveness();
           // A hidden-tab reconnect deferred its read-marker ack (see
@@ -438,6 +441,11 @@ export class Connection {
     if (typeof window !== "undefined") {
       window.addEventListener("online", () => this.checkLiveness());
     }
+  }
+
+  private reportPresence() {
+    const visible = typeof document === "undefined" || document.visibilityState === "visible";
+    this.sendFrame<Presence>(T.Presence, { visible });
   }
 
   // checkLiveness runs when the tab regains focus or the network returns. A

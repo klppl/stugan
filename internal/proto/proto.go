@@ -56,6 +56,7 @@ const (
 	TMute         = "mute"           // c2s set intent; s2c absolute state broadcast to the user's tabs
 	TBufClose     = "buf:close"      // c2s — close/remove a query buffer from state
 	TBufReorder   = "buf:reorder"    // c2s — manual buffer order within a network
+	TPresence     = "presence"       // c2s — whether this browser tab is currently visible
 	TPing         = "ping"           // c2s — app-level liveness probe; answered with pong
 )
 
@@ -548,6 +549,12 @@ type MonitorRef struct {
 type BufClose struct {
 	Network string `json:"network"`
 	Buffer  string `json:"buffer"`
+}
+
+// Presence lets push notification suppression distinguish a browser the user
+// is actively viewing from a connected tab parked in the background.
+type Presence struct {
+	Visible bool `json:"visible"`
 }
 
 // Ping (c2s) and Pong (s2c) are payloadless liveness frames: the browser's

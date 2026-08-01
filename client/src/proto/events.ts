@@ -48,6 +48,7 @@ export const T = {
   Mute: "mute",
   BufClose: "buf:close",
   BufReorder: "buf:reorder",
+  Presence: "presence",
   Ping: "ping",
 } as const;
 
@@ -122,6 +123,10 @@ export interface NetReorder {
 export interface BufReorder {
   network: string;
   buffers: string[];
+}
+
+export interface Presence {
+  visible: boolean;
 }
 
 export interface UserDTO {

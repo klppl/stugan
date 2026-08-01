@@ -65,3 +65,22 @@ func TestPushDisabledWhenNoDir(t *testing.T) {
 		t.Fatalf("empty dir should disable push: p=%v err=%v", p, err)
 	}
 }
+
+func TestVisibleClientCount(t *testing.T) {
+	s := New(nil, Options{})
+	visible := &client{visible: true}
+	hidden := &client{visible: true}
+	s.addClient("alice", visible)
+	s.addClient("alice", hidden)
+	if got := s.visibleClientCount("alice"); got != 2 {
+		t.Fatalf("visible clients before presence = %d, want 2", got)
+	}
+	s.setClientVisible(hidden, false)
+	if got := s.visibleClientCount("alice"); got != 1 {
+		t.Fatalf("visible clients with background tab = %d, want 1", got)
+	}
+	s.setClientVisible(visible, false)
+	if got := s.visibleClientCount("alice"); got != 0 {
+		t.Fatalf("visible clients while fully away = %d, want 0", got)
+	}
+}

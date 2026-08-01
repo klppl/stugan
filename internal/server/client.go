@@ -37,13 +37,17 @@ type client struct {
 	log    *slog.Logger
 	user   string
 	tenant *Tenant
+	// visible is guarded by Server.mu. Default true preserves push suppression
+	// for older clients that predate the presence frame.
+	visible bool
 }
 
 func newClient(ws *websocket.Conn, log *slog.Logger) *client {
 	return &client{
-		ws:   ws,
-		send: make(chan proto.Envelope, sendBuffer),
-		log:  log,
+		ws:      ws,
+		send:    make(chan proto.Envelope, sendBuffer),
+		log:     log,
+		visible: true,
 	}
 }
 

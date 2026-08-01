@@ -68,6 +68,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `read`          | `ReadMark`     | mark a buffer read up to now (advances the persisted read marker) |
 | `highlight:set` | `HighlightRules` | replace the highlight ruleset (bad regex → `error`; success → `highlight` broadcast) |
 | `buf:close`     | `BufClose`     | close a query/DM buffer (server drops it and re-broadcasts `net:update`; channels use `/part`) |
+| `presence`      | `Presence`     | report whether this browser tab is visible, for push-notification suppression |
 | `ping`          | (none)         | app-level liveness probe; answered with `pong` (see below) |
 
 ### Bidirectional
@@ -145,6 +146,7 @@ type NetRemove  struct { Network string }
 type Typing struct { Network, Buffer, Nick, State string }   // State: active|paused|done
 type React  struct { Network, Buffer, Target, Nick, Reaction string }  // Target is a msgid
 type Redact struct { Network, Buffer, Target, By, Reason string }
+type Presence struct { Visible bool }
 
 type PluginAction struct { Name, Action string }   // Action: load|unload|reload
 type PluginSettingReq struct { Name, Key, Value string } // set Key=Value on plugin Name

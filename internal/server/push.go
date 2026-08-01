@@ -202,8 +202,8 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 // maybePush sends a push notification for a highlight if the user is away
-// (no browser connected for that user). Called from the per-user sink; runs
-// the send async so it never blocks the engine loop.
+// (no visible browser tab for that user). Background tabs remain connected
+// for history/state sync but no longer suppress notifications.
 func (s *Server) maybePush(user string, m core.Message) {
 	if s.push == nil || m.Self {
 		return
@@ -213,8 +213,8 @@ func (s *Server) maybePush(user string, m core.Message) {
 	if !m.Highlight && !isNotifyDM(m) {
 		return
 	}
-	if s.connectedCount(user) > 0 {
-		return // user is here; the in-app notification is enough
+	if s.visibleClientCount(user) > 0 {
+		return // user is actively viewing a tab; in-app notification is enough
 	}
 	// The user is fully away, so honor their muted buffers here too: the
 	// in-app desktopNotify already skips muted buffers client-side, but push
