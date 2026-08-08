@@ -234,8 +234,13 @@ const CONVERSATIONAL = new Set(["privmsg", "notice", "action"]);
 // target, but unlike NUL it keeps this file plain text so Git diff/blame and
 // grep keep working. It is never persisted in this form — server state is
 // always {network, buffer} pairs, rebuilt through bufKey on each load.
-function bufKey(network: string, buffer: string): string {
+export function bufKey(network: string, buffer: string): string {
   return network + "\x1f" + foldTarget(buffer);
+}
+
+// isSameBuffer reports whether a buffer reference matches a network and buffer target case-insensitively.
+export function isSameBuffer(ref: { network: string; buffer: string } | null | undefined, network: string, buffer: string): boolean {
+  return !!ref && ref.network === network && foldTarget(ref.buffer) === foldTarget(buffer);
 }
 
 // IRC msgids are only guaranteed unique within their network/target scope.
@@ -669,9 +674,7 @@ export class Connection {
         if (buf) {
           buf.unread = 0;
           buf.highlight = 0;
-          const a = this.store.active;
-          const isActive =
-            !!a && a.network === d.network && foldTarget(a.buffer) === foldTarget(d.buffer);
+          const isActive = isSameBuffer(this.store.active, d.network, d.buffer);
           if (!isActive) buf.unreadMarker = null;
         }
         break;
@@ -954,10 +957,7 @@ export class Connection {
     if (!m.self) this.clearTyping(bufKey(net.id, buf.name), m.from); // they sent → not typing
 
     const muted = this.isMuted(bufKey(net.id, buf.name));
-    const focused =
-      this.store.view === "chat" &&
-      this.store.active?.network === net.id &&
-      foldTarget(this.store.active?.buffer ?? "") === foldTarget(buf.name);
+    const focused = this.store.view === "chat" && isSameBuffer(this.store.active, net.id, buf.name);
 
     if (!focused && !m.self && CONVERSATIONAL.has(m.kind) && !muted) {
       // First unread since last read → anchor the "new messages" divider just
@@ -1286,7 +1286,7 @@ export class Connection {
     if (buf?.local) {
       const net = this.net(network);
       if (net) net.buffers = net.buffers.filter((b) => b !== buf);
-      if (this.store.active?.network === network && foldTarget(this.store.active.buffer) === foldTarget(buffer)) {
+      if (isSameBuffer(this.store.active, network, buffer)) {
         this.store.active = null;
         this.ensureActive();
       }
@@ -1688,5 +1688,4 @@ export class Connection {
   }
 }
 
-export { bufKey };
 export const connection = new Connection();

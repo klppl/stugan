@@ -741,81 +741,66 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		})
 
 	case proto.TPluginSet:
-		var d proto.PluginSettingReq
-		if err := decode(env, &d); err != nil || d.Name == "" || d.Key == "" {
-			c.sendError(env.ID, "bad_request", "plugin:setting requires name and key")
-			return
-		}
-		if err := c.tenant.Engine.SetPluginSetting(d.Name, d.Key, d.Value); err != nil {
-			c.sendError(env.ID, "bad_request", err.Error())
-			return
-		}
-		s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
-			Plugins: toPluginInfos(c.tenant.Engine.Plugins()),
-			Curated: toCuratedPluginInfos(c.tenant.Engine.CuratedPlugins()),
-		})
+		reqHandle(c, env, "plugin:setting requires name and key",
+			func(d proto.PluginSettingReq) bool { return d.Name != "" && d.Key != "" },
+			func(d proto.PluginSettingReq) error {
+				if err := c.tenant.Engine.SetPluginSetting(d.Name, d.Key, d.Value); err != nil {
+					return err
+				}
+				s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
+					Plugins: toPluginInfos(c.tenant.Engine.Plugins()),
+					Curated: toCuratedPluginInfos(c.tenant.Engine.CuratedPlugins()),
+				})
+				return nil
+			})
 
 	case proto.THighlightSet:
-		var d proto.HighlightRules
-		if err := decode(env, &d); err != nil {
-			c.sendError(env.ID, "bad_request", "invalid highlight:set payload")
-			return
-		}
-		hl, err := core.NewHighlighter(d.Patterns, d.Exceptions)
-		if err != nil {
-			c.sendError(env.ID, "bad_request", err.Error())
-			return
-		}
-		c.tenant.Engine.SetHighlighter(hl)
-		if c.tenant.Prefs != nil {
-			if b, err := json.Marshal(d); err == nil {
-				if err := c.tenant.Prefs.SetPref(prefHighlight, string(b)); err != nil {
-					s.log.Error("save highlight", "user", c.user, "err", err)
+		reqHandle(c, env, "invalid highlight:set payload", nil, func(d proto.HighlightRules) error {
+			hl, err := core.NewHighlighter(d.Patterns, d.Exceptions)
+			if err != nil {
+				return err
+			}
+			c.tenant.Engine.SetHighlighter(hl)
+			if c.tenant.Prefs != nil {
+				if b, err := json.Marshal(d); err == nil {
+					if err := c.tenant.Prefs.SetPref(prefHighlight, string(b)); err != nil {
+						s.log.Error("save highlight", "user", c.user, "err", err)
+					}
 				}
 			}
-		}
-		// Broadcast the normalized rules (blank lines dropped) to every one of
-		// the user's clients — the requester to confirm the save, other tabs to
-		// stay in sync without a reload. The frame is uncorrelated; only the
-		// requesting tab flashes "saved" (it tracks that locally).
-		s.broadcast(c.user, proto.THighlight, proto.HighlightRules{
-			Patterns: hl.Patterns(), Exceptions: hl.Exceptions(),
+			s.broadcast(c.user, proto.THighlight, proto.HighlightRules{
+				Patterns: hl.Patterns(), Exceptions: hl.Exceptions(),
+			})
+			return nil
 		})
 
 	case proto.TAliasSet:
-		var d proto.AliasTable
-		if err := decode(env, &d); err != nil {
-			c.sendError(env.ID, "bad_request", "invalid aliases:set payload")
-			return
-		}
-		aliases := sanitizeAliases(d.Aliases)
-		c.tenant.Engine.SetAliases(aliases)
-		if c.tenant.Prefs != nil {
-			if b, err := json.Marshal(aliases); err == nil {
-				if err := c.tenant.Prefs.SetPref(prefAliases, string(b)); err != nil {
-					s.log.Error("save aliases", "user", c.user, "err", err)
+		reqHandle(c, env, "invalid aliases:set payload", nil, func(d proto.AliasTable) error {
+			aliases := sanitizeAliases(d.Aliases)
+			c.tenant.Engine.SetAliases(aliases)
+			if c.tenant.Prefs != nil {
+				if b, err := json.Marshal(aliases); err == nil {
+					if err := c.tenant.Prefs.SetPref(prefAliases, string(b)); err != nil {
+						s.log.Error("save aliases", "user", c.user, "err", err)
+					}
 				}
 			}
-		}
-		// Echo the normalized table to all of the user's tabs — the requester to
-		// confirm the save (and see dropped/normalized entries), others to stay
-		// in sync without a reload.
-		s.broadcast(c.user, proto.TAliases, proto.AliasTable{Aliases: aliases})
+			s.broadcast(c.user, proto.TAliases, proto.AliasTable{Aliases: aliases})
+			return nil
+		})
 
 	case proto.TSettingsSet:
-		var d proto.SettingsPayload
-		if err := decode(env, &d); err != nil {
-			c.sendError(env.ID, "bad_request", "invalid settings:set payload")
-			return
-		}
-		if c.tenant.Prefs != nil && d.Settings != nil {
-			if b, err := json.Marshal(d.Settings); err == nil {
-				if err := c.tenant.Prefs.SetPref(prefSettings, string(b)); err != nil {
-					s.log.Error("save settings", "user", c.user, "err", err)
+		reqHandle(c, env, "invalid settings:set payload", nil, func(d proto.SettingsPayload) error {
+			if c.tenant.Prefs != nil && d.Settings != nil {
+				if b, err := json.Marshal(d.Settings); err == nil {
+					if err := c.tenant.Prefs.SetPref(prefSettings, string(b)); err != nil {
+						s.log.Error("save settings", "user", c.user, "err", err)
+					}
 				}
 			}
-		}
-		s.broadcast(c.user, proto.TSettings, d)
+			s.broadcast(c.user, proto.TSettings, d)
+			return nil
+		})
 
 	case proto.TMonitorAdd:
 		bestHandle(env,
