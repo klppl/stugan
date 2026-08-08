@@ -1,4 +1,4 @@
-import { reactive } from "vue";
+import { reactive, markRaw } from "vue";
 import { settings, LEGACY_MUTES_KEY, loadSettingsPayload } from "./settings";
 import { closeDrawers } from "./ui";
 import { stripFormatting } from "./links";
@@ -611,7 +611,7 @@ export class Connection {
         const d = env.d as ContextResp;
         const cur = this.store.context[messageRefKey(d.network, d.buffer, d.id)];
         if (cur) {
-          cur.messages = d.messages;
+          cur.messages = (d.messages ?? []).map(markRaw);
           cur.loading = false;
         }
         break;
@@ -781,7 +781,7 @@ export class Connection {
   // the first time it's non-empty in a page session (reconnects refresh the
   // data but don't re-nag — see digestAutoShown).
   private applyMissed(d: MissedResp) {
-    this.store.missed = d.messages ?? [];
+    this.store.missed = (d.messages ?? []).map(markRaw);
     if (this.store.missed.length > 0 && !this.digestAutoShown) {
       this.digestAutoShown = true;
       this.store.digestOpen = true;
@@ -926,6 +926,7 @@ export class Connection {
   }
 
   private applyMessage(m: MessageDTO) {
+    m = markRaw(m);
     const net = this.net(m.network);
     if (!net) return;
     // Per-nick ignore is enforced server-side by the bundled ignore.lua
@@ -1007,12 +1008,13 @@ export class Connection {
     buf.loaded = true;
     buf.more = resp.more;
     buf.backlogPending = false; // a reply landed — release the auto-load guard
+    const msgs = (resp.messages ?? []).map(markRaw);
     if (resp.anchor || resp.around) {
       // A centered reply is only a historical window when newer messages
       // actually exist beyond it. Highlights near the live tail commonly fit
       // in the centered page; keeping those in normal tail mode avoids a bogus
       // "Back to latest" banner and lets subsequent live messages append.
-      buf.messages = [...resp.messages];
+      buf.messages = [...msgs];
       // Missing means an older server that predates this hint; preserve its
       // conservative historical-window behaviour during a rolling refresh.
       buf.windowed = resp.more_newer ?? true;
@@ -1020,7 +1022,7 @@ export class Connection {
     }
     // Normal paged-backward reply: prepend the older slice we didn't have.
     const have = new Set(buf.messages.map((m) => m.id).filter(Boolean));
-    const older = resp.messages.filter((m) => !m.id || !have.has(m.id));
+    const older = msgs.filter((m) => !m.id || !have.has(m.id));
     buf.messages.unshift(...older);
     // The first page for a buffer opened with a seeded unread count: now that
     // we have messages, drop the divider where the user left off.

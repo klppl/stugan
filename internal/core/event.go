@@ -124,8 +124,3 @@ type MemberMode struct {
 	Symbol string
 	Add    bool
 }
-
-// eqFold compares channel/nick names case-insensitively under rfc1459
-// casemapping (same fold the member-map keys use), so nick[m] and nick{m}
-// are the same user everywhere.
-func eqFold(a, b string) bool { return EqualIRC(a, b) }

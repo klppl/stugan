@@ -538,7 +538,7 @@ func (a engineAPI) SetBufferState(network, buffer string, state map[string]strin
 // can apply it when the buffer is created. Buffer names are keyed
 // case-insensitively, mirroring Network.Channel. Caller holds e.mu.
 func (e *Engine) setPendingStateLocked(network, buffer string, state map[string]string) {
-	bk := lower(buffer)
+	bk := FoldIRC(buffer)
 	if len(state) == 0 {
 		if m := e.pendingState[network]; m != nil {
 			delete(m, bk)
@@ -562,7 +562,7 @@ func (e *Engine) applyPendingStateLocked(network string, c *Channel) {
 	if c == nil {
 		return
 	}
-	st := e.pendingState[network][lower(c.Name)]
+	st := e.pendingState[network][FoldIRC(c.Name)]
 	if len(st) == 0 {
 		return
 	}

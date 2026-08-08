@@ -69,6 +69,7 @@ func (n *Network) clone() *Network {
 	nc := &Network{
 		ID: n.ID, Name: n.Name, Nick: n.Nick, State: n.State, Params: n.Params.clone(),
 		Channels: make([]*Channel, len(n.Channels)),
+		byFold:   make(map[string]*Channel, len(n.Channels)),
 	}
 	for j, ch := range n.Channels {
 		cc := &Channel{
@@ -88,6 +89,7 @@ func (n *Network) clone() *Network {
 			}
 		}
 		nc.Channels[j] = cc
+		nc.byFold[FoldIRC(cc.Name)] = cc
 	}
 	if len(n.MonitorOnline) > 0 {
 		nc.MonitorOnline = make(map[string]bool, len(n.MonitorOnline))
@@ -105,6 +107,8 @@ type Network struct {
 	Nick     string
 	State    ConnState
 	Channels []*Channel
+	// byFold is an unexported lookaside map providing O(1) Channel() lookups.
+	byFold map[string]*Channel
 	// Caps are the IRCv3 capabilities the live connection negotiated. Set
 	// only on snapshots (from the connection), so the client can light up
 	// cap-gated affordances (reactions, redaction). Not stored on the live
@@ -120,14 +124,21 @@ type Network struct {
 	MonitorOnline map[string]bool
 }
 
-// Channel returns the buffer with the given name (case-insensitive), or nil.
-func (n *Network) Channel(name string) *Channel {
-	for _, c := range n.Channels {
-		if eqFold(c.Name, name) {
-			return c
+func (n *Network) initByFold() {
+	if n.byFold == nil {
+		n.byFold = make(map[string]*Channel, len(n.Channels))
+		for _, c := range n.Channels {
+			n.byFold[FoldIRC(c.Name)] = c
 		}
 	}
-	return nil
+}
+
+// Channel returns the buffer with the given name (case-insensitive), or nil.
+func (n *Network) Channel(name string) *Channel {
+	if n.byFold == nil {
+		n.initByFold()
+	}
+	return n.byFold[FoldIRC(name)]
 }
 
 // getOrCreate returns the named buffer, creating it with kind if absent.
@@ -138,13 +149,21 @@ func (n *Network) getOrCreate(name string, kind ChannelKind) (c *Channel, create
 	}
 	c = &Channel{Name: name, Kind: kind, Members: map[string]*Member{}}
 	n.Channels = append(n.Channels, c)
+	if n.byFold == nil {
+		n.initByFold()
+	}
+	n.byFold[FoldIRC(name)] = c
 	return c, true
 }
 
 // remove drops the named buffer if present.
 func (n *Network) remove(name string) {
+	if n.byFold == nil {
+		n.initByFold()
+	}
+	delete(n.byFold, FoldIRC(name))
 	for i, c := range n.Channels {
-		if eqFold(c.Name, name) {
+		if EqualIRC(c.Name, name) {
 			n.Channels = append(n.Channels[:i], n.Channels[i+1:]...)
 			return
 		}
@@ -163,7 +182,7 @@ func (n *Network) addAutojoin(name, key string, hasKey bool) bool {
 	}
 	changed := true
 	for _, c := range n.Params.Channels {
-		if eqFold(c, name) {
+		if EqualIRC(c, name) {
 			changed = false // already present; only a key change can dirty it
 			name = c        // keep the stored casing for the key lookup
 			break
@@ -205,7 +224,7 @@ func (n *Network) setChannelKey(name, key string) bool {
 // lookupChannelKey returns a channel's stored join key (case-insensitive).
 func (n *Network) lookupChannelKey(name string) (key string, ok bool) {
 	for k, v := range n.Params.ChannelKeys {
-		if eqFold(k, name) {
+		if EqualIRC(k, name) {
 			return v, true
 		}
 	}
@@ -215,7 +234,7 @@ func (n *Network) lookupChannelKey(name string) (key string, ok bool) {
 // deleteChannelKey removes a channel's join key (case-insensitive).
 func (n *Network) deleteChannelKey(name string) {
 	for k := range n.Params.ChannelKeys {
-		if eqFold(k, name) {
+		if EqualIRC(k, name) {
 			delete(n.Params.ChannelKeys, k)
 		}
 	}
@@ -226,7 +245,7 @@ func (n *Network) deleteChannelKey(name string) {
 func (n *Network) removeAutojoin(name string) bool {
 	changed := false
 	for i, c := range n.Params.Channels {
-		if eqFold(c, name) {
+		if EqualIRC(c, name) {
 			n.Params.Channels = append(n.Params.Channels[:i], n.Params.Channels[i+1:]...)
 			changed = true
 			break

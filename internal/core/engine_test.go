@@ -1680,12 +1680,12 @@ func TestRFC1459Fold(t *testing.T) {
 	e, _ := newTestEngine(t)
 	e.apply(Event{Type: EvJoin, Network: "net", Nick: "nick[m]", Buffer: "#go"})
 	e.apply(Event{Type: EvAway, Network: "net", Nick: "nick{m}", Away: true})
-	m := net0(e).Channel("#go").Members[lower("NICK[M]")]
+	m := net0(e).Channel("#go").Members[FoldIRC("NICK[M]")]
 	if m == nil || !m.Away {
 		t.Fatalf("rfc1459 fold broken: %+v", net0(e).Channel("#go").Members)
 	}
-	if !eqFold(`ABC[]\~`, `abc{}|^`) {
-		t.Error(`eqFold(ABC[]\~, abc{}|^) = false`)
+	if !EqualIRC(`ABC[]\~`, `abc{}|^`) {
+		t.Error(`EqualIRC(ABC[]\~, abc{}|^) = false`)
 	}
 }
 

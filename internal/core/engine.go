@@ -543,7 +543,7 @@ func reconcileKeys(keys map[string]string, channels []string) map[string]string 
 	var out map[string]string
 	for k, v := range keys {
 		for _, ch := range channels {
-			if eqFold(ch, k) {
+			if EqualIRC(ch, k) {
 				if out == nil {
 					out = map[string]string{}
 				}
@@ -562,7 +562,7 @@ func reconcileKeys(keys map[string]string, channels []string) map[string]string 
 func diffChannels(old, updated []string) (added, removed []string) {
 	has := func(list []string, s string) bool {
 		for _, x := range list {
-			if eqFold(x, s) {
+			if EqualIRC(x, s) {
 				return true
 			}
 		}
@@ -622,7 +622,7 @@ func (e *Engine) ReorderBuffers(network string, names []string) error {
 	}
 	order := make([]string, len(names))
 	for i, name := range names {
-		order[i] = lower(name)
+		order[i] = FoldIRC(name)
 	}
 	n.Params.BufferOrder = order
 	p := n.Params.clone()
@@ -750,7 +750,7 @@ func (e *Engine) AddMonitor(networkID, nick string) error {
 		e.mu.Unlock()
 		return errors.New("unknown network")
 	}
-	if slices.ContainsFunc(n.Params.Monitor, func(s string) bool { return eqFold(s, nick) }) {
+	if slices.ContainsFunc(n.Params.Monitor, func(s string) bool { return EqualIRC(s, nick) }) {
 		e.mu.Unlock()
 		return nil
 	}
@@ -777,7 +777,7 @@ func (e *Engine) RemoveMonitor(networkID, nick string) error {
 		return errors.New("unknown network")
 	}
 	before := len(n.Params.Monitor)
-	n.Params.Monitor = slices.DeleteFunc(n.Params.Monitor, func(s string) bool { return eqFold(s, nick) })
+	n.Params.Monitor = slices.DeleteFunc(n.Params.Monitor, func(s string) bool { return EqualIRC(s, nick) })
 	if len(n.Params.Monitor) == before {
 		e.mu.Unlock()
 		return nil
@@ -1413,7 +1413,7 @@ func (e *Engine) recordPendingKeys(network, text string) {
 			continue
 		}
 		if key := strings.TrimSpace(keyList[i]); key != "" {
-			e.pendingKeys[network+"\t"+lower(ch)] = key
+			e.pendingKeys[network+"\t"+FoldIRC(ch)] = key
 		}
 	}
 }
@@ -1422,7 +1422,7 @@ func (e *Engine) recordPendingKeys(network, text string) {
 // preceding /join. ok reports whether a key was pending (always a non-empty
 // key when true). Called from applyLocked on the loop goroutine.
 func (e *Engine) takePendingKey(network, channel string) (key string, ok bool) {
-	k := network + "\t" + lower(channel)
+	k := network + "\t" + FoldIRC(channel)
 	key, ok = e.pendingKeys[k]
 	if ok {
 		delete(e.pendingKeys, k)
@@ -1431,10 +1431,10 @@ func (e *Engine) takePendingKey(network, channel string) (key string, ok bool) {
 }
 
 // whoisKey builds the pendingWhois map key for a network+nick pair. The nick
-// is folded with lower (ASCII, matching the member-map keys) so a reply pairs
+// is folded with FoldIRC (ASCII, matching the member-map keys) so a reply pairs
 // to its request regardless of the casing the server echoes back.
 func whoisKey(network, nick string) string {
-	return network + "\t" + lower(nick)
+	return network + "\t" + FoldIRC(nick)
 }
 
 // applyNumeric routes a server numeric (WHOIS/WHO/WHOWAS reply, an error
@@ -1696,7 +1696,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		c, _ := n.getOrCreate(ev.Buffer, KindChannel)
 		for _, m := range ev.Members {
 			mc := m
-			c.Members[lower(m.Nick)] = &mc
+			c.Members[FoldIRC(m.Nick)] = &mc
 		}
 		netChanged = true
 
@@ -1704,7 +1704,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		// away-notify: update the member's away flag in every channel we
 		// share, without a system line.
 		for _, c := range n.Channels {
-			if m, ok := c.Members[lower(ev.Nick)]; ok {
+			if m, ok := c.Members[FoldIRC(ev.Nick)]; ok {
 				m.Away = ev.Away
 				netChanged = true
 			}
@@ -1714,14 +1714,14 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		// account-notify: update the member's services account in every
 		// channel we share, without a system line.
 		for _, c := range n.Channels {
-			if m, ok := c.Members[lower(ev.Nick)]; ok {
+			if m, ok := c.Members[FoldIRC(ev.Nick)]; ok {
 				m.Account = ev.Account
 				netChanged = true
 			}
 		}
 
 	case EvInvite:
-		if eqFold(ev.NewNick, n.Nick) {
+		if EqualIRC(ev.NewNick, n.Nick) {
 			sys(StatusBuffer, fmt.Sprintf("%s invited you to %s — /join %s to accept", ev.Nick, ev.Buffer, ev.Buffer))
 		} else if n.Channel(ev.Buffer) != nil {
 			// invite-notify: an op sees other people's invites to the channel.
@@ -1737,10 +1737,10 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		}
 		friends := make(map[string]bool, len(n.Params.Monitor))
 		for _, f := range n.Params.Monitor {
-			friends[lower(f)] = true
+			friends[FoldIRC(f)] = true
 		}
 		for _, nk := range ev.Args {
-			lk := lower(nk)
+			lk := FoldIRC(nk)
 			if friends[lk] {
 				n.MonitorOnline[lk] = ev.Online
 				netChanged = true
@@ -1752,12 +1752,12 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		if created {
 			e.applyPendingStateLocked(ev.Network, c)
 		}
-		c.Members[lower(ev.Nick)] = &Member{Nick: ev.Nick, Account: ev.Account}
+		c.Members[FoldIRC(ev.Nick)] = &Member{Nick: ev.Nick, Account: ev.Account}
 		line(MsgJoin, ev.Buffer, ev.Nick, fmt.Sprintf("%s has joined %s", ev.Nick, ev.Buffer))
 		netChanged = true
 		// When we join a channel ourselves, remember it (and the join key, if
 		// the /join carried one) so it is rejoined on the next (re)connect.
-		if eqFold(ev.Nick, n.Nick) {
+		if EqualIRC(ev.Nick, n.Nick) {
 			key, hasKey := e.takePendingKey(ev.Network, ev.Buffer)
 			if n.addAutojoin(ev.Buffer, key, hasKey) {
 				persist = true
@@ -1767,13 +1767,13 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 	case EvPart:
 		// If we are the one parting, drop the buffer entirely and forget its
 		// auto-join entry; otherwise just remove the member.
-		if eqFold(ev.Nick, n.Nick) {
+		if EqualIRC(ev.Nick, n.Nick) {
 			n.remove(ev.Buffer)
 			if n.removeAutojoin(ev.Buffer) {
 				persist = true
 			}
 		} else if c := n.Channel(ev.Buffer); c != nil {
-			delete(c.Members, lower(ev.Nick))
+			delete(c.Members, FoldIRC(ev.Nick))
 		}
 		text := fmt.Sprintf("%s has left %s", ev.Nick, ev.Buffer)
 		if ev.Text != "" {
@@ -1788,13 +1788,13 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		// choosing to leave; the next reconnect or /join takes them back).
 		// The member list is no longer valid either way.
 		text := fmt.Sprintf("%s was kicked from %s by %s", ev.Nick, ev.Buffer, ev.Kicker)
-		if eqFold(ev.Nick, n.Nick) {
+		if EqualIRC(ev.Nick, n.Nick) {
 			text = fmt.Sprintf("you were kicked from %s by %s", ev.Buffer, ev.Kicker)
 			if c := n.Channel(ev.Buffer); c != nil {
 				clear(c.Members)
 			}
 		} else if c := n.Channel(ev.Buffer); c != nil {
-			delete(c.Members, lower(ev.Nick))
+			delete(c.Members, FoldIRC(ev.Nick))
 		}
 		if ev.Text != "" {
 			text += " (" + ev.Text + ")"
@@ -1808,23 +1808,23 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 			text += " (" + ev.Text + ")"
 		}
 		for _, c := range n.Channels {
-			if _, ok := c.Members[lower(ev.Nick)]; ok {
-				delete(c.Members, lower(ev.Nick))
+			if _, ok := c.Members[FoldIRC(ev.Nick)]; ok {
+				delete(c.Members, FoldIRC(ev.Nick))
 				line(MsgQuit, c.Name, ev.Nick, text)
 				netChanged = true
 			}
 		}
 
 	case EvNick:
-		if eqFold(n.Nick, ev.Nick) {
+		if EqualIRC(n.Nick, ev.Nick) {
 			n.Nick = ev.NewNick
 			netChanged = true
 		}
 		for _, c := range n.Channels {
-			if mem, ok := c.Members[lower(ev.Nick)]; ok {
-				delete(c.Members, lower(ev.Nick))
+			if mem, ok := c.Members[FoldIRC(ev.Nick)]; ok {
+				delete(c.Members, FoldIRC(ev.Nick))
 				mem.Nick = ev.NewNick
-				c.Members[lower(ev.NewNick)] = mem
+				c.Members[FoldIRC(ev.NewNick)] = mem
 				line(MsgNick, c.Name, ev.Nick, fmt.Sprintf("%s is now known as %s", ev.Nick, ev.NewNick))
 				netChanged = true
 			}
@@ -1839,7 +1839,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 			return emit, false, false
 		}
 		for _, mm := range ev.MemberModes {
-			m, ok := c.Members[lower(mm.Nick)]
+			m, ok := c.Members[FoldIRC(mm.Nick)]
 			if !ok {
 				continue
 			}
@@ -1937,7 +1937,7 @@ func orderChannels(nc *Network) {
 		}
 	}
 	pos := func(c *Channel) int {
-		if i, ok := rank[lower(c.Name)]; ok {
+		if i, ok := rank[FoldIRC(c.Name)]; ok {
 			return i
 		}
 		return len(order) // unlisted → after everything listed
@@ -1980,8 +1980,6 @@ func isChannelName(name string) bool {
 		return false
 	}
 }
-
-func lower(s string) string { return FoldIRC(s) }
 
 // membershipPrefixOrder ranks channel prefix symbols highest-first
 // (owner, admin, op, half-op, voice) — matching the client's nicklist sort.
