@@ -137,6 +137,7 @@ export interface Jump {
 // and RFC3339 upload/expiry times. The server keeps uploads 3–7 days by
 // size, so every entry carries the moment it will be deleted.
 export interface UploadEntry {
+  id?: string;
   url: string;
   name: string;
   size: number;
@@ -1662,6 +1663,18 @@ export class Connection {
       return (await r.json()) as UploadEntry[];
     } catch {
       return [];
+    }
+  }
+
+  // deleteUpload deletes a stored upload by id or url or name.
+  async deleteUpload(idOrUrl: string): Promise<boolean> {
+    try {
+      const r = await fetch(`/api/uploads?id=${encodeURIComponent(idOrUrl)}`, {
+        method: "DELETE",
+      });
+      return r.ok;
+    } catch {
+      return false;
     }
   }
 

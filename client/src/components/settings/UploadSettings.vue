@@ -5,6 +5,7 @@ import type { UploadEntry } from "../../connection";
 
 const hasUploads = connection.hasCap("uploads");
 const uploadList = ref<UploadEntry[] | null>(null);
+const deleting = ref<Record<string, boolean>>({});
 
 onMounted(async () => {
   if (hasUploads) uploadList.value = await connection.listUploads();
@@ -23,6 +24,22 @@ function expiresIn(iso: string): string {
   if (hours < 48) return `in ${hours} hour${hours === 1 ? "" : "s"}`;
   const days = Math.round(hours / 24);
   return `in ${days} days`;
+}
+
+async function handleDelete(u: UploadEntry) {
+  const key = u.id || u.url;
+  if (!key || deleting.value[key]) return;
+  deleting.value[key] = true;
+  const ok = await connection.deleteUpload(key);
+  delete deleting.value[key];
+  if (ok) {
+    if (uploadList.value) {
+      uploadList.value = uploadList.value.filter((x) => x !== u && (x.id || x.url) !== key);
+    }
+    connection.showToast(`Deleted ${u.name || "upload"}`, "upload");
+  } else {
+    connection.showToast(`Failed to delete ${u.name || "upload"}`, "upload");
+  }
 }
 </script>
 
@@ -51,13 +68,22 @@ function expiresIn(iso: string): string {
       </div>
 
       <div v-else class="uploads-list">
-        <div v-for="u in uploadList" :key="u.url" class="upload-row">
+        <div v-for="u in uploadList" :key="u.id || u.url" class="upload-row">
           <a :href="u.url" target="_blank" rel="noopener" class="upload-link">
             📄 {{ u.name || u.url.slice(u.url.lastIndexOf("/") + 1) }}
           </a>
           <div class="upload-meta">
             <span class="upload-size">{{ fmtSize(u.size) }}</span>
             <span class="upload-expiry">expires {{ expiresIn(u.expires) }}</span>
+            <button
+              type="button"
+              class="btn-danger-ghost upload-delete-btn"
+              :disabled="deleting[u.id || u.url]"
+              @click="handleDelete(u)"
+              title="Delete upload"
+            >
+              {{ deleting[u.id || u.url] ? "Deleting…" : "Delete" }}
+            </button>
           </div>
         </div>
       </div>

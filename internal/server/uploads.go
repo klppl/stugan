@@ -74,6 +74,10 @@ func (s *Server) writeUploadMeta(stored string, m uploadMeta) error {
 // under uploadDir with a random name, and returns its served URL.
 // POST /api/upload
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		s.handleUploadDelete(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -149,6 +153,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
+		"id":      name,
 		"url":     "/uploads/" + name,
 		"name":    hdr.Filename,
 		"expires": now.Add(s.uploadTTL(size)).Format(time.RFC3339),
@@ -214,8 +219,8 @@ func (s *Server) handleCustomUpload(w http.ResponseWriter, r *http.Request, file
 	user, _ := s.userOf(r)
 	now := time.Now().UTC()
 	size := int64(len(data))
+	name := randomName()
 	if s.uploadDir != "" && user != "" {
-		name := randomName()
 		if err := s.writeUploadMeta(name, uploadMeta{
 			Owner:    user,
 			Name:     filename,
@@ -229,6 +234,7 @@ func (s *Server) handleCustomUpload(w http.ResponseWriter, r *http.Request, file
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
+		"id":      name,
 		"url":     uploadURL,
 		"name":    filename,
 		"expires": now.Add(s.uploadTTL(size)).Format(time.RFC3339),
@@ -279,6 +285,7 @@ func parseCustomUploadResponse(body []byte, responseField string) (string, error
 
 // uploadEntry is one row of the per-user upload listing.
 type uploadEntry struct {
+	ID       string    `json:"id"`
 	URL      string    `json:"url"`
 	Name     string    `json:"name"` // original filename
 	Size     int64     `json:"size"`
@@ -290,6 +297,10 @@ type uploadEntry struct {
 // first, with each file's computed expiry.
 // GET /api/uploads
 func (s *Server) handleUploadList(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		s.handleUploadDelete(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -327,6 +338,7 @@ func (s *Server) handleUploadList(w http.ResponseWriter, r *http.Request) {
 			size = info.Size()
 		}
 		entries = append(entries, uploadEntry{
+			ID:       stored,
 			URL:      urlStr,
 			Name:     m.Name,
 			Size:     size,
@@ -337,6 +349,108 @@ func (s *Server) handleUploadList(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Uploaded.After(entries[j].Uploaded) })
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(entries)
+}
+
+// handleUploadDelete deletes a stored upload (and its sidecar) owned by the
+// requesting user.
+// DELETE /api/uploads?id=<id> or DELETE /api/upload?id=<id>
+func (s *Server) handleUploadDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, _ := s.userOf(r)
+
+	target := r.URL.Query().Get("id")
+	if target == "" {
+		target = r.URL.Query().Get("name")
+	}
+	if target == "" {
+		target = r.URL.Query().Get("url")
+	}
+	if target == "" && r.Body != nil {
+		var body struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.ID != "" {
+			target = body.ID
+		} else if body.Name != "" {
+			target = body.Name
+		} else if body.URL != "" {
+			target = body.URL
+		}
+	}
+
+	if target == "" {
+		http.Error(w, "missing upload identifier", http.StatusBadRequest)
+		return
+	}
+
+	stored := filepath.Base(target)
+	if strings.HasPrefix(target, "/uploads/") {
+		stored = strings.TrimPrefix(target, "/uploads/")
+		stored = filepath.Base(stored)
+	}
+
+	if stored == "." || stored == "/" || strings.HasPrefix(stored, ".") {
+		http.Error(w, "invalid upload identifier", http.StatusBadRequest)
+		return
+	}
+
+	metaPath := s.uploadMetaPath(stored)
+	b, err := os.ReadFile(metaPath)
+	if err != nil {
+		foundStored := ""
+		sidecars, readErr := os.ReadDir(filepath.Join(s.uploadDir, uploadMetaDir))
+		if readErr == nil {
+			for _, de := range sidecars {
+				scName, ok := strings.CutSuffix(de.Name(), ".json")
+				if !ok || de.IsDir() {
+					continue
+				}
+				data, readErr := os.ReadFile(s.uploadMetaPath(scName))
+				if readErr != nil {
+					continue
+				}
+				var m uploadMeta
+				if json.Unmarshal(data, &m) == nil && m.Owner == user {
+					if m.URL == target || "/uploads/"+scName == target || m.Name == target || scName == target {
+						foundStored = scName
+						b = data
+						metaPath = s.uploadMetaPath(scName)
+						break
+					}
+				}
+			}
+		}
+		if foundStored == "" {
+			http.Error(w, "upload not found", http.StatusNotFound)
+			return
+		}
+		stored = foundStored
+	}
+
+	var m uploadMeta
+	if err := json.Unmarshal(b, &m); err != nil || m.Owner != user {
+		http.Error(w, "upload not found", http.StatusNotFound)
+		return
+	}
+
+	if m.URL == "" {
+		localPath := filepath.Join(s.uploadDir, stored)
+		_ = os.Remove(localPath)
+	}
+
+	if err := os.Remove(metaPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		http.Error(w, "server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
 // sweepUploads deletes every stored file older than its size-dependent TTL

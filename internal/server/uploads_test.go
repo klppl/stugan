@@ -602,3 +602,113 @@ func TestCustomUploadHostEndToEnd(t *testing.T) {
 		t.Errorf("listed entry = %+v", list[0])
 	}
 }
+
+func TestUploadDelete(t *testing.T) {
+	dir := t.TempDir()
+	eng := core.New(core.Options{Sink: noopSink{}})
+	srv := New(SingleUser(&Tenant{Engine: eng}), Options{UploadDir: dir, MaxUpload: 1 << 20})
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+
+	// 1. Upload a file
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, _ := mw.CreateFormFile("file", "testfile.txt")
+	fw.Write([]byte("delete me"))
+	mw.Close()
+
+	resp, err := http.Post(hs.URL+"/api/upload", mw.FormDataContentType(), &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("upload status = %d, want 200", resp.StatusCode)
+	}
+
+	var uploadRes struct {
+		ID   string `json:"id"`
+		URL  string `json:"url"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&uploadRes); err != nil {
+		t.Fatal(err)
+	}
+	if uploadRes.ID == "" {
+		t.Fatal("upload ID was empty")
+	}
+
+	// Verify upload exists on disk
+	storedPath := filepath.Join(dir, uploadRes.ID)
+	if _, err := os.Stat(storedPath); err != nil {
+		t.Fatalf("stored file missing on disk: %v", err)
+	}
+	metaPath := srv.uploadMetaPath(uploadRes.ID)
+	if _, err := os.Stat(metaPath); err != nil {
+		t.Fatalf("meta sidecar missing on disk: %v", err)
+	}
+
+	// 2. Verify in listing
+	rList, err := http.Get(hs.URL + "/api/uploads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rList.Body.Close()
+	var list []struct {
+		ID  string `json:"id"`
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(rList.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("got %d uploads in list, want 1", len(list))
+	}
+	if list[0].ID != uploadRes.ID {
+		t.Errorf("got listed ID %q, want %q", list[0].ID, uploadRes.ID)
+	}
+
+	// 3. Invalid delete attempt (path traversal / bad target)
+	reqBad, _ := http.NewRequest(http.MethodDelete, hs.URL+"/api/uploads?id=../secret", nil)
+	respBad, err := http.DefaultClient.Do(reqBad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	respBad.Body.Close()
+	if respBad.StatusCode != http.StatusBadRequest && respBad.StatusCode != http.StatusNotFound {
+		t.Errorf("path traversal delete status = %d, want 400 or 404", respBad.StatusCode)
+	}
+
+	// 4. Delete the upload manually
+	reqDel, _ := http.NewRequest(http.MethodDelete, hs.URL+"/api/uploads?id="+uploadRes.ID, nil)
+	respDel, err := http.DefaultClient.Do(reqDel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respDel.Body.Close()
+	if respDel.StatusCode != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200", respDel.StatusCode)
+	}
+
+	// 5. Verify file and sidecar were removed from disk
+	if _, err := os.Stat(storedPath); !os.IsNotExist(err) {
+		t.Errorf("stored file still exists on disk after delete")
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
+		t.Errorf("meta sidecar still exists on disk after delete")
+	}
+
+	// 6. Verify empty listing
+	rList2, err := http.Get(hs.URL + "/api/uploads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rList2.Body.Close()
+	var list2 []any
+	if err := json.NewDecoder(rList2.Body).Decode(&list2); err != nil {
+		t.Fatal(err)
+	}
+	if len(list2) != 0 {
+		t.Errorf("got %d uploads in list after delete, want 0", len(list2))
+	}
+}
