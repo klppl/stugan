@@ -54,6 +54,10 @@ type Config struct {
 	// SSH exposes the terminal UI over SSH. Public-key auth only; disabled
 	// unless [ssh].enabled is set.
 	SSH SSHConfig `toml:"ssh"`
+
+	// IRCServer exposes the IRC bouncer server for native IRC clients.
+	// Disabled unless [ircserver].listen is set.
+	IRCServer IRCServerConfig `toml:"ircserver"`
 }
 
 // SSHConfig configures the SSH-served terminal UI. Authentication is by
@@ -76,6 +80,21 @@ type SSHConfig struct {
 	// Ignored in multi-user mode, where each [[users]] block carries its own
 	// authorized_keys.
 	AuthorizedKeys []string `toml:"authorized_keys"`
+}
+
+// IRCServerConfig configures the IRC bouncer server.
+type IRCServerConfig struct {
+	// Listen is the address the bouncer server binds, e.g. "127.0.0.1:6667" or "0.0.0.0:6697".
+	// When empty, the bouncer server is disabled.
+	Listen string `toml:"listen"`
+	// TLS enables encryption on the bouncer port. Enabled by default if listen is set.
+	TLS *bool `toml:"tls"`
+	// CertFile is an optional path to a PEM certificate file.
+	CertFile string `toml:"cert_file"`
+	// KeyFile is an optional path to a PEM private key file.
+	KeyFile string `toml:"key_file"`
+	// MaxPlayback is the default number of historical lines replayed per buffer on attach. Defaults to 50.
+	MaxPlayback int `toml:"max_playback"`
 }
 
 // HistoryConfig controls message-history retention.
@@ -140,6 +159,14 @@ func (c *Config) PluginSandbox() bool {
 		return true
 	}
 	return *c.Plugins.Sandbox
+}
+
+// IRCServerTLSEnabled reports whether TLS is enabled on the bouncer listener (defaults to true).
+func (c *Config) IRCServerTLSEnabled() bool {
+	if c.IRCServer.TLS == nil {
+		return true
+	}
+	return *c.IRCServer.TLS
 }
 
 // EffectiveUsers returns the users to run: the configured accounts, or a
@@ -328,6 +355,9 @@ func (c *Config) withDefaults() {
 	}
 	if c.Uploads.FieldName == "" {
 		c.Uploads.FieldName = "file"
+	}
+	if c.IRCServer.MaxPlayback <= 0 {
+		c.IRCServer.MaxPlayback = 50
 	}
 }
 

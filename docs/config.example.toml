@@ -107,7 +107,16 @@ connect  = true
 # listen  = "0.0.0.0:2222"                     # default ":2222"
 # host_key = ""                                # default <data>/ssh_host_ed25519_key (auto-generated)
 # authorized_keys = [                          # single-user mode; multi-user uses
-#   "ssh-ed25519 AAAA... me@laptop",           # each [[users]].authorized_keys
-# ]
-#
 # Connect with:  ssh -p 2222 default@your-host
+
+# ---------------------------------------------------------------------------
+# IRC bouncer server (optional). Exposes persistent IRC state to native IRC
+# clients (WeeChat, HexChat, Textual, Irssi, etc.). See docs/ircserver.md.
+# ---------------------------------------------------------------------------
+# [ircserver]
+# listen       = "0.0.0.0:6697"                 # empty/omitted disables bouncer
+# tls          = true                           # defaults to true (auto-generates cert if none provided)
+# cert_file    = ""                             # optional custom PEM cert path
+# key_file     = ""                             # optional custom PEM key path
+# max_playback = 50                             # backlog lines to replay on attach (default 50)
+

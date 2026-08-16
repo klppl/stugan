@@ -15,6 +15,7 @@ import (
 	"github.com/klippelism/stugan/internal/config"
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/irc"
+	"github.com/klippelism/stugan/internal/ircserver"
 	"github.com/klippelism/stugan/internal/plugin"
 	"github.com/klippelism/stugan/internal/safehttp"
 	"github.com/klippelism/stugan/internal/scripts"
@@ -293,6 +294,13 @@ func (h *hub) registerSinks(srv *server.Server) {
 // running the engines: AddSink mutates the engine's sink slice, which must be
 // stable once the loop goroutine starts.
 func (h *hub) registerTUISinks(srv *tui.Server) {
+	for id, eng := range h.engines {
+		eng.AddSink(srv.Sink(id))
+	}
+}
+
+// registerIRCSinks wires the IRC bouncer server's per-user sink onto each engine.
+func (h *hub) registerIRCSinks(srv *ircserver.Server) {
 	for id, eng := range h.engines {
 		eng.AddSink(srv.Sink(id))
 	}

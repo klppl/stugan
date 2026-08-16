@@ -265,6 +265,28 @@ Connect with `ssh -p 2222 <user>@<host>` — the SSH username selects which
 stugan user to open (in single-user mode it is `default`). A key registered
 for one user can never open another user's session.
 
+## `[ircserver]`
+
+Serves persistent IRC state directly to native IRC desktop and mobile clients
+(WeeChat, HexChat, irssi, Textual, mIRC, etc.) over TCP/TLS. Disabled unless
+`listen` is non-empty. See [ircserver.md](ircserver.md) for the full setup
+guide.
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `listen` | string | `""` | Address to bind, e.g. `0.0.0.0:6697`. Omitted or empty disables the bouncer. |
+| `tls` | bool | `true` | Enable TLS encryption. When true without custom certs, an ECDSA certificate is auto-generated. |
+| `cert_file` | string | `""` | Optional path to custom TLS certificate (PEM format). |
+| `key_file` | string | `""` | Optional path to custom TLS private key (PEM format). |
+| `max_playback` | int | `50` | Number of historical messages replayed per buffer on client attach. |
+
+```toml
+[ircserver]
+listen       = "0.0.0.0:6697"
+tls          = true
+max_playback = 50
+```
+
 ## Environment variables
 
 | Var | Meaning |

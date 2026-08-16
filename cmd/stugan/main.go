@@ -17,6 +17,7 @@ import (
 
 	"github.com/klippelism/stugan/internal/auth"
 	"github.com/klippelism/stugan/internal/config"
+	"github.com/klippelism/stugan/internal/ircserver"
 	"github.com/klippelism/stugan/internal/logging"
 	"github.com/klippelism/stugan/internal/server"
 	"github.com/klippelism/stugan/internal/tui"
@@ -134,6 +135,20 @@ func run() error {
 		}
 	}
 
+	// Optional IRC bouncer server (exposes IRC protocol access to native clients).
+	var ircSrv *ircserver.Server
+	if cfg.IRCServer.Listen != "" {
+		ircSrv = ircserver.New(hub, ircserver.Options{
+			Logger:      log,
+			TLS:         cfg.IRCServerTLSEnabled(),
+			CertFile:    cfg.IRCServer.CertFile,
+			KeyFile:     cfg.IRCServer.KeyFile,
+			DataDir:     cfg.DataDir(),
+			MaxPlayback: cfg.IRCServer.MaxPlayback,
+		})
+		hub.registerIRCSinks(ircSrv)
+	}
+
 	log.Info("daemon ready", "users", len(hub.Users()), "auth", cfg.AuthEnabled())
 
 	// Run every user's engine and the HTTP server concurrently; if any
@@ -155,6 +170,9 @@ func run() error {
 	wg.Go(func() { defer cancel(); fail(srv.ListenAndServe(ctx, cfg.Server.Listen)) })
 	if tuiSrv != nil {
 		wg.Go(func() { defer cancel(); fail(tuiSrv.ListenAndServe(ctx)) })
+	}
+	if ircSrv != nil {
+		wg.Go(func() { defer cancel(); fail(ircSrv.ListenAndServe(ctx, cfg.IRCServer.Listen)) })
 	}
 	if days := cfg.History.RetentionDays; days > 0 {
 		wg.Go(func() { hub.pruneHistoryLoop(ctx, days, log) })
