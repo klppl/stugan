@@ -26,6 +26,7 @@ import (
 	"github.com/klippelism/stugan/internal/config"
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/proto"
+	"github.com/klippelism/stugan/internal/store"
 )
 
 // sessionCookie is the name of the session cookie set on login.
@@ -65,11 +66,19 @@ type Prefs interface {
 	SetPref(key, value string) error
 }
 
-// Tenant is one user's engine and history.
+// BackupStore handles database backup snapshots and imports.
+type BackupStore interface {
+	Backup(ctx context.Context, destPath string) error
+	Import(ctx context.Context, srcPath string, mode store.ImportMode) error
+}
+
+// Tenant is one user's engine, history, and storage.
 type Tenant struct {
-	Engine  *core.Engine
-	History History
-	Prefs   Prefs
+	Engine     *core.Engine
+	History    History
+	Prefs      Prefs
+	Store      BackupStore
+	ScriptsDir string
 }
 
 // Hub resolves users, sessions, and per-user tenants. The composition root
@@ -200,6 +209,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/magicword/logout", s.handleMagicWordLogout)
 	mux.HandleFunc("/api/login", s.handleLogin)
 	mux.HandleFunc("/api/logout", s.handleLogout)
+	mux.HandleFunc("/api/export", s.requireUser(s.handleExport))
+	mux.HandleFunc("/api/import", s.requireUser(s.handleImport))
 	mux.HandleFunc("/api/preview", s.requireUser(s.handlePreview))
 	mux.HandleFunc("/api/proxy", s.requireUser(s.handleProxy))
 	if s.uploadDir != "" || s.uploads.Mode == "custom" {

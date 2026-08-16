@@ -32,6 +32,7 @@ the IRCv3 discipline of [Halloy](https://github.com/squidowl/halloy) and a
 - PWA: installable, mobile-responsive, Web Push + desktop notifications.
 - **SSH Terminal UI**: Access your persistent session directly over SSH via a full-screen terminal UI (Bubble Tea/Wish) with mouse support, quick-switcher, and plugin manager.
 - **IRC Bouncer Server**: Connect your favorite native desktop/mobile IRC clients (WeeChat, HexChat, irssi, Textual) directly to stugan with full state replay, backlog sync, and multi-network support.
+- **Data Portability & Backups**: One-click full user backup export and restore (.tar.gz, .zip, or raw SQLite) covering message history, network credentials, Lua plugins, and user preferences.
 - Multi-user with bcrypt auth and full per-user isolation; an optional
   site-wide password gate.
 

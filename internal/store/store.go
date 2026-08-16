@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -24,8 +25,9 @@ import (
 
 // Store is a SQLite-backed message store.
 type Store struct {
-	db  *sql.DB
-	log *slog.Logger
+	db   *sql.DB
+	path string
+	log  *slog.Logger
 }
 
 var (
@@ -145,7 +147,7 @@ func Open(path string, log *slog.Logger) (*Store, error) {
 			return nil, fmt.Errorf("migrate msgid dedup: %w", err)
 		}
 	}
-	return &Store{db: db, log: log}, nil
+	return &Store{db: db, path: path, log: log}, nil
 }
 
 const sqlFoldBuffer = `replace(replace(replace(replace(lower(buffer), '[', '{'), ']', '}'), '\', '|'), '~', '^')`
@@ -843,4 +845,139 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// Path returns the filesystem path of the database.
+func (s *Store) Path() string { return s.path }
+
+// Backup creates a clean, consistent, standalone snapshot of the database
+// at destPath using SQLite's VACUUM INTO.
+func (s *Store) Backup(ctx context.Context, destPath string) error {
+	_ = os.Remove(destPath)
+	query := fmt.Sprintf("VACUUM INTO '%s'", strings.ReplaceAll(destPath, "'", "''"))
+	if _, err := s.db.ExecContext(ctx, query); err != nil {
+		return fmt.Errorf("backup database: %w", err)
+	}
+	return nil
+}
+
+// ImportMode specifies whether imported data replaces or merges into existing tables.
+type ImportMode string
+
+const (
+	ImportModeReplace ImportMode = "replace"
+	ImportModeMerge   ImportMode = "merge"
+)
+
+// Import imports data from a source SQLite database at srcPath into the store.
+func (s *Store) Import(ctx context.Context, srcPath string, mode ImportMode) error {
+	srcDSN := "file:" + srcPath + "?mode=ro"
+	srcDB, err := sql.Open("sqlite", srcDSN)
+	if err != nil {
+		return fmt.Errorf("open import db: %w", err)
+	}
+	defer srcDB.Close()
+
+	if err := srcDB.PingContext(ctx); err != nil {
+		return fmt.Errorf("ping import db: %w", err)
+	}
+
+	var quickCheck string
+	if err := srcDB.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&quickCheck); err != nil || quickCheck != "ok" {
+		return fmt.Errorf("import db corrupted or invalid: %v (quick_check=%s)", err, quickCheck)
+	}
+
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire db conn: %w", err)
+	}
+	defer conn.Close()
+
+	attachQuery := fmt.Sprintf("ATTACH DATABASE '%s' AS import_db", strings.ReplaceAll(srcPath, "'", "''"))
+	if _, err := conn.ExecContext(ctx, attachQuery); err != nil {
+		return fmt.Errorf("attach import db: %w", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(ctx, "DETACH DATABASE import_db")
+	}()
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin import tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if mode == ImportModeReplace {
+		for _, tbl := range []string{"messages", "networks", "read_markers", "plugin_kv", "prefs"} {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM "+tbl); err != nil {
+				return fmt.Errorf("clear table %s: %w", tbl, err)
+			}
+		}
+
+		for _, tbl := range []string{"messages", "networks", "read_markers", "plugin_kv", "prefs"} {
+			var count int
+			err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name=?", tbl).Scan(&count)
+			if err == nil && count > 0 {
+				if _, err := tx.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s SELECT * FROM import_db.%s", tbl, tbl)); err != nil {
+					return fmt.Errorf("import table %s: %w", tbl, err)
+				}
+			}
+		}
+	} else {
+		var hasNetworks int
+		_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name='networks'").Scan(&hasNetworks)
+		if hasNetworks > 0 {
+			if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO networks(id, data) SELECT id, data FROM import_db.networks"); err != nil {
+				return fmt.Errorf("merge networks: %w", err)
+			}
+		}
+
+		var hasMarkers int
+		_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name='read_markers'").Scan(&hasMarkers)
+		if hasMarkers > 0 {
+			if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO read_markers(network, buffer, ts)
+				SELECT i.network, i.buffer, MAX(i.ts, COALESCE(r.ts, 0))
+				FROM import_db.read_markers i
+				LEFT JOIN read_markers r ON r.network = i.network AND r.buffer = i.buffer`); err != nil {
+				return fmt.Errorf("merge read_markers: %w", err)
+			}
+		}
+
+		var hasKV int
+		_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name='plugin_kv'").Scan(&hasKV)
+		if hasKV > 0 {
+			if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO plugin_kv(script, key, value) SELECT script, key, value FROM import_db.plugin_kv"); err != nil {
+				return fmt.Errorf("merge plugin_kv: %w", err)
+			}
+		}
+
+		var hasPrefs int
+		_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name='prefs'").Scan(&hasPrefs)
+		if hasPrefs > 0 {
+			if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO prefs(key, value) SELECT key, value FROM import_db.prefs"); err != nil {
+				return fmt.Errorf("merge prefs: %w", err)
+			}
+		}
+
+		var hasMessages int
+		_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name='messages'").Scan(&hasMessages)
+		if hasMessages > 0 {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO messages(msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags, buffer_fold)
+				SELECT msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags, buffer_fold FROM import_db.messages`); err != nil {
+				return fmt.Errorf("merge messages: %w", err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit import tx: %w", err)
+	}
+
+	_, _ = s.db.ExecContext(ctx, "INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+
+	if _, err := conn.ExecContext(ctx, "DETACH DATABASE import_db"); err != nil {
+		return fmt.Errorf("detach import db: %w", err)
+	}
+
+	return nil
 }

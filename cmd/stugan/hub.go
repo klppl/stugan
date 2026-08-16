@@ -225,7 +225,13 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 		}
 
 		h.engines[u.Name] = eng
-		h.tenants[u.Name] = &server.Tenant{Engine: eng, History: db, Prefs: db}
+		h.tenants[u.Name] = &server.Tenant{
+			Engine:     eng,
+			History:    db,
+			Prefs:      db,
+			Store:      db,
+			ScriptsDir: scriptsDir,
+		}
 	}
 
 	cleanup := func() {

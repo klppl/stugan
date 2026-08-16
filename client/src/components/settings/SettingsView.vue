@@ -6,6 +6,7 @@ import HighlightSettings from "./HighlightSettings.vue";
 import AliasSettings from "./AliasSettings.vue";
 import PluginSettings from "./PluginSettings.vue";
 import UploadSettings from "./UploadSettings.vue";
+import BackupSettings from "./BackupSettings.vue";
 import NotificationAccountSettings from "./NotificationAccountSettings.vue";
 import { connection } from "../../connection";
 
@@ -18,6 +19,7 @@ export type SettingTabId =
   | "aliases"
   | "plugins"
   | "uploads"
+  | "backup"
   | "account";
 
 interface SettingCategory {
@@ -82,6 +84,13 @@ const categories: SettingCategory[] = [
     cap: "uploads",
   },
   {
+    id: "backup",
+    label: "Backup & Data",
+    icon: "💾",
+    desc: "Export & import portable backups",
+    component: BackupSettings,
+  },
+  {
     id: "account",
     label: "Account & Notifications",
     icon: "👤",
@@ -110,6 +119,8 @@ const settingSearchItems: SettingSearchItem[] = [
   { tab: "plugins", label: "Curated Plugin Library", desc: "Browse and install official plugins", keywords: "extensions scripts" },
   { tab: "plugins", label: "Import Plugin from URL", desc: "Download a Lua script from a remote URL", keywords: "extensions scripts remote" },
   { tab: "uploads", label: "Stored Uploads", desc: "View uploaded files and retention expiry", keywords: "media storage files" },
+  { tab: "backup", label: "Export Backup", desc: "Download portable archive of database and plugins", keywords: "backup export database download tar zip" },
+  { tab: "backup", label: "Import / Restore Backup", desc: "Restore database and plugins from archive", keywords: "restore import upload database" },
   { tab: "account", label: "Desktop & Push Notifications", desc: "Receive notifications for mentions and highlights", keywords: "webpush browser alerts" },
   { tab: "account", label: "User Session", desc: "View authentication status or log out", keywords: "account login sign out" },
 ];

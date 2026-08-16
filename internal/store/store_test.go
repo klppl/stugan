@@ -763,3 +763,83 @@ func TestRedactPersists(t *testing.T) {
 		t.Errorf("empty-target redact deleted rows: %+v", got)
 	}
 }
+
+func TestStoreBackupAndImport(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath1 := filepath.Join(dir, "store1.db")
+	s1, err := Open(dbPath1, nil)
+	if err != nil {
+		t.Fatalf("Open s1: %v", err)
+	}
+	defer s1.Close()
+
+	// Seed s1 with data
+	base := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	s1.Print(msg("libera", "#stugan", "alice", "hello world", core.MsgPrivmsg, base))
+	if err := s1.SaveNetwork(core.NetworkParams{ID: "libera", Name: "Libera Chat", Nick: "alice"}); err != nil {
+		t.Fatalf("SaveNetwork: %v", err)
+	}
+	if err := s1.SetPref("theme", "midnight"); err != nil {
+		t.Fatalf("SetPref: %v", err)
+	}
+	if err := s1.MarkRead(ctx, "libera", "#stugan", base); err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+
+	// Backup s1 to snapshot file
+	backupPath := filepath.Join(dir, "backup.db")
+	if err := s1.Backup(ctx, backupPath); err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+
+	// Test Import Replace into s2
+	dbPath2 := filepath.Join(dir, "store2.db")
+	s2, err := Open(dbPath2, nil)
+	if err != nil {
+		t.Fatalf("Open s2: %v", err)
+	}
+	defer s2.Close()
+
+	if err := s2.Import(ctx, backupPath, ImportModeReplace); err != nil {
+		t.Fatalf("Import Replace: %v", err)
+	}
+
+	// Verify s2 contents
+	msgs, _, err := s2.Backlog(ctx, "libera", "#stugan", 0, 10)
+	if err != nil || len(msgs) != 1 || msgs[0].Text != "hello world" {
+		t.Fatalf("s2 backlog: %+v, err: %v", msgs, err)
+	}
+	nets, err := s2.Networks()
+	if err != nil || len(nets) != 1 || nets[0].ID != "libera" {
+		t.Fatalf("s2 networks: %+v, err: %v", nets, err)
+	}
+	pref, err := s2.Pref("theme")
+	if err != nil || pref != "midnight" {
+		t.Fatalf("s2 pref: %q, err: %v", pref, err)
+	}
+
+	// Test Import Merge: add new message and network to s2, then merge into s1
+	s2.Print(msg("oftc", "#debian", "bob", "merge test", core.MsgPrivmsg, base.Add(time.Minute)))
+	if err := s2.SaveNetwork(core.NetworkParams{ID: "oftc", Name: "OFTC", Nick: "bob"}); err != nil {
+		t.Fatalf("SaveNetwork s2: %v", err)
+	}
+	backupPath2 := filepath.Join(dir, "backup2.db")
+	if err := s2.Backup(ctx, backupPath2); err != nil {
+		t.Fatalf("Backup s2: %v", err)
+	}
+
+	if err := s1.Import(ctx, backupPath2, ImportModeMerge); err != nil {
+		t.Fatalf("Import Merge into s1: %v", err)
+	}
+
+	// Verify s1 has both networks and messages
+	nets1, err := s1.Networks()
+	if err != nil || len(nets1) != 2 {
+		t.Fatalf("s1 networks after merge: %+v, err: %v", nets1, err)
+	}
+	msgs1, _, _ := s1.Backlog(ctx, "oftc", "#debian", 0, 10)
+	if len(msgs1) != 1 || msgs1[0].Text != "merge test" {
+		t.Fatalf("s1 oftc backlog after merge: %+v", msgs1)
+	}
+}

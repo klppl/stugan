@@ -1,9 +1,15 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"maps"
+	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -15,6 +21,7 @@ import (
 
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/proto"
+	"github.com/klippelism/stugan/internal/store"
 )
 
 // fakeConn is a core.IRCConn that blocks in Connect and records sends.
@@ -618,5 +625,92 @@ func TestDraftsSync(t *testing.T) {
 	}
 	if len(initState.Drafts) != 1 || initState.Drafts[0].Text != "Hello world!" {
 		t.Fatalf("initState drafts = %+v, want 1 draft", initState.Drafts)
+	}
+}
+
+func TestExportAndImportAPI(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	scriptsDir := filepath.Join(dir, "scripts")
+	_ = os.MkdirAll(scriptsDir, 0o755)
+	_ = os.WriteFile(filepath.Join(scriptsDir, "myplugin.lua"), []byte("return {}"), 0o644)
+
+	dbPath := filepath.Join(dir, "stugan.db")
+	st, err := store.Open(dbPath, nil)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	eng := core.New(core.Options{Sink: noopSink{}})
+	tenant := &Tenant{
+		Engine:     eng,
+		History:    st,
+		Prefs:      st,
+		Store:      st,
+		ScriptsDir: scriptsDir,
+	}
+	hub := SingleUser(tenant)
+	srv := New(hub, Options{})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// 1. Test Export .tar.gz
+	resp, err := http.Get(ts.URL + "/api/export?format=tar.gz")
+	if err != nil {
+		t.Fatalf("export tar.gz: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("export tar.gz status: %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/gzip" {
+		t.Fatalf("export tar.gz Content-Type: %q", ct)
+	}
+	archiveBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read export archive: %v", err)
+	}
+
+	// 2. Test Export .zip
+	zipResp, err := http.Get(ts.URL + "/api/export?format=zip")
+	if err != nil {
+		t.Fatalf("export zip: %v", err)
+	}
+	defer zipResp.Body.Close()
+	if zipResp.StatusCode != http.StatusOK {
+		t.Fatalf("export zip status: %d", zipResp.StatusCode)
+	}
+	if ct := zipResp.Header.Get("Content-Type"); ct != "application/zip" {
+		t.Fatalf("export zip Content-Type: %q", ct)
+	}
+
+	// 3. Test Import using the exported tar.gz archive
+	body := new(bytes.Buffer)
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", "backup.tar.gz")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write(archiveBytes); err != nil {
+		t.Fatalf("write part: %v", err)
+	}
+	_ = writer.WriteField("mode", "replace")
+	writer.Close()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ts.URL+"/api/import", body)
+	if err != nil {
+		t.Fatalf("new import req: %v", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	importResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do import: %v", err)
+	}
+	defer importResp.Body.Close()
+	if importResp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(importResp.Body)
+		t.Fatalf("import status: %d, body: %s", importResp.StatusCode, string(b))
 	}
 }

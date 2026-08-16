@@ -129,6 +129,22 @@ PluginKVDelete(script, key string) error
 A thin adapter in `cmd/stugan` narrows the store to the `plugin.KV` seam so the
 plugin package never imports `store`.
 
+## Data Portability, Backups & Imports
+
+stugan provides full database and configuration backup and restore functionality via `internal/backup` and the HTTP endpoints `/api/export` and `/api/import`:
+
+- **Backup Snapshots (`Store.Backup`)**:
+  Uses SQLite's `VACUUM INTO 'dest.db'` to take a consistent, compacted snapshot of the user's database without blocking concurrent readers or writers.
+- **Archive Formats**:
+  Backups are packaged into portable archives containing:
+  - `manifest.json`: backup version, export timestamp, username, and metadata.
+  - `stugan.db`: the SQLite database snapshot.
+  - `scripts/`: custom Lua plugins and configs.
+  Supported formats: Compressed Archive (`.tar.gz`), Zip Archive (`.zip`), or raw SQLite (`.db`).
+- **Database Import & Restore (`Store.Import`)**:
+  - **`replace` mode**: Atomically replaces messages, networks, read markers, plugin KV, and preferences with the imported database, and rebuilds the FTS5 search index.
+  - **`merge` mode**: Performs a safe merge combining messages (`INSERT OR IGNORE`), networks (`INSERT OR REPLACE`), read markers (updating to `MAX(ts)`), plugin KV, and preferences.
+
 ## Notes
 
 - Redaction is currently **view-only**: an inbound `REDACT` removes the live
