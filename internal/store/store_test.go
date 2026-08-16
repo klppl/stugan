@@ -546,6 +546,14 @@ func TestReadMarkersUnreadCounts(t *testing.T) {
 	if len(got) != 0 {
 		t.Errorf("after reading to end, want no counts, got %+v", got)
 	}
+
+	markers, err := s.ReadMarkers(ctx)
+	if err != nil {
+		t.Fatalf("ReadMarkers: %v", err)
+	}
+	if markers["libera/#go"] != at(100).UnixMilli() {
+		t.Errorf("expected marker %d, got %d", at(100).UnixMilli(), markers["libera/#go"])
+	}
 }
 
 func TestMissedHighlights(t *testing.T) {

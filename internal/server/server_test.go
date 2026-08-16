@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,6 +41,7 @@ func (noopSink) ChannelList(string, []core.ChannelListItem)    {}
 func (noopSink) Typing(string, string, string, string)         {}
 func (noopSink) React(string, string, string, string, string)  {}
 func (noopSink) Redact(string, string, string, string, string) {}
+func (noopSink) ReadMarker(string, string, time.Time)          {}
 
 // fakeHistory returns a canned backlog page.
 type fakeHistory struct {
@@ -58,6 +60,9 @@ func (f *fakeHistory) Search(_ context.Context, _, _, _ string, _ int) ([]core.M
 	return f.msgs, nil
 }
 func (f *fakeHistory) MarkRead(_ context.Context, _, _ string, _ time.Time) error { return nil }
+func (f *fakeHistory) ReadMarkers(_ context.Context) (map[string]int64, error) {
+	return nil, nil
+}
 func (f *fakeHistory) UnreadCounts(_ context.Context) ([]core.UnreadCount, error) {
 	return f.unread, nil
 }
@@ -521,5 +526,97 @@ func TestRejectsBadMsgSend(t *testing.T) {
 	env := readFrame(t, ctx, ws)
 	if env.T != proto.TError {
 		t.Fatalf("frame = %q, want error", env.T)
+	}
+}
+
+type fakePrefs struct {
+	mu sync.Mutex
+	m  map[string]string
+}
+
+func (f *fakePrefs) Pref(key string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.m == nil {
+		return "", nil
+	}
+	return f.m[key], nil
+}
+
+func (f *fakePrefs) SetPref(key, value string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.m == nil {
+		f.m = make(map[string]string)
+	}
+	f.m[key] = value
+	return nil
+}
+
+func TestDraftsSync(t *testing.T) {
+	eng := core.New(core.Options{Sink: noopSink{}})
+	prefs := &fakePrefs{}
+	srv := New(SingleUser(&Tenant{Engine: eng, Prefs: prefs}), Options{})
+	eng.AddSink(srv.Sink(defaultUser))
+	eng.AddNetwork(core.NetworkParams{ID: "n", Name: "n", Nick: "me"}, &fakeConn{sent: make(chan [2]string, 1)})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = eng.Run(ctx) }()
+
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+	wsURL := "ws" + strings.TrimPrefix(hs.URL, "http") + "/ws"
+
+	dial := func() *websocket.Conn {
+		ws, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		readFrame(t, ctx, ws) // hello
+		readFrame(t, ctx, ws) // init
+		return ws
+	}
+
+	ws1 := dial()
+	defer ws1.CloseNow()
+	ws2 := dial()
+	defer ws2.CloseNow()
+
+	// ws1 sets a draft for #general; ws2 should receive draft frame.
+	frame, _ := proto.Frame(proto.TDraftSet, proto.DraftDTO{Network: "n", Buffer: "#general", Text: "Hello world!"})
+	if err := wsjson.Write(ctx, ws1, frame); err != nil {
+		t.Fatal(err)
+	}
+
+	env := readFrame(t, ctx, ws2)
+	if env.T != proto.TDraft {
+		t.Fatalf("ws2 frame = %q, want draft", env.T)
+	}
+	var got proto.DraftDTO
+	if err := decode(env, &got); err != nil {
+		t.Fatalf("decode draft: %v", err)
+	}
+	if got.Network != "n" || got.Buffer != "#general" || got.Text != "Hello world!" {
+		t.Fatalf("draft broadcast = %+v, want n/#general/Hello world!", got)
+	}
+
+	// ws3 dials and should receive the draft in init state.
+	ws3, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial ws3: %v", err)
+	}
+	defer ws3.CloseNow()
+	readFrame(t, ctx, ws3) // hello
+	initEnv := readFrame(t, ctx, ws3)
+	if initEnv.T != proto.TInit {
+		t.Fatalf("ws3 init = %q", initEnv.T)
+	}
+	var initState proto.InitState
+	if err := decode(initEnv, &initState); err != nil {
+		t.Fatalf("decode init: %v", err)
+	}
+	if len(initState.Drafts) != 1 || initState.Drafts[0].Text != "Hello world!" {
+		t.Fatalf("initState drafts = %+v, want 1 draft", initState.Drafts)
 	}
 }

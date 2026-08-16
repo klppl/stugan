@@ -15,6 +15,7 @@ const (
 	prefMuted     = "muted"     // []proto.MuteRef
 	prefAliases   = "aliases"   // map[string]string (command name → expansion)
 	prefSettings  = "settings"  // map[string]any (UI preferences)
+	prefDrafts    = "drafts"    // []proto.DraftDTO (composer drafts)
 )
 
 // loadSettings reads a tenant's UI preferences map, or nil when unset or on error.
@@ -31,6 +32,37 @@ func loadSettings(t *Tenant) map[string]any {
 		return nil
 	}
 	return m
+}
+
+// loadDrafts reads a tenant's unsent composer drafts, or nil when unset or on error.
+func loadDrafts(t *Tenant) []proto.DraftDTO {
+	if t == nil || t.Prefs == nil {
+		return nil
+	}
+	v, err := t.Prefs.Pref(prefDrafts)
+	if err != nil || v == "" {
+		return nil
+	}
+	var drafts []proto.DraftDTO
+	if json.Unmarshal([]byte(v), &drafts) != nil {
+		return nil
+	}
+	return drafts
+}
+
+// setDraft returns drafts with (network, buffer) updated or removed if text is empty.
+func setDraft(drafts []proto.DraftDTO, network, buffer, text string) []proto.DraftDTO {
+	out := make([]proto.DraftDTO, 0, len(drafts)+1)
+	for _, d := range drafts {
+		if d.Network == network && core.EqualIRC(d.Buffer, buffer) {
+			continue
+		}
+		out = append(out, d)
+	}
+	if strings.TrimSpace(text) != "" {
+		out = append(out, proto.DraftDTO{Network: network, Buffer: buffer, Text: text})
+	}
+	return out
 }
 
 // sanitizeAliases normalizes a client-supplied alias table: it lowercases and

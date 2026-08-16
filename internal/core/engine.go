@@ -46,6 +46,8 @@ type Sink interface {
 	// Redact delivers an inbound message redaction: the message target (a
 	// msgid) in buffer was removed by nick (with an optional reason).
 	Redact(network, buffer, target, nick, reason string)
+	// ReadMarker notifies sinks that the user's read marker advanced to ts.
+	ReadMarker(network, buffer string, ts time.Time)
 }
 
 // ChannelListItem is one entry in a LIST (channel-browser) result.
@@ -858,6 +860,28 @@ func (e *Engine) sendInput(network, buffer, text string, depth int) error {
 		},
 	})
 	return nil
+}
+
+// MarkRead clears the in-memory unread counters for a buffer and notifies all
+// registered sinks of the updated read marker timestamp.
+func (e *Engine) MarkRead(network, buffer string, ts time.Time) {
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+	e.mu.Lock()
+	if n := e.user.Network(network); n != nil {
+		if c := n.Channel(buffer); c != nil {
+			c.Unread = 0
+			c.Highlight = 0
+		}
+	}
+	sinks := make([]Sink, len(e.sinks))
+	copy(sinks, e.sinks)
+	e.mu.Unlock()
+
+	for _, s := range sinks {
+		s.ReadMarker(network, buffer, ts)
+	}
 }
 
 // Snapshot returns a deep copy of the user state, safe to read from any

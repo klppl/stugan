@@ -14,12 +14,14 @@ the IRCv3 discipline of [Halloy](https://github.com/squidowl/halloy) and a
 
 - Persistent connections that survive browser disconnects; SQLite history with
   backlog replay and full-text search (FTS5).
+- Real-time **multi-device synchronization**: server-side settings, unsent composer drafts,
+  and accurate read marker timestamps (`draft/read-marker` / `MARKREAD`) stay in sync across all your browser tabs and IRC clients.
 - Manage networks entirely from the web UI — add, edit, connect/disconnect,
   remove. Server password (bouncers like ZNC/soju), per-network "perform"
   commands, SASL (PLAIN and EXTERNAL/CertFP).
 - IRCv3: server-time, echo-message, away-notify, account-tag, multi-prefix,
   extended-join, message-tags, typing indicators, standard-replies, emoji
-  reactions, message redaction, a channel browser (LIST), best-effort
+  reactions, message redaction, draft/read-marker (MARKREAD), a channel browser (LIST), best-effort
   chathistory. See [docs/ircv3.md](docs/ircv3.md).
 - Link previews + inline image/video via a local proxy, drag-drop/paste
   uploads (local storage or custom upload hosts like `x0.at`), autocomplete

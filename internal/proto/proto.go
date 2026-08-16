@@ -32,6 +32,7 @@ const (
 	THighlight    = "highlight"     // s2c (current rules; answers highlight:set)
 	TAliases      = "aliases"       // s2c (current alias table; answers aliases:set)
 	TSettings     = "settings"      // s2c (current UI settings; answers settings:set)
+	TDraft        = "draft"         // s2c (broadcasts draft update to user's other tabs)
 	TPong         = "pong"          // s2c (answers c2s ping; app-level liveness)
 	TError        = "error"         // s2c
 
@@ -48,6 +49,7 @@ const (
 	TPluginAction = "plugin:action"  // c2s — manage or install a plugin
 	TPluginSet    = "plugin:setting" // c2s — set a plugin's declared setting
 	TRead         = "read"           // c2s mark a buffer read; s2c broadcast of that to the user's other tabs
+	TDraftSet     = "draft:set"      // c2s — set/sync composer drafts across devices
 	THighlightSet = "highlight:set"  // c2s — replace the highlight ruleset
 	TAliasSet     = "aliases:set"    // c2s — replace the command-alias table
 	TSettingsSet  = "settings:set"   // c2s — set/sync UI preferences across devices
@@ -86,12 +88,21 @@ type Hello struct {
 
 // InitState is the authoritative full snapshot sent after Hello.
 type InitState struct {
-	User      UserDTO        `json:"user"`
-	Networks  []NetworkDTO   `json:"networks"`
-	Highlight HighlightRules `json:"highlight"`
-	Aliases   AliasTable     `json:"aliases"`
-	Muted     []MuteRef      `json:"muted,omitempty"`
-	Settings  map[string]any `json:"settings,omitempty"`
+	User        UserDTO          `json:"user"`
+	Networks    []NetworkDTO     `json:"networks"`
+	Highlight   HighlightRules   `json:"highlight"`
+	Aliases     AliasTable       `json:"aliases"`
+	Muted       []MuteRef        `json:"muted,omitempty"`
+	Settings    map[string]any   `json:"settings,omitempty"`
+	Drafts      []DraftDTO       `json:"drafts,omitempty"`
+	ReadMarkers map[string]int64 `json:"read_markers,omitempty"`
+}
+
+// DraftDTO carries an unsent composer draft for a single buffer.
+type DraftDTO struct {
+	Network string `json:"network"`
+	Buffer  string `json:"buffer"`
+	Text    string `json:"text"`
 }
 
 // SettingsPayload carries user UI preferences across server and tabs.
@@ -367,8 +378,9 @@ type Redact struct {
 // recording it, the server echoes the same frame (s2c) to the user's other
 // connected clients so they clear the buffer's badge and stay in sync.
 type ReadMark struct {
-	Network string `json:"network"`
-	Buffer  string `json:"buffer"`
+	Network   string `json:"network"`
+	Buffer    string `json:"buffer"`
+	Timestamp string `json:"timestamp,omitempty"`
 }
 
 // NetConnect is a client→server request to connect or disconnect a network

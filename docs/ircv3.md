@@ -23,9 +23,15 @@ Capabilities negotiated:
 - `standard-replies` — `FAIL`/`WARN`/`NOTE` rendered as system lines.
 - `draft/chathistory` — best-effort server-side history (`/chathistory`).
 - `draft/message-redaction` — delete messages (`REDACT`); see below.
+- `draft/read-marker` / `read-marker` — synchronized read positions via `MARKREAD`.
 
 Features built on top:
 
+- **Read Marker Sync** (`draft/read-marker` / `MARKREAD`) — read positions are
+  synchronized across devices and clients. When you focus or read a channel
+  in the web UI, SSH TUI, or a connected IRC bouncer client, `MARKREAD`
+  advances the read marker in SQLite and notifies all attached bouncer clients
+  and browser sessions.
 - **Reactions** (`+draft/react` + `+draft/reply` over TAGMSG) — emoji
   reactions on a message by msgid. Inbound toggles a chip; a hover palette
   and chip clicks send them. Ephemeral (session-lived), not persisted.
@@ -48,11 +54,7 @@ Features built on top:
 
 ## Roadmap (must-haves, prioritized)
 
-1. **`draft/read-marker`** (`MARKREAD`). Sync the read position across
-   devices/clients server-side, instead of the current client-only unread
-   divider. Pairs naturally with the existing divider work.
-
-2. **Redaction persistence.** Today a `REDACT` only removes the live copy;
+1. **Redaction persistence.** Today a `REDACT` only removes the live copy;
    the message still sits in the SQLite history and returns on reload. Delete
    (or tombstone) by msgid in `internal/store` so redactions survive.
 

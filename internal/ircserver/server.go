@@ -364,3 +364,14 @@ func (s *Server) broadcastRedact(userID, network, buffer, target, nick, reason s
 		_ = sess.write(FormatLine(tags, fromPrefix, "TAGMSG", buffer))
 	}
 }
+
+func (s *Server) broadcastReadMarker(userID, network, buffer string, ts time.Time) {
+	sessions := s.reg.sessionsFor(userID, network)
+	for _, sess := range sessions {
+		if !sess.registered || sess.closed.Load() || (!sess.caps[CapReadMarker] && !sess.caps[CapReadMarkerAlt]) {
+			continue
+		}
+		param := "timestamp=" + FormatIrcTime(ts)
+		_ = sess.write(FormatLine("", serverName, "MARKREAD", buffer, param))
+	}
+}

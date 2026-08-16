@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 )
 
 // logSink is the default Sink: it renders each committed line to stdout in
@@ -53,6 +54,9 @@ func (s logSink) Typing(string, string, string, string) {}
 // React and Redact are no-ops for the terminal sink.
 func (s logSink) React(string, string, string, string, string)  {}
 func (s logSink) Redact(string, string, string, string, string) {}
+
+// ReadMarker is a no-op for the terminal sink.
+func (s logSink) ReadMarker(string, string, time.Time) {}
 
 // FoldIRC folds a string for case-insensitive identity using rfc1459
 // casemapping: ASCII A–Z plus []\~ fold to {}|^ (RFC 1459 §2.2 — those

@@ -61,6 +61,7 @@ func (c *captureSink) React(network, buffer, target, nick, reaction string) {
 func (c *captureSink) Redact(network, buffer, target, nick, reason string) {
 	c.redacts = append(c.redacts, [5]string{network, buffer, target, nick, reason})
 }
+func (c *captureSink) ReadMarker(string, string, time.Time) {}
 
 // fakeConnector / fakeRuntimeConn back runtime AddNetworkLive in tests.
 type fakeConnector struct {
@@ -1738,6 +1739,7 @@ func (s *safeSink) ChannelList(string, []ChannelListItem)         {}
 func (s *safeSink) Typing(string, string, string, string)         {}
 func (s *safeSink) React(string, string, string, string, string)  {}
 func (s *safeSink) Redact(string, string, string, string, string) {}
+func (s *safeSink) ReadMarker(string, string, time.Time)          {}
 
 func (s *safeSink) lastText() string {
 	s.mu.Lock()

@@ -40,6 +40,10 @@ func (m *mockHistory) MarkRead(ctx context.Context, network, buffer string, ts t
 	return nil
 }
 
+func (m *mockHistory) ReadMarkers(ctx context.Context) (map[string]int64, error) {
+	return nil, nil
+}
+
 func (m *mockHistory) UnreadCounts(ctx context.Context) ([]core.UnreadCount, error) {
 	return nil, nil
 }
@@ -385,4 +389,51 @@ func TestSetupTLSSelfSigned(t *testing.T) {
 	if res.Fingerprint == "" {
 		t.Errorf("Expected non-empty fingerprint")
 	}
+}
+
+func TestBouncerReadMarker(t *testing.T) {
+	srv, eng, _, addr, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	reader := bufio.NewReader(conn)
+
+	fmt.Fprintf(conn, "CAP LS 302\r\n")
+	fmt.Fprintf(conn, "CAP REQ :draft/read-marker\r\n")
+	fmt.Fprintf(conn, "PASS alice/libera:password123\r\n")
+	fmt.Fprintf(conn, "NICK alice\r\n")
+	fmt.Fprintf(conn, "USER alice 0 * :Alice\r\n")
+	fmt.Fprintf(conn, "CAP END\r\n")
+
+	// Discard burst
+	time.Sleep(50 * time.Millisecond)
+	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	for {
+		_, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+
+	// Downstream sends MARKREAD
+	fmt.Fprintf(conn, "MARKREAD #stugan timestamp=2026-08-16T20:00:00.000Z\r\n")
+
+	// Verify server sink broadcast
+	eng.MarkRead("libera", "#stugan", time.Date(2026, 8, 16, 20, 0, 0, 0, time.UTC))
+
+	_ = conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("Failed to read MARKREAD broadcast: %v", err)
+	}
+	if !strings.Contains(line, "MARKREAD #stugan") {
+		t.Errorf("Expected MARKREAD broadcast line, got: %s", line)
+	}
+	_ = srv
 }

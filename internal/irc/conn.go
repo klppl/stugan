@@ -213,7 +213,9 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 			"draft/message-redaction": nil,
 			// draft/multiline groups a message split across several lines into
 			// one logical block via BATCH (see (un)batchMultiline).
-			"draft/multiline": nil,
+			"draft/multiline":   nil,
+			"draft/read-marker": nil,
+			"read-marker":       nil,
 		},
 	}
 	// A client certificate (CertFP / SASL EXTERNAL) or skipping verification

@@ -82,14 +82,26 @@ buffer recording how far the user has read.
 
 - **`MarkRead(ctx, network, buffer, ts)`** — upsert the marker to `ts` (zero =
   now), `MAX`-merged so it only ever moves forward; a stale frame can't un-read
-  a buffer. Driven by the c2s `read` frame, sent when a buffer is focused and
-  (debounced) as messages arrive while it's focused.
+  a buffer. Driven by the c2s `read` frame, SSH TUI buffer switches, or IRC bouncer
+  `MARKREAD` commands.
+- **`ReadMarkers(ctx)`** — returns a map of all buffer read marker timestamps in
+  unix milliseconds, delivered in the `init` snapshot (`InitState.read_markers`) so
+  clients render the unread divider in the exact right spot across reloads and devices.
 - **`UnreadCounts(ctx)`** — per buffer, how many conversational
   (`privmsg`/`notice`/`action`), non-self messages arrived after its marker,
   and how many of those are highlights. Only buffers that *have* a marker are
   reported, so a buffer's existing history is never retroactively counted as
   unread before it's been opened once. The server calls this at connect time
   and folds the counts into the `init` snapshot's `ChannelDTO.unread/highlight`.
+
+## Server preferences & drafts (`prefs`)
+
+The `prefs` table stores opaque JSON key/value preferences per user:
+- `highlight` — user's highlight regex patterns and exception rules.
+- `aliases` — user's custom `/command` alias expansions.
+- `muted` — set of muted buffer identifiers.
+- `settings` — UI settings (theme, font size, link preview expansion, colored nicks, typing indicators).
+- `drafts` — unsent composer drafts per `(network, buffer)`, synced real-time across tabs and devices.
 
 ## Network persistence
 

@@ -32,7 +32,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `t`             | payload        | meaning |
 |-----------------|----------------|---------|
 | `hello`         | `Hello`        | sent on connect: protocol version, server name, caps |
-| `init`          | `InitState`    | full snapshot: user + all networks/channels/members |
+| `init`          | `InitState`    | full snapshot: user + all networks/channels/members/drafts/read markers |
 | `msg`           | `MessageDTO`   | a new committed line in a buffer |
 | `net:update`    | `NetworkDTO`   | a network's state/nick/buffers/members changed |
 | `net:remove`    | `NetRemove`    | a network was removed |
@@ -45,6 +45,10 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `complete:res`  | `CompleteRes`  | plugin tab-completion candidates (answers `complete:req`) |
 | `missed:result` | `MissedResp`   | highlight lines missed since the read markers, for the "what you missed" digest (answers `missed:fetch`) |
 | `highlight`     | `HighlightRules` | the normalized highlight ruleset, broadcast to all the user's tabs after a `highlight:set` |
+| `aliases`       | `AliasTable`   | the normalized command alias table, broadcast after `aliases:set` |
+| `settings`      | `SettingsPayload` | user UI preferences broadcast across sessions |
+| `draft`         | `DraftDTO`     | composer draft updated from another tab/device |
+| `read`          | `ReadMark`     | buffer read marker updated (stamps time and clears unread badges across devices) |
 | `pong`          | (none)         | answers a c2s `ping` (app-level liveness; see below) |
 | `error`         | `WireError`    | `{code, message}`, correlated to a request `id` |
 
@@ -66,7 +70,10 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `plugin:setting`| `PluginSettingReq` | set one declared setting of a plugin (replies with `plugin:list`) |
 | `complete:req`  | `CompleteReq`  | ask plugins for tab-completion candidates (`seq`-correlated) |
 | `read`          | `ReadMark`     | mark a buffer read up to now (advances the persisted read marker) |
+| `draft:set`     | `DraftDTO`     | set or clear an unsent composer draft for a buffer |
 | `highlight:set` | `HighlightRules` | replace the highlight ruleset (bad regex → `error`; success → `highlight` broadcast) |
+| `aliases:set`   | `AliasTable`   | replace the command aliases table |
+| `settings:set`  | `SettingsPayload` | update user UI preferences (theme, font size, previews, etc.) |
 | `buf:close`     | `BufClose`     | close a query/DM buffer (server drops it and re-broadcasts `net:update`; channels use `/part`) |
 | `presence`      | `Presence`     | report whether this browser tab is visible, for push-notification suppression |
 | `ping`          | (none)         | app-level liveness probe; answered with `pong` (see below) |
@@ -166,11 +173,13 @@ type PluginInfo struct {
 }
 type PluginListResp struct { Plugins []PluginInfo }
 
-// Highlight rules and mutes are server-persisted per user (store `prefs` table)
-// and seeded into InitState (InitState.Highlight, InitState.Muted). A muted
-// buffer is matched case-insensitively on Buffer; the set is checked both
-// client-side (badges, in-app notify) and server-side (push, while away).
+// Highlight rules, mutes, drafts, command aliases, and settings are
+// server-persisted per user (store `prefs` table) and seeded into InitState.
 type HighlightRules struct { Patterns, Exceptions []string }  // case-insensitive regexes
+type AliasTable     struct { Aliases map[string]string }
+type SettingsPayload struct { Settings map[string]any }
+type DraftDTO       struct { Network, Buffer, Text string }
+type ReadMark       struct { Network, Buffer, Timestamp string } // Timestamp is RFC3339
 type MuteRef        struct { Network, Buffer string }         // one muted buffer
 type MuteSet        struct { Network, Buffer string; Muted bool }
 ```

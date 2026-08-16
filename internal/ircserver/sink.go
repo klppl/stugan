@@ -3,6 +3,7 @@ package ircserver
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/klippelism/stugan/internal/core"
 )
@@ -42,6 +43,10 @@ func (s *ircSink) React(network, buffer, target, nick, reaction string) {
 
 func (s *ircSink) Redact(network, buffer, target, nick, reason string) {
 	s.srv.broadcastRedact(s.user, network, buffer, target, nick, reason)
+}
+
+func (s *ircSink) ReadMarker(network, buffer string, ts time.Time) {
+	s.srv.broadcastReadMarker(s.user, network, buffer, ts)
 }
 
 // formatSinkMessage formats a live committed core.Message into IRC wire format for a session.

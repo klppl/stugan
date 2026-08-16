@@ -3,12 +3,14 @@ import { settings, LEGACY_MUTES_KEY, loadSettingsPayload } from "./settings";
 import { closeDrawers } from "./ui";
 import { stripFormatting } from "./links";
 import { refresh, canEnter } from "./auth";
+import { loadDraftsPayload, setRemoteDraft } from "./drafts";
 import {
   T,
   PROTOCOL,
   type Envelope,
   type InitState,
   type SettingsPayload,
+  type DraftDTO,
   type MessageDTO,
   type MsgSend,
   type BacklogFetch,
@@ -199,6 +201,7 @@ export interface Store {
   // auto-opens once per page session when missed is non-empty.
   missed: MessageDTO[];
   digestOpen: boolean;
+  readMarkers: Record<string, number>;
 }
 
 function emptyBuffer(c: Partial<ChannelDTO> & { name: string }): Buffer {
@@ -330,6 +333,7 @@ export class Connection {
     muted: [],
     missed: [],
     digestOpen: false,
+    readMarkers: {},
   });
 
   private ws: WebSocket | null = null;
@@ -662,6 +666,13 @@ export class Connection {
           loadSettingsPayload((env.d as SettingsPayload).settings);
         }
         break;
+      case T.Draft: {
+        const d = env.d as DraftDTO;
+        if (d && d.network && d.buffer) {
+          setRemoteDraft(d.network, d.buffer, d.text ?? "");
+        }
+        break;
+      }
       case T.Mute:
         this.applyMute(env.d as MuteSet);
         break;
@@ -671,6 +682,8 @@ export class Connection {
         // if we're actively reading the buffer here, so it isn't yanked away
         // mid-read; just drop the badge in that case.
         const d = env.d as ReadMark;
+        const key = bufKey(d.network, d.buffer);
+        this.store.readMarkers[key] = d.timestamp ? new Date(d.timestamp).getTime() : Date.now();
         const buf = this.buf(d.network, d.buffer);
         if (buf) {
           buf.unread = 0;
@@ -723,6 +736,12 @@ export class Connection {
     this.store.muted = (init.muted ?? []).map((r) => bufKey(r.network, r.buffer));
     if (init.settings) {
       loadSettingsPayload(init.settings);
+    }
+    if (init.drafts) {
+      loadDraftsPayload(init.drafts);
+    }
+    if (init.read_markers) {
+      Object.assign(this.store.readMarkers, init.read_markers);
     }
     this.migrateLegacyMutes();
     // adoptUnread: the init snapshot carries authoritative unread/highlight
@@ -1055,6 +1074,10 @@ export class Connection {
 
   sendSettings(settingsObj: Record<string, unknown>) {
     this.sendFrame(T.SettingsSet, { settings: settingsObj });
+  }
+
+  sendDraft(network: string, buffer: string, text: string) {
+    this.sendFrame<DraftDTO>(T.DraftSet, { network, buffer, text });
   }
 
   select(network: string, buffer: string) {

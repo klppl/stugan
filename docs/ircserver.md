@@ -22,6 +22,7 @@ backlog sync.
   - `echo-message` & `znc.in/self-message` (multi-client synchronization)
   - `batch`
   - `draft/chathistory`
+  - `draft/read-marker` (`MARKREAD` read position synchronization across clients)
   - `soju.im/bouncer-networks` & `soju.im/bouncer-networks-notify`
   - `sasl` (`PLAIN`)
 - **TLS by Default**: Optional custom certificates or automatic self-signed ECDSA certificate generation with SHA-256 fingerprint logging.

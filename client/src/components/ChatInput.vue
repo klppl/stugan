@@ -139,6 +139,15 @@ watch(
   },
 );
 
+watch(
+  () => readDraft(activeDraftKey),
+  (newDraft) => {
+    if (newDraft !== text.value && (document.activeElement !== inputEl.value || !text.value)) {
+      setText(newDraft);
+    }
+  },
+);
+
 onUnmounted(() => {
   writeDraft(activeDraftKey, text.value);
   if (props.buffer && text.value.trim()) {
@@ -283,6 +292,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 function onInput() {
+  writeDraft(activeDraftKey, text.value);
   refresh();
   autosize();
   if (!props.buffer) return;

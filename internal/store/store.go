@@ -408,6 +408,31 @@ func (s *Store) MarkRead(ctx context.Context, network, buffer string, ts time.Ti
 	return err
 }
 
+// ReadMarker satisfies core.Sink, advancing the read marker for a buffer.
+func (s *Store) ReadMarker(network, buffer string, ts time.Time) {
+	_ = s.MarkRead(context.Background(), network, buffer, ts)
+}
+
+// ReadMarkers returns a map of "network/buffer_fold" -> timestamp (unix milliseconds).
+func (s *Store) ReadMarkers(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT network, buffer, ts FROM read_markers`)
+	if err != nil {
+		return nil, fmt.Errorf("read markers: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]int64)
+	for rows.Next() {
+		var net, buf string
+		var ts int64
+		if err := rows.Scan(&net, &buf, &ts); err != nil {
+			return nil, err
+		}
+		out[net+"/"+core.FoldIRC(buf)] = ts
+	}
+	return out, rows.Err()
+}
+
 // UnreadCounts returns, per buffer, how many conversational messages (and how
 // many of those are highlights) arrived since the user's read marker. Only
 // buffers that have a marker are reported: until a buffer has been read at

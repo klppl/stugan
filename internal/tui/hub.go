@@ -2,6 +2,7 @@ package tui
 
 import (
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/klippelism/stugan/internal/core"
@@ -103,3 +104,5 @@ func (s *sink) Redact(network, buffer, target, nick, reason string) {
 		network: network, buffer: buffer, target: target, nick: nick, reason: reason,
 	})
 }
+
+func (s *sink) ReadMarker(network, buffer string, ts time.Time) {}

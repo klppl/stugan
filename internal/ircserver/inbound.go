@@ -46,6 +46,10 @@ func (s *Session) handleCommand(msg *Message) {
 	case "CHATHISTORY":
 		s.handleChatHistory(msg)
 		return
+
+	case "MARKREAD":
+		s.handleMarkRead(msg)
+		return
 	}
 
 	if s.isControl {
@@ -339,4 +343,41 @@ func (s *Session) handleChatHistoryTargets(msg *Message) {
 			}
 		}
 	})
+}
+
+func (s *Session) handleMarkRead(msg *Message) {
+	if s.isControl || s.networkID == "" || s.engine == nil {
+		return
+	}
+	if len(msg.Params) < 1 || msg.Params[0] == "" {
+		s.numeric("461", "MARKREAD :Not enough parameters")
+		return
+	}
+
+	target := msg.Params[0]
+	ts := time.Now()
+
+	if len(msg.Params) > 1 {
+		param := msg.Params[1]
+		if strings.HasPrefix(strings.ToLower(param), "timestamp=") {
+			rawTs := param[len("timestamp="):]
+			if parsed, err := time.Parse(time.RFC3339Nano, rawTs); err == nil {
+				ts = parsed
+			} else if parsed, err := time.Parse("2006-01-02T15:04:05.000Z", rawTs); err == nil {
+				ts = parsed
+			} else if parsed, err := time.Parse(time.RFC3339, rawTs); err == nil {
+				ts = parsed
+			}
+		} else if param != "*" {
+			if parsed, err := time.Parse(time.RFC3339Nano, param); err == nil {
+				ts = parsed
+			} else if parsed, err := time.Parse("2006-01-02T15:04:05.000Z", param); err == nil {
+				ts = parsed
+			} else if parsed, err := time.Parse(time.RFC3339, param); err == nil {
+				ts = parsed
+			}
+		}
+	}
+
+	s.engine.MarkRead(s.networkID, target, ts)
 }

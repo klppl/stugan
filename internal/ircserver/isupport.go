@@ -15,6 +15,8 @@ const (
 	CapChatHistory           = "draft/chathistory"
 	CapBouncerNetworks       = "soju.im/bouncer-networks"
 	CapBouncerNetworksNotify = "soju.im/bouncer-networks-notify"
+	CapReadMarker            = "draft/read-marker"
+	CapReadMarkerAlt         = "read-marker"
 
 	maxChatHistory = 1000
 )
@@ -29,6 +31,8 @@ var supportedCaps = []string{
 	CapChatHistory,
 	CapBouncerNetworks,
 	CapBouncerNetworksNotify,
+	CapReadMarker,
+	CapReadMarkerAlt,
 }
 
 var saslMechanisms = []string{"PLAIN"}

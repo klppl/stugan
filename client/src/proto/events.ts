@@ -25,6 +25,7 @@ export const T = {
   Highlight: "highlight",
   Aliases: "aliases",
   Settings: "settings",
+  Draft: "draft",
   Pong: "pong",
   Error: "error",
   MsgSend: "msg:send",
@@ -40,6 +41,7 @@ export const T = {
   PluginAction: "plugin:action",
   PluginSet: "plugin:setting",
   Read: "read",
+  DraftSet: "draft:set",
   HighlightSet: "highlight:set",
   AliasSet: "aliases:set",
   SettingsSet: "settings:set",
@@ -71,6 +73,14 @@ export interface InitState {
   aliases: AliasTable;
   muted?: MuteRef[];
   settings?: Record<string, unknown>;
+  drafts?: DraftDTO[];
+  read_markers?: Record<string, number>;
+}
+
+export interface DraftDTO {
+  network: string;
+  buffer: string;
+  text: string;
 }
 
 export interface SettingsPayload {
@@ -318,6 +328,7 @@ export interface NetConnect {
 export interface ReadMark {
   network: string;
   buffer: string;
+  timestamp?: string;
 }
 
 export interface React {

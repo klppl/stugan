@@ -47,6 +47,8 @@ type History interface {
 	Search(ctx context.Context, query, network, buffer string, limit int) ([]core.Message, error)
 	// MarkRead advances a buffer's read marker to ts (zero = now).
 	MarkRead(ctx context.Context, network, buffer string, ts time.Time) error
+	// ReadMarkers reports all buffer read markers as unix millisecond timestamps.
+	ReadMarkers(ctx context.Context) (map[string]int64, error)
 	// UnreadCounts reports per-buffer unread/highlight tallies since each
 	// buffer's read marker, for seeding badges at connect time.
 	UnreadCounts(ctx context.Context) ([]core.UnreadCount, error)
@@ -541,12 +543,18 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		} else {
 			applyUnread(&state, counts)
 		}
+		if markers, err := tenant.History.ReadMarkers(ctx); err != nil {
+			s.log.Error("read markers", "user", userID, "err", err)
+		} else {
+			state.ReadMarkers = markers
+		}
 	}
 	patterns, exceptions := tenant.Engine.HighlightRules()
 	state.Highlight = proto.HighlightRules{Patterns: patterns, Exceptions: exceptions}
 	state.Aliases = proto.AliasTable{Aliases: tenant.Engine.Aliases()}
 	state.Muted = loadMuted(tenant)
 	state.Settings = loadSettings(tenant)
+	state.Drafts = loadDrafts(tenant)
 	init, _ := proto.Frame(proto.TInit, state)
 	c.trySend(hello)
 	c.trySend(init)
@@ -581,17 +589,17 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		bestHandle(env,
 			func(d proto.ReadMark) bool { return d.Network != "" && d.Buffer != "" },
 			func(d proto.ReadMark) {
-				if c.tenant.History == nil {
-					return
+				ts := time.Now()
+				if d.Timestamp != "" {
+					if parsed, err := time.Parse(time.RFC3339Nano, d.Timestamp); err == nil {
+						ts = parsed
+					} else if parsed, err := time.Parse(time.RFC3339, d.Timestamp); err == nil {
+						ts = parsed
+					}
 				}
-				if err := c.tenant.History.MarkRead(ctx, d.Network, d.Buffer, time.Time{}); err != nil {
-					s.log.Error("mark read", "network", d.Network, "buffer", d.Buffer, "err", err)
-					return
+				if c.tenant.Engine != nil {
+					c.tenant.Engine.MarkRead(d.Network, d.Buffer, ts)
 				}
-				// Converge the user's other tabs/devices: each clears its own
-				// unread badge for this buffer so read state stays consistent
-				// without a reload.
-				s.broadcast(c.user, proto.TRead, d)
 			})
 
 	case proto.TCompleteReq:
@@ -788,6 +796,21 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			s.broadcast(c.user, proto.TAliases, proto.AliasTable{Aliases: aliases})
 			return nil
 		})
+
+	case proto.TDraftSet:
+		bestHandle(env,
+			func(d proto.DraftDTO) bool { return d.Network != "" && d.Buffer != "" },
+			func(d proto.DraftDTO) {
+				if c.tenant.Prefs != nil {
+					updated := setDraft(loadDrafts(c.tenant), d.Network, d.Buffer, d.Text)
+					if b, err := json.Marshal(updated); err == nil {
+						if err := c.tenant.Prefs.SetPref(prefDrafts, string(b)); err != nil {
+							s.log.Error("save drafts", "user", c.user, "err", err)
+						}
+					}
+				}
+				s.broadcastExcept(c.user, c, proto.TDraft, d)
+			})
 
 	case proto.TSettingsSet:
 		reqHandle(c, env, "invalid settings:set payload", nil, func(d proto.SettingsPayload) error {
@@ -1051,6 +1074,20 @@ func (s *Server) broadcast(user, t string, d any) {
 	}
 }
 
+// broadcastExcept marshals d into a t-frame and fans it out to all of user's
+// clients except the given sender client.
+func (s *Server) broadcastExcept(user string, except *client, t string, d any) {
+	if env, err := proto.Frame(t, d); err == nil {
+		s.mu.Lock()
+		for c := range s.clients[user] {
+			if c != except {
+				c.trySend(env)
+			}
+		}
+		s.mu.Unlock()
+	}
+}
+
 func (s *Server) visibleClientCount(user string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1142,4 +1179,12 @@ func (u *userSink) ChannelList(network string, items []core.ChannelListItem) {
 		chans[i] = proto.ListChannel{Name: it.Name, Users: it.Users, Topic: it.Topic}
 	}
 	u.emit(proto.TListResult, proto.ListResp{Network: network, Channels: chans})
+}
+
+func (u *userSink) ReadMarker(network, buffer string, ts time.Time) {
+	u.emit(proto.TRead, proto.ReadMark{
+		Network:   network,
+		Buffer:    buffer,
+		Timestamp: ts.UTC().Format(time.RFC3339Nano),
+	})
 }
