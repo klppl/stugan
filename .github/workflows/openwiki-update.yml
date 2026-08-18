@@ -31,6 +31,11 @@ jobs:
 
       - name: Run OpenWiki Update
         env:
-          OPENWIKI_PROVIDER: copilot
-          COPILOT_API_KEY: ${{ secrets.COPILOT_API_KEY || secrets.GITHUB_TOKEN }}
+          OPENWIKI_PROVIDER: ${{ secrets.OPENWIKI_PROVIDER || 'copilot' }}
+          OPENWIKI_MODEL_ID: ${{ secrets.OPENWIKI_MODEL_ID || 'gpt-4o' }}
+          COPILOT_API_KEY: ${{ secrets.COPILOT_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: openwiki code --update -p
