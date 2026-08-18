@@ -62,6 +62,15 @@ stugan.setting("hidehost", {
   label = "Hide host (+x after login)",
 })
 
+-- One-shot timer: fire once, then unhook itself.
+local function once(ms, fn)
+  local h
+  h = stugan.hook_timer(ms, function()
+    stugan.unhook(h)
+    fn()
+  end)
+end
+
 -- Raw PRIVMSG to Q with no local echo, so the password is never shown.
 local function toq(network, text)
   stugan.send(network, "PRIVMSG " .. Q .. " :" .. text)
@@ -150,11 +159,17 @@ stugan.hook_message(function(msg)
     authenticate(net)
   end
   -- Mask our host once Q confirms the login, then release queued autojoin.
+  -- A brief pause gives the IRC server time to apply +x and mask our hostmask
+  -- before we enter configured channels.
   if low:find("you are now logged in") then
     if hidehost_enabled() then
       stugan.send(net, "MODE " .. (stugan.nick(net) or "") .. " +x")
+      once(1000, function()
+        stugan.release_joins(net)
+      end)
+    else
+      stugan.release_joins(net)
     end
-    stugan.release_joins(net)
   end
   return msg
 end)
