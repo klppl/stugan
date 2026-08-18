@@ -693,7 +693,7 @@ func (h *Host) UninstallPlugin(name string) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("no such plugin %q", name)
 		}
-		return fmt.Errorf("remove plugin %q: %w", name, err)
+		return fmt.Errorf("remove plugin %q: %w (check directory ownership/permissions)", name, err)
 	}
 	h.do(func() { delete(h.updates, name) })
 	return nil

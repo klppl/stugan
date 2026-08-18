@@ -2601,10 +2601,8 @@ body {
   .browser-item:hover { background: transparent; }
 }
 
-/* Toasts — transient server-error notices, stacked bottom-right above all
-   other chrome. Producer is the s2c `error` frame (see Connection.pushToast);
-   click to dismiss early, else auto-cleared. Uses --hl as the accent so it
-   reads as an error in every theme. */
+/* Toasts — transient server notices and user feedback, stacked bottom-right
+   above all other chrome. Click to dismiss early, else auto-cleared. */
 .toasts {
   position: fixed;
   right: 16px;
@@ -2613,7 +2611,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: min(360px, calc(100vw - 32px));
+  max-width: min(380px, calc(100vw - 32px));
   pointer-events: none;
 }
 .toast {
@@ -2626,11 +2624,46 @@ body {
   padding: 10px 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+  animation: toast-in 0.15s ease-out;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 .toast:hover {
   background: var(--bg-alt);
+}
+.toast-success {
+  border-left-color: var(--self);
+}
+.toast-info {
+  border-left-color: var(--accent);
+}
+.toast-warning {
+  border-left-color: #f59e0b;
+}
+.toast-error {
+  border-left-color: var(--hl);
+}
+.toast-icon {
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.toast-success .toast-icon {
+  color: var(--self);
+}
+.toast-info .toast-icon {
+  color: var(--accent);
+}
+.toast-warning .toast-icon {
+  color: #f59e0b;
+}
+.toast-error .toast-icon {
+  color: var(--hl);
 }
 .toast-msg {
   color: var(--fg);

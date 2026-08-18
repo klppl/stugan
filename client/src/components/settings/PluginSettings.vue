@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { connection } from "../../connection";
 import type { PluginInfo, CuratedPluginInfo, PluginSetting } from "../../proto/events";
 
@@ -14,29 +14,76 @@ const isCheckingUpdates = ref(false);
 const updatingPlugins = ref<Record<string, boolean>>({});
 const justUpdatedPlugins = ref<Record<string, boolean>>({});
 
+type PendingAction = "install" | "update" | "uninstall" | "load" | "unload" | "reload";
+const pendingActions = ref<Record<string, PendingAction>>({});
+
 const importUrl = ref("");
 const importName = ref("");
 const importStatus = ref<{ type: "success" | "error"; msg: string } | null>(null);
+
+let unbindError: (() => void) | null = null;
 
 onMounted(() => {
   if (hasPlugins) {
     connection.listPlugins();
     connection.checkPluginUpdates();
   }
+  unbindError = connection.onError(() => {
+    // When a server error frame arrives (e.g. permission denied or invalid script),
+    // clear all pending actions so no false success toast is triggered by subsequent list refreshes.
+    pendingActions.value = {};
+    updatingPlugins.value = {};
+  });
 });
 
-// Watch plugins list to clear updating state & fire toast when update completes
+onUnmounted(() => {
+  if (unbindError) unbindError();
+});
+
+// Watch plugins list to clear updating state & fire toast ONLY when the specific action has succeeded
 watch(
   () => plugins.value,
-  () => {
-    for (const name in updatingPlugins.value) {
-      if (updatingPlugins.value[name]) {
-        delete updatingPlugins.value[name];
-        justUpdatedPlugins.value[name] = true;
-        connection.showToast(`Plugin "${name}" updated successfully!`, "success");
-        setTimeout(() => {
-          delete justUpdatedPlugins.value[name];
-        }, 4000);
+  (currentPlugins) => {
+    for (const name in pendingActions.value) {
+      const action = pendingActions.value[name];
+      const p = currentPlugins.find((x) => x.name === name);
+
+      if (action === "install") {
+        if (p) {
+          delete pendingActions.value[name];
+          delete updatingPlugins.value[name];
+          connection.showToast(`Plugin "${name}" installed successfully!`, "success", "success");
+        }
+      } else if (action === "update") {
+        if (p && !p.update_available) {
+          delete pendingActions.value[name];
+          delete updatingPlugins.value[name];
+          justUpdatedPlugins.value[name] = true;
+          connection.showToast(`Plugin "${name}" updated successfully!`, "success", "success");
+          setTimeout(() => {
+            delete justUpdatedPlugins.value[name];
+          }, 4000);
+        }
+      } else if (action === "uninstall") {
+        if (!p) {
+          delete pendingActions.value[name];
+          connection.showToast(`Plugin "${name}" uninstalled successfully!`, "success", "success");
+        }
+      } else if (action === "load") {
+        if (p && p.loaded) {
+          delete pendingActions.value[name];
+          connection.showToast(`Plugin "${name}" loaded!`, "info", "info");
+        }
+      } else if (action === "unload") {
+        if (p && !p.loaded) {
+          delete pendingActions.value[name];
+          connection.showToast(`Plugin "${name}" unloaded!`, "info", "info");
+        }
+      } else if (action === "reload") {
+        if (p && p.loaded) {
+          delete pendingActions.value[name];
+          connection.showToast(`Plugin "${name}" reloaded!`, "info", "info");
+        }
       }
     }
   },
@@ -93,45 +140,69 @@ function handleCheckUpdates() {
 }
 
 function handleImport() {
-  if (!importUrl.value.trim()) {
+  const url = importUrl.value.trim();
+  if (!url) {
     importStatus.value = { type: "error", msg: "Please enter a valid script URL." };
     return;
   }
   importStatus.value = null;
-  connection.importPlugin(importUrl.value.trim(), importName.value.trim());
+  const rawName = importName.value.trim() || url.split("/").pop()?.replace(/\.lua$/i, "") || "";
+  if (rawName) {
+    pendingActions.value[rawName] = "install";
+  }
+  connection.importPlugin(url, importName.value.trim() || undefined);
   importUrl.value = "";
   importName.value = "";
   activeTab.value = "installed";
-  connection.showToast("Script import initiated...", "info");
+  connection.showToast("Script import initiated...", "info", "info");
 }
 
 function handleUpdate(name: string) {
   if (updatingPlugins.value[name]) return;
   updatingPlugins.value[name] = true;
+  pendingActions.value[name] = "update";
   connection.updatePlugin(name);
-  // Fallback timeout safety in case connection drops
   setTimeout(() => {
     if (updatingPlugins.value[name]) {
       delete updatingPlugins.value[name];
+      delete pendingActions.value[name];
     }
-  }, 6000);
+  }, 8000);
 }
 
 function handleInstallCurated(name: string) {
   if (updatingPlugins.value[name]) return;
   updatingPlugins.value[name] = true;
+  pendingActions.value[name] = "install";
   connection.downloadPlugin(name);
   setTimeout(() => {
     if (updatingPlugins.value[name]) {
       delete updatingPlugins.value[name];
+      delete pendingActions.value[name];
     }
-  }, 6000);
+  }, 8000);
 }
 
 function handleUninstall(name: string) {
   if (!window.confirm(`Uninstall "${name}" and permanently remove its script file?`)) return;
+  pendingActions.value[name] = "uninstall";
   connection.pluginAction(name, "uninstall");
   if (openPlugin.value === name) openPlugin.value = null;
+  setTimeout(() => {
+    if (pendingActions.value[name] === "uninstall") {
+      delete pendingActions.value[name];
+    }
+  }, 8000);
+}
+
+function handlePluginAction(name: string, action: "load" | "unload" | "reload") {
+  pendingActions.value[name] = action;
+  connection.pluginAction(name, action);
+  setTimeout(() => {
+    if (pendingActions.value[name] === action) {
+      delete pendingActions.value[name];
+    }
+  }, 8000);
 }
 </script>
 
@@ -245,9 +316,9 @@ function handleUninstall(name: string) {
               >
                 {{ openPlugin === p.name ? "Close Config" : "Configure" }}
               </button>
-              <button v-if="p.loaded" class="btn btn-sm btn-ghost" @click="connection.pluginAction(p.name, 'reload')">Reload</button>
-              <button v-if="p.loaded" class="btn btn-sm btn-ghost btn-danger-ghost" @click="connection.pluginAction(p.name, 'unload')">Unload</button>
-              <button v-else class="btn btn-sm btn-primary" @click="connection.pluginAction(p.name, 'load')">Load</button>
+              <button v-if="p.loaded" class="btn btn-sm btn-ghost" @click="handlePluginAction(p.name, 'reload')">Reload</button>
+              <button v-if="p.loaded" class="btn btn-sm btn-ghost btn-danger-ghost" @click="handlePluginAction(p.name, 'unload')">Unload</button>
+              <button v-else class="btn btn-sm btn-primary" @click="handlePluginAction(p.name, 'load')">Load</button>
               <button v-if="!p.loaded" class="btn btn-sm btn-ghost btn-danger-ghost" @click="handleUninstall(p.name)">Uninstall</button>
             </div>
           </div>
@@ -336,7 +407,7 @@ function handleUninstall(name: string) {
               <button
                 v-else-if="!c.loaded"
                 class="btn btn-sm btn-ghost"
-                @click="connection.pluginAction(c.name, 'load')"
+                @click="handlePluginAction(c.name, 'load')"
               >
                 Load
               </button>

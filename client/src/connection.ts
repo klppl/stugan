@@ -110,14 +110,15 @@ export interface Network {
 
 export type View = "chat" | "mentions" | "search" | "settings";
 
-// Toast is a transient, dismissable notice shown in a corner overlay. Today
-// the only producer is the s2c `error` frame (server.route's sendError),
-// which would otherwise be silently dropped; the `id` is a client-local
-// sequence used as the v-for key and dismissal handle.
+export type ToastLevel = "error" | "success" | "info" | "warning";
+
+// Toast is a transient, dismissable notice shown in a corner overlay.
+// The `id` is a client-local sequence used as the v-for key and dismissal handle.
 export interface Toast {
   id: number;
   code: string;
   message: string;
+  level: ToastLevel;
 }
 
 // Jump is a pending "scroll to this message" request: when set, ChatView
@@ -710,16 +711,42 @@ export class Connection {
     }
   }
 
+  private errorListeners: ((err: WireError) => void)[] = [];
+
+  onError(fn: (err: WireError) => void): () => void {
+    this.errorListeners.push(fn);
+    return () => {
+      const idx = this.errorListeners.indexOf(fn);
+      if (idx >= 0) this.errorListeners.splice(idx, 1);
+    };
+  }
+
   // pushToast surfaces a server error frame as a transient overlay notice.
   // Without this, sendError replies from server.route (bad payloads, failed
   // connects, etc.) are silently dropped and failures look like no-ops.
   private pushToast(err: WireError) {
-    this.showToast(err.message, err.code);
+    for (const fn of this.errorListeners) {
+      try {
+        fn(err);
+      } catch (e) {
+        console.error("error listener failed", e);
+      }
+    }
+    this.showToast(err.message, err.code, "error");
   }
 
-  showToast(message: string, code?: string) {
+  showToast(message: string, code?: string, level?: ToastLevel) {
     const id = ++this.toastSeq;
-    this.store.toasts.push({ id, code: code ?? "", message });
+    const computedLevel: ToastLevel =
+      level ??
+      (code === "success"
+        ? "success"
+        : code === "info" || code === "friend"
+        ? "info"
+        : code === "warning"
+        ? "warning"
+        : "error");
+    this.store.toasts.push({ id, code: code ?? "", message, level: computedLevel });
     window.setTimeout(() => this.dismissToast(id), 5000);
   }
 
