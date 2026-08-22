@@ -27,7 +27,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # --- Stage 3: minimal runtime ----------------------------------------------
 FROM alpine:3.20
 # CA certificates are required for IRC over TLS and HTTPS link previews.
-RUN apk add --no-cache ca-certificates && adduser -D -u 10001 stugan
+RUN apk add --no-cache ca-certificates && adduser -D -u 10001 stugan \
+    && mkdir -p /data && chown stugan:stugan /data
 WORKDIR /app
 COPY --from=build /out/stugan /app/stugan
 COPY --from=client /client/dist /app/client/dist
