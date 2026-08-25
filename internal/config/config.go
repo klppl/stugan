@@ -293,11 +293,18 @@ type NetworkConfig struct {
 	// Monitor is the friends list watched via IRCv3 MONITOR (online/offline
 	// notifications). Editable from the GUI thereafter.
 	Monitor []string `toml:"monitor"`
-	// Connect, when false, leaves the network configured but idle.
-	Connect bool `toml:"connect"`
+	// Connect controls whether the network is seeded for connection on first
+	// startup. A nil pointer (the field omitted from config) means true.
+	Connect *bool `toml:"connect"`
 	// JoinHoldTimeout is the maximum time in seconds autojoin will wait when
 	// held by a plugin before auto-releasing. Default 45s.
 	JoinHoldTimeout int `toml:"join_hold_timeout"`
+}
+
+// ConnectEnabled reports whether a configured network should connect on
+// startup. Connecting is the default when the connect key is omitted.
+func (n NetworkConfig) ConnectEnabled() bool {
+	return n.Connect == nil || *n.Connect
 }
 
 // Load resolves the home directory, reads config.toml from it (tolerating

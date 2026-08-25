@@ -29,6 +29,40 @@ listen = "127.0.0.1:8080"
 	}
 }
 
+func TestNetworkConnectDefaultsToTrue(t *testing.T) {
+	cases := []struct {
+		name    string
+		connect string
+		want    bool
+	}{
+		{name: "omitted", want: true},
+		{name: "explicit true", connect: "connect = true", want: true},
+		{name: "explicit false", connect: "connect = false", want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tomlData := `
+[[networks]]
+name = "libera"
+addr = "irc.libera.chat:6697"
+` + tc.connect + "\n"
+			if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(tomlData), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg, err := LoadFrom(dir)
+			if err != nil {
+				t.Fatalf("LoadFrom: %v", err)
+			}
+			if got := cfg.Networks[0].ConnectEnabled(); got != tc.want {
+				t.Errorf("ConnectEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestUploadsConfigCustomValid(t *testing.T) {
 	dir := t.TempDir()
 	tomlData := `

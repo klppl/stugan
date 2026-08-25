@@ -200,7 +200,7 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 		}
 		if len(nets) == 0 {
 			for _, n := range u.Networks {
-				if !n.Connect {
+				if !n.ConnectEnabled() {
 					continue
 				}
 				p := paramsFromConfig(n, log.With("user", u.Name))
