@@ -9,8 +9,9 @@ import MagicWord from "./components/MagicWord.vue";
 import Toast from "./components/Toast.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import Digest from "./components/Digest.vue";
+import ImageViewerModal from "./components/ImageViewerModal.vue";
 import { authState, canEnter, needsMagicWord } from "./auth";
-import { ui, closeDrawers, useSwipeNav } from "./ui";
+import { ui, closeDrawers, closeImageViewer, useSwipeNav } from "./ui";
 import { connection } from "./connection";
 
 const showPalette = ref(false);
@@ -87,6 +88,11 @@ const mircStatus = computed(
         :open="showPalette"
         @close="showPalette = false"
         @settings="toggleSettings"
+      />
+      <ImageViewerModal
+        v-if="ui.activeImage"
+        :image="ui.activeImage"
+        @close="closeImageViewer"
       />
       <Toast />
     </div>

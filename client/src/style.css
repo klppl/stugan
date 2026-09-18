@@ -1077,6 +1077,7 @@ body {
   max-width: 320px;
   max-height: 240px;
   border-radius: 6px;
+  cursor: pointer;
 }
 /* Link previews. The wrapper carries the flex line-break (flex-basis:100% with
    no max-width), so cards reliably drop onto their own row below the message —

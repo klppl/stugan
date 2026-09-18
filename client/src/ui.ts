@@ -5,6 +5,13 @@
 
 import { onMounted, onUnmounted, reactive } from "vue";
 import { connection } from "./connection";
+import { proxied } from "./links";
+
+export interface ActiveImage {
+  url: string;
+  proxiedUrl: string;
+  alt?: string;
+}
 
 const MOBILE_QUERY = "(max-width: 720px)";
 const mq = typeof window !== "undefined" ? window.matchMedia(MOBILE_QUERY) : null;
@@ -18,6 +25,7 @@ export const ui = reactive({
   sidebarOpen: false,
   membersOpen: !startMobile,
   isMobile: startMobile,
+  activeImage: null as ActiveImage | null,
 });
 
 // Reset drawer/panel state on a viewport-class change so neither side
@@ -44,6 +52,18 @@ export function toggleSidebar() {
 export function toggleMembers() {
   ui.membersOpen = !ui.membersOpen;
   if (ui.membersOpen) ui.sidebarOpen = false;
+}
+
+export function openImageViewer(url: string, alt?: string) {
+  ui.activeImage = {
+    url,
+    proxiedUrl: proxied(url),
+    alt,
+  };
+}
+
+export function closeImageViewer() {
+  ui.activeImage = null;
 }
 
 // Drawer swipe navigation (mobile only). A horizontal drag across the
@@ -78,8 +98,8 @@ export function useSwipeNav() {
   let tracking = false;
 
   function onStart(ev: TouchEvent) {
-    // Single-finger only — ignore pinch/zoom and multi-touch.
-    if (!ui.isMobile || ev.touches.length !== 1) {
+    // Single-finger only — ignore pinch/zoom, multi-touch, or when image viewer is open.
+    if (!ui.isMobile || ev.touches.length !== 1 || ui.activeImage) {
       tracking = false;
       return;
     }

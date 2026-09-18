@@ -6,6 +6,7 @@ import { getPreview, fetchPreview, type Preview } from "../previews";
 import { settings } from "../settings";
 import { nickColor } from "../nickColor";
 import { connection, messageRefKey } from "../connection";
+import { openImageViewer } from "../ui";
 
 const props = defineProps<{ msg: MessageDTO; showBuffer?: boolean; showDate?: boolean }>();
 
@@ -145,6 +146,18 @@ const nickCtx = inject<NickCtx>("nickCtx", {
   onTouchMove: () => {},
   cancelLp: () => {},
 });
+
+function onMediaClick(url: string, e: MouseEvent) {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+  e.preventDefault();
+  openImageViewer(url);
+}
+
+function onLinkClick(url: string, e: MouseEvent) {
+  if (isImage(url)) {
+    onMediaClick(url, e);
+  }
+}
 </script>
 
 <template>
@@ -175,7 +188,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
         >{{ msg.from }}</span>{{ " " }}
         <template v-for="(s, i) in segs" :key="i">
           <template v-if="s.type === 'link'">
-            <a :href="s.value" target="_blank" rel="noopener noreferrer">{{ s.value }}</a>
+            <a :href="s.value" target="_blank" rel="noopener noreferrer" @click="onLinkClick(s.value, $event)">{{ s.value }}</a>
             <button
               v-if="isPreviewLink(s.value)"
               type="button"
@@ -210,7 +223,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
       <span class="body">
         <template v-for="(s, i) in segs" :key="i">
           <template v-if="s.type === 'link'">
-            <a :href="s.value" target="_blank" rel="noopener noreferrer">{{ s.value }}</a>
+            <a :href="s.value" target="_blank" rel="noopener noreferrer" @click="onLinkClick(s.value, $event)">{{ s.value }}</a>
             <button
               v-if="isPreviewLink(s.value)"
               type="button"
@@ -235,7 +248,7 @@ const nickCtx = inject<NickCtx>("nickCtx", {
     <div v-if="media.some((u) => previewExpanded(u))" class="embeds">
       <template v-for="u in media" :key="u">
         <video v-if="isVideo(u) && previewExpanded(u)" :src="proxied(u)" controls preload="metadata" class="embed-media" />
-        <a v-else-if="previewExpanded(u)" :href="u" target="_blank" rel="noopener noreferrer">
+        <a v-else-if="previewExpanded(u)" :href="u" target="_blank" rel="noopener noreferrer" @click="onMediaClick(u, $event)">
           <img :src="proxied(u)" loading="lazy" class="embed-media" alt="" />
         </a>
       </template>
