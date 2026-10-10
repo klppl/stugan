@@ -67,7 +67,7 @@ async function handleUpload() {
         <span class="file-size">{{ formattedSize }}</span>
       </div>
 
-      <label class="row">
+      <label class="comment-field">
         <span>Comment</span>
         <input
           v-model="comment"
@@ -80,10 +80,9 @@ async function handleUpload() {
 
       <div v-if="errorMsg" class="upload-error">{{ errorMsg }}</div>
 
-      <div class="row preview-actions">
-        <button type="button" @click="emit('close')" :disabled="uploading">Cancel</button>
-        <span class="spacer"></span>
-        <button type="button" class="primary" @click="handleUpload" :disabled="uploading">
+      <div class="preview-actions">
+        <button type="button" class="btn" @click="emit('close')" :disabled="uploading">Cancel</button>
+        <button type="button" class="btn btn-primary" @click="handleUpload" :disabled="uploading">
           {{ uploading ? "Uploading…" : "Upload & Send" }}
         </button>
       </div>
@@ -117,8 +116,8 @@ async function handleUpload() {
   display: flex;
   justify-content: space-between;
   font-size: 0.85rem;
-  color: var(--fg-muted);
-  margin-bottom: 1rem;
+  gap: 1rem;
+  color: var(--fg-dim);
 }
 .file-name {
   font-weight: 600;
@@ -132,7 +131,35 @@ async function handleUpload() {
   font-size: 0.85rem;
   margin-top: 0.5rem;
 }
+.comment-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--fg-dim);
+}
+.comment-field input {
+  background: var(--bg-alt);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 14px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.comment-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .preview-actions {
-  margin-top: 1.25rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 0.5rem;
+}
+.preview-actions .btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 </style>
