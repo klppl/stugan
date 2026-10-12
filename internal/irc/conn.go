@@ -486,6 +486,17 @@ func (c *Conn) Connect(ctx context.Context) error {
 		return fmt.Errorf("irc %s: %w", c.opts.Network, err)
 	}
 
+	// Announce the dial in the status buffer so a slow or failing attempt is
+	// visible in the UI, not only in the daemon log.
+	via := "plaintext"
+	if c.opts.TLS {
+		via = "TLS"
+	}
+	c.emit(core.Event{
+		Type: core.EvNumeric, Network: c.opts.Network, Time: time.Now(),
+		Text: fmt.Sprintf("connecting to %s:%d (%s)…", c.client.Config.Server, c.client.Config.Port, via),
+	})
+
 	// Reinstall the SASL mech cleared on the previous registration (see the
 	// CONNECTED handler), so this fresh registration authenticates. Safe to
 	// set here: the client is idle between Connect calls, which the reconnect

@@ -1009,6 +1009,15 @@ func (e *Engine) runConn(ctx context.Context, id string, conn IRCConn) {
 		var sleep time.Duration
 		sleep, backoff = reconnectDelay(backoff, time.Since(start))
 		e.log.Warn("connection ended; will retry", "network", id, "err", err, "backoff", sleep)
+		if err != nil {
+			// Dial, TLS and registration failures never reach the girc
+			// DISCONNECTED handler, so surface them here or the status
+			// buffer stays silent while the network quietly retries.
+			e.HandleEvent(Event{
+				Type: EvNumeric, Network: id, Time: time.Now(),
+				Text: fmt.Sprintf("connection failed: %v — retrying in %s", err, sleep),
+			})
+		}
 		select {
 		case <-ctx.Done():
 			return
