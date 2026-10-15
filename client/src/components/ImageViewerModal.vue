@@ -11,11 +11,46 @@ const emit = defineEmits<{
   close: [];
 }>();
 
-const isZoomed = ref(false);
+const MIN_SCALE = 1;
+const ZOOM_STEP = 1.5;
+const DRAG_THRESHOLD = 6;
+
+// Zoom state. `scale` is relative to the fitted (on-screen) size; `tx`/`ty`
+// pan the image in screen pixels. Applied as a CSS transform on the <img>.
+const scale = ref(1);
+const tx = ref(0);
+const ty = ref(0);
+const animate = ref(false);
+const naturalWidth = ref(0);
+const fitWidth = ref(0);
+const imgEl = ref<HTMLImageElement | null>(null);
+
+const isZoomed = computed(() => scale.value > MIN_SCALE + 0.001);
+
+// Fitted size → original pixel size ratio (1 for images smaller than the screen).
+const naturalRatio = computed(() =>
+  fitWidth.value && naturalWidth.value ? naturalWidth.value / fitWidth.value : 1,
+);
+
+// Allow zooming well past 1:1 regardless of how large the source image is.
+const maxScale = computed(() => Math.max(8, naturalRatio.value * 4));
+
+// Zoom level as a percentage of the image's original pixel size.
+const zoomPercent = computed(() => Math.round((scale.value * 100) / naturalRatio.value));
+
 const isDragging = ref(false);
 const dragOffsetY = ref(0);
-let touchStartY = 0;
 let closed = false;
+
+// Active pointers for pan / pinch / swipe-to-dismiss.
+const pointers = new Map<number, { x: number; y: number }>();
+let gesture: "none" | "pan" | "pinch" | "swipe" = "none";
+let startX = 0;
+let startY = 0;
+let lastX = 0;
+let lastY = 0;
+let pinchDist = 0;
+let moved = false;
 
 function dismiss(fromHistory = false) {
   if (closed) return;
@@ -34,11 +69,96 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === "Escape") {
     e.preventDefault();
     dismiss();
+  } else if (e.key === "+" || e.key === "=") {
+    e.preventDefault();
+    zoomIn();
+  } else if (e.key === "-" || e.key === "_") {
+    e.preventDefault();
+    zoomOut();
+  } else if (e.key === "0") {
+    e.preventDefault();
+    resetZoom();
   }
 }
 
-function toggleZoom() {
-  isZoomed.value = !isZoomed.value;
+function clampPan() {
+  const img = imgEl.value;
+  if (!img) return;
+  const limitX = Math.max(0, (img.offsetWidth * scale.value - window.innerWidth) / 2);
+  const limitY = Math.max(0, (img.offsetHeight * scale.value - window.innerHeight) / 2);
+  tx.value = Math.min(limitX, Math.max(-limitX, tx.value));
+  ty.value = Math.min(limitY, Math.max(-limitY, ty.value));
+}
+
+// Zoom to `next`, keeping the screen point (px, py) fixed under the cursor/fingers.
+// Without a point, zooms around the current view center.
+function zoomTo(next: number, px?: number, py?: number, smooth = false) {
+  const img = imgEl.value;
+  const target = Math.min(maxScale.value, Math.max(MIN_SCALE, next));
+  const ratio = target / scale.value;
+  animate.value = smooth;
+  const wrapper = img?.parentElement;
+  if (wrapper && px !== undefined && py !== undefined) {
+    // The wrapper is laid out at the image's untransformed size, so its center
+    // is the scale origin. (The <img> rect can lag behind until Vue re-renders.)
+    const rect = wrapper.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    tx.value = px - cx - ratio * (px - cx - tx.value);
+    ty.value = py - cy - ratio * (py - cy - ty.value);
+  } else {
+    tx.value *= ratio;
+    ty.value *= ratio;
+  }
+  scale.value = target;
+  if (!isZoomed.value) {
+    tx.value = 0;
+    ty.value = 0;
+  }
+  clampPan();
+}
+
+function zoomIn() {
+  zoomTo(scale.value * ZOOM_STEP, undefined, undefined, true);
+}
+
+function zoomOut() {
+  zoomTo(scale.value / ZOOM_STEP, undefined, undefined, true);
+}
+
+function resetZoom() {
+  zoomTo(MIN_SCALE, undefined, undefined, true);
+}
+
+function onWheel(e: WheelEvent) {
+  // Trackpad pinch arrives as ctrl+wheel with small deltas; mouse wheels use larger ones.
+  const unit = e.deltaMode === 1 ? 16 : 1;
+  const intensity = e.ctrlKey ? 0.01 : 0.0025;
+  const delta = Math.max(-100, Math.min(100, e.deltaY * unit));
+  zoomTo(scale.value * Math.exp(-delta * intensity), e.clientX, e.clientY);
+}
+
+function onImageClick(e: MouseEvent) {
+  if (moved) return;
+  if (isZoomed.value) {
+    resetZoom();
+  } else {
+    // Jump to 1:1 for large images, otherwise a comfortable 2.5x.
+    const target = naturalRatio.value > 1.5 ? naturalRatio.value : 2.5;
+    zoomTo(target, e.clientX, e.clientY, true);
+  }
+}
+
+function measure() {
+  const img = imgEl.value;
+  if (!img) return;
+  naturalWidth.value = img.naturalWidth;
+  fitWidth.value = img.offsetWidth;
+}
+
+function onResize() {
+  measure();
+  clampPan();
 }
 
 async function copyLink() {
@@ -50,28 +170,91 @@ async function copyLink() {
   }
 }
 
-// Touch swipe-to-dismiss
-function onTouchStart(e: TouchEvent) {
-  if (e.touches.length !== 1 || isZoomed.value) return;
-  touchStartY = e.touches[0].clientY;
-  isDragging.value = true;
-  dragOffsetY.value = 0;
-}
+// Pointer gestures: drag to pan when zoomed, two-finger pinch to zoom,
+// and single-finger swipe-to-dismiss when not zoomed.
+function onPointerDown(e: PointerEvent) {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  try {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  } catch {
+    // Capture is best-effort; gestures still work without it.
+  }
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  animate.value = false;
 
-function onTouchMove(e: TouchEvent) {
-  if (!isDragging.value || e.touches.length !== 1) return;
-  const currentY = e.touches[0].clientY;
-  dragOffsetY.value = currentY - touchStartY;
-}
-
-function onTouchEnd() {
-  if (!isDragging.value) return;
-  isDragging.value = false;
-  // If dragged far enough (> 70px), dismiss modal; otherwise spring back.
-  if (Math.abs(dragOffsetY.value) > 70) {
-    dismiss();
-  } else {
+  if (pointers.size === 2) {
+    const [p1, p2] = [...pointers.values()];
+    pinchDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+    gesture = "pinch";
+    isDragging.value = false;
     dragOffsetY.value = 0;
+    moved = true;
+    return;
+  }
+  if (pointers.size > 2) return;
+
+  startX = lastX = e.clientX;
+  startY = lastY = e.clientY;
+  moved = false;
+  if (isZoomed.value) {
+    gesture = "pan";
+  } else if (e.pointerType === "touch") {
+    gesture = "swipe";
+    isDragging.value = true;
+    dragOffsetY.value = 0;
+  } else {
+    gesture = "none";
+  }
+}
+
+function onPointerMove(e: PointerEvent) {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if (gesture === "pinch" && pointers.size >= 2) {
+    const [p1, p2] = [...pointers.values()];
+    const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+    if (pinchDist > 0) {
+      zoomTo(scale.value * (dist / pinchDist), (p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
+    }
+    pinchDist = dist;
+    return;
+  }
+
+  if (Math.hypot(e.clientX - startX, e.clientY - startY) > DRAG_THRESHOLD) moved = true;
+
+  if (gesture === "pan") {
+    tx.value += e.clientX - lastX;
+    ty.value += e.clientY - lastY;
+    clampPan();
+  } else if (gesture === "swipe") {
+    dragOffsetY.value = e.clientY - startY;
+  }
+  lastX = e.clientX;
+  lastY = e.clientY;
+}
+
+function onPointerUp(e: PointerEvent) {
+  if (!pointers.delete(e.pointerId)) return;
+
+  if (gesture === "swipe" && pointers.size === 0) {
+    isDragging.value = false;
+    // If dragged far enough (> 70px), dismiss modal; otherwise spring back.
+    if (Math.abs(dragOffsetY.value) > 70) {
+      dismiss();
+    } else {
+      dragOffsetY.value = 0;
+    }
+  }
+
+  if (pointers.size === 1) {
+    // Pinch ended with one finger still down: continue panning from there.
+    const [p] = [...pointers.values()];
+    lastX = p.x;
+    lastY = p.y;
+    gesture = isZoomed.value ? "pan" : "none";
+  } else if (pointers.size === 0) {
+    gesture = "none";
   }
 }
 
@@ -104,6 +287,7 @@ onMounted(() => {
     history.pushState({ modal: "image-viewer" }, "");
     window.addEventListener("popstate", onPopState);
     window.addEventListener("keydown", onKeydown);
+    window.addEventListener("resize", onResize);
   }
 });
 
@@ -111,6 +295,7 @@ onUnmounted(() => {
   if (typeof window !== "undefined") {
     window.removeEventListener("popstate", onPopState);
     window.removeEventListener("keydown", onKeydown);
+    window.removeEventListener("resize", onResize);
   }
 });
 </script>
@@ -132,25 +317,47 @@ onUnmounted(() => {
       </div>
 
       <div class="image-viewer-actions">
-        <button
-          type="button"
-          class="image-viewer-btn"
-          :title="isZoomed ? 'Fit to screen' : 'Zoom to original size'"
-          :aria-label="isZoomed ? 'Fit to screen' : 'Zoom to original size'"
-          @click="toggleZoom"
-        >
-          <svg v-if="!isZoomed" aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            <line x1="11" y1="8" x2="11" y2="14" />
-            <line x1="8" y1="11" x2="14" y2="11" />
-          </svg>
-          <svg v-else aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            <line x1="8" y1="11" x2="14" y2="11" />
-          </svg>
-        </button>
+        <div class="image-viewer-zoom" role="group" aria-label="Zoom">
+          <button
+            type="button"
+            class="image-viewer-btn"
+            title="Zoom out (−)"
+            aria-label="Zoom out"
+            :disabled="!isZoomed"
+            @click="zoomOut"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              <line x1="8" y1="11" x2="14" y2="11" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="image-viewer-btn image-viewer-zoom-level"
+            title="Fit to screen (0)"
+            aria-label="Fit to screen"
+            :disabled="!isZoomed"
+            @click="resetZoom"
+          >
+            {{ zoomPercent }}%
+          </button>
+          <button
+            type="button"
+            class="image-viewer-btn"
+            title="Zoom in (+)"
+            aria-label="Zoom in"
+            :disabled="scale >= maxScale"
+            @click="zoomIn"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              <line x1="11" y1="8" x2="11" y2="14" />
+              <line x1="8" y1="11" x2="14" y2="11" />
+            </svg>
+          </button>
+        </div>
 
         <button
           type="button"
@@ -195,8 +402,8 @@ onUnmounted(() => {
     <!-- Content area -->
     <div
       class="image-viewer-body"
-      :class="{ 'is-zoomed': isZoomed }"
       @click.self="dismiss()"
+      @wheel.prevent="onWheel"
     >
       <div
         class="image-viewer-content"
@@ -204,16 +411,24 @@ onUnmounted(() => {
           transform: `translateY(${dragOffsetY}px)`,
           transition: isDragging ? 'none' : 'transform 0.2s cubic-bezier(0.2, 0, 0, 1)'
         }"
-        @touchstart="onTouchStart"
-        @touchmove="onTouchMove"
-        @touchend="onTouchEnd"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
+        @click="onImageClick"
       >
         <img
+          ref="imgEl"
           :src="image.proxiedUrl"
           :alt="image.alt || fileName || 'Image'"
           class="image-viewer-img"
           :class="{ 'zoomed': isZoomed }"
-          @click="toggleZoom"
+          :style="{
+            transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+            transition: animate ? 'transform 0.2s cubic-bezier(0.2, 0, 0, 1)' : 'none'
+          }"
+          draggable="false"
+          @load="measure"
         />
       </div>
     </div>
@@ -338,11 +553,22 @@ onUnmounted(() => {
   box-sizing: border-box;
 }
 
-.image-viewer-body.is-zoomed {
-  overflow: auto;
-  align-items: flex-start;
-  justify-content: flex-start;
-  touch-action: pan-x pan-y;
+.image-viewer-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+.image-viewer-zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.image-viewer-zoom-level {
+  min-width: 64px;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .image-viewer-content {
@@ -351,12 +577,7 @@ onUnmounted(() => {
   justify-content: center;
   max-width: 100%;
   max-height: 100%;
-}
-
-.image-viewer-body.is-zoomed .image-viewer-content {
-  margin: auto;
-  max-width: none;
-  max-height: none;
+  touch-action: none;
 }
 
 .image-viewer-img {
@@ -367,12 +588,17 @@ onUnmounted(() => {
   border-radius: 4px;
   cursor: zoom-in;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  transform-origin: center center;
+  will-change: transform;
+  -webkit-user-drag: none;
 }
 
 .image-viewer-img.zoomed {
-  max-width: none;
-  max-height: none;
-  cursor: zoom-out;
+  cursor: grab;
+}
+
+.image-viewer-img.zoomed:active {
+  cursor: grabbing;
 }
 
 @media (max-width: 720px) {
@@ -389,6 +615,10 @@ onUnmounted(() => {
   .image-viewer-btn {
     min-width: 44px;
     min-height: 44px;
+  }
+  /* Pinch is the primary zoom on phones; keep only the level/reset button. */
+  .image-viewer-zoom .image-viewer-btn:not(.image-viewer-zoom-level) {
+    display: none;
   }
   .image-viewer-img {
     max-width: 98vw;
