@@ -8,13 +8,67 @@ import (
 	"github.com/klippelism/stugan/internal/core"
 )
 
+// sessionQueue bounds the messages buffered for one SSH session between the
+// engine loop and its Bubble Tea program.
+const sessionQueue = 1024
+
 // session is one live SSH TUI connection: a handle on its Bubble Tea program
-// so the sink can push messages into it. prog.Send is goroutine-safe and a
-// no-op once the program has stopped, so a send racing a disconnect is
-// harmless.
+// so the sink can push messages into it.
+//
+// prog.Send blocks until the program's event loop takes the message, and that
+// loop stalls whenever the SSH client stops reading (the renderer's write to
+// the channel blocks). The sink runs on the engine loop, so it never calls
+// Send directly: it enqueues on queue, and pump forwards. A session whose
+// queue overflows is killed (the user reconnects and gets a fresh snapshot)
+// rather than allowed to freeze every IRC network of that user.
 type session struct {
-	user string
-	prog *tea.Program
+	user  string
+	prog  *tea.Program
+	queue chan tea.Msg
+	done  chan struct{}
+	once  sync.Once
+}
+
+// newSession wraps prog and starts its forwarding goroutine. Call stop when
+// the SSH connection ends.
+func newSession(user string, prog *tea.Program) *session {
+	s := &session{
+		user: user, prog: prog,
+		queue: make(chan tea.Msg, sessionQueue),
+		done:  make(chan struct{}),
+	}
+	go s.pump()
+	return s
+}
+
+func (s *session) pump() {
+	for {
+		select {
+		case <-s.done:
+			return
+		case msg := <-s.queue:
+			s.prog.Send(msg) // returns once the program has stopped
+		}
+	}
+}
+
+// deliver enqueues msg without blocking; on overflow the session is killed.
+func (s *session) deliver(msg tea.Msg) {
+	if s.queue == nil {
+		return
+	}
+	select {
+	case s.queue <- msg:
+	default:
+		s.stop()
+		go s.prog.Kill()
+	}
+}
+
+func (s *session) stop() {
+	if s.done != nil {
+		s.once.Do(func() { close(s.done) })
+	}
 }
 
 // registry tracks the active sessions per user. Sessions attach and detach
@@ -57,7 +111,7 @@ func (r *registry) broadcast(user string, msg tea.Msg) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for s := range r.sessions[user] {
-		s.prog.Send(msg)
+		s.deliver(msg)
 	}
 }
 

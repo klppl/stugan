@@ -239,7 +239,7 @@ func (s *Session) handleClientMessage(msg *Message) {
 }
 
 func (s *Session) handleBouncer(msg *Message) {
-	if !s.caps[CapBouncerNetworks] {
+	if !s.hasCap(CapBouncerNetworks) {
 		_ = s.write(FormatLine("", serverName, "FAIL", "BOUNCER", "UNKNOWN_COMMAND", ":Negotiate soju.im/bouncer-networks capability first"))
 		return
 	}

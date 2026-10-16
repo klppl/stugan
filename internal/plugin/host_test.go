@@ -1018,3 +1018,26 @@ func TestCuratedPluginsList(t *testing.T) {
 		t.Error("curated plugin 'fish' not found in CuratedPlugins()")
 	}
 }
+
+// TestDispatchSkipsUnhookedEvents: events no script listens to bypass the
+// plugin goroutine, and the summary follows load/unload.
+func TestDispatchSkipsUnhookedEvents(t *testing.T) {
+	api := &fakeAPI{}
+	h := newHost(t, api, map[string]string{
+		"j.lua": `stugan.hook_signal("join", function() end)`,
+	}, nil)
+	join := core.Event{Type: core.EvJoin, Network: "n", Buffer: "#c", Nick: "x"}
+	part := core.Event{Type: core.EvPart, Network: "n", Buffer: "#c", Nick: "x"}
+	if !h.wants(join) {
+		t.Error("join hook loaded, but wants(join) = false")
+	}
+	if h.wants(part) || h.wants(core.Event{Type: core.EvMessageIn}) || h.wants(core.Event{Type: core.EvCommand}) {
+		t.Error("wants reported hooks that no script registered")
+	}
+	if err := h.UnloadPlugin("j"); err != nil {
+		t.Fatal(err)
+	}
+	if h.wants(join) {
+		t.Error("join still wanted after unloading the only join hook")
+	}
+}

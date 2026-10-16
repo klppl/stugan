@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -217,6 +218,57 @@ type Host struct {
 	timers          []*timerHook
 	nextID          int
 	unhookers       map[int]unhooker
+
+	// present summarizes which event kinds currently have at least one hook.
+	// It is rebuilt on the plugin goroutine after every job (hooks only change
+	// there) and read lock-free by Dispatch, which skips the goroutine
+	// round-trip for events no script listens to — most joins, parts, quits
+	// and modes on a typical install.
+	present atomic.Pointer[hookPresence]
+}
+
+// hookPresence records which hook lists are non-empty.
+type hookPresence struct {
+	msg, input, cmd, topic bool
+	signals                map[string]bool
+}
+
+// refreshPresence rebuilds the hook summary (plugin goroutine only).
+func (h *Host) refreshPresence() {
+	p := &hookPresence{
+		msg:     len(h.msgHooks) > 0,
+		input:   len(h.inputHooks) > 0,
+		cmd:     len(h.cmdHooks) > 0,
+		topic:   len(h.topicHooks) > 0,
+		signals: make(map[string]bool, len(h.signalHooks)),
+	}
+	for name, hooks := range h.signalHooks {
+		if len(hooks) > 0 {
+			p.signals[name] = true
+		}
+	}
+	h.present.Store(p)
+}
+
+// wants reports whether any hook could act on ev. Before the first refresh it
+// conservatively answers true.
+func (h *Host) wants(ev core.Event) bool {
+	p := h.present.Load()
+	if p == nil {
+		return true
+	}
+	switch ev.Type {
+	case core.EvMessageIn:
+		return p.msg
+	case core.EvMessageOut:
+		return p.input
+	case core.EvCommand:
+		return p.cmd
+	case core.EvTopic:
+		return p.topic || p.signals["topic"]
+	}
+	name, ok := signalName(ev.Type)
+	return ok && p.signals[name]
 }
 
 // unhooker undoes one hook/timer registration. The owning script is recorded
@@ -317,6 +369,7 @@ func (h *Host) loop() {
 			return
 		case fn := <-h.jobs:
 			fn()
+			h.refreshPresence()
 		}
 	}
 }
@@ -336,6 +389,9 @@ func (h *Host) do(fn func()) {
 // plugin goroutine and returns the (possibly rewritten) event with
 // keep=false if a hook dropped it (messages) or claimed it (commands).
 func (h *Host) Dispatch(_ context.Context, ev core.Event) (core.Event, bool) {
+	if !h.wants(ev) {
+		return ev, true // no hook listens: skip the plugin goroutine hop
+	}
 	out, keep := ev, true
 	h.do(func() { out, keep = h.dispatch(ev) })
 	return out, keep

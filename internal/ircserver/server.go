@@ -263,14 +263,14 @@ func (s *Server) broadcastPrint(userID string, m core.Message) {
 		// Self-echo suppression: if this message was sent by this session,
 		// only send it back if the client explicitly negotiated echo-message.
 		if m.Self && sess.isOwnEcho(m.Kind, m.Buffer, m.Text) {
-			if !sess.caps[CapEchoMessage] {
+			if !sess.hasCap(CapEchoMessage) {
 				continue
 			}
 		}
 
 		lines := sess.formatSinkMessage(m)
 		for _, line := range lines {
-			_ = sess.write(line)
+			sess.push(line)
 		}
 	}
 }
@@ -281,8 +281,13 @@ func (s *Server) broadcastNetworkChanged(userID string, n *core.Network) {
 		if !sess.registered || sess.closed.Load() {
 			continue
 		}
+		// NetworkChanged fires on every structural change (joins, parts, away,
+		// …); only a connection-state transition is worth telling the client.
+		if !sess.stateChanged(n.ID, n.State) {
+			continue
+		}
 
-		if sess.caps[CapBouncerNetworksNotify] {
+		if sess.hasCap(CapBouncerNetworksNotify) {
 			state := "disconnected"
 			if n.State == core.StateRegistered {
 				state = "connected"
@@ -293,14 +298,15 @@ func (s *Server) broadcastNetworkChanged(userID string, n *core.Network) {
 			if state == "connected" {
 				attrs = "state=connected;error="
 			}
-			_ = sess.write(FormatLine("", serverName, "BOUNCER", "NETWORK", n.ID, attrs))
+			sess.push(FormatLine("", serverName, "BOUNCER", "NETWORK", n.ID, attrs))
 		}
 
 		if sess.networkID == n.ID {
+			nick := sess.currentNickOr("*")
 			if n.State == core.StateRegistered {
-				sess.notice(fmt.Sprintf("Network '%s' is now connected.", n.Name))
+				sess.push(FormatLine("", serverName, "NOTICE", nick, ":"+fmt.Sprintf("Network '%s' is now connected.", n.Name)))
 			} else if n.State == core.StateDisconnected {
-				sess.notice(fmt.Sprintf("Network '%s' is disconnected — will keep retrying.", n.Name))
+				sess.push(FormatLine("", serverName, "NOTICE", nick, ":"+fmt.Sprintf("Network '%s' is disconnected — will keep retrying.", n.Name)))
 			}
 		}
 	}
@@ -320,58 +326,58 @@ func (s *Server) broadcastChannelList(userID, network string, items []core.Chann
 			continue
 		}
 		nick := sess.currentNickOr("*")
-		_ = sess.write(FormatLine("", serverName, "321", nick, "Channel", ":Users  Name"))
+		sess.push(FormatLine("", serverName, "321", nick, "Channel", ":Users  Name"))
 		for _, it := range items {
 			userCount := strconv.Itoa(it.Users)
-			_ = sess.write(FormatLine("", serverName, "322", nick, it.Name, userCount, ":"+it.Topic))
+			sess.push(FormatLine("", serverName, "322", nick, it.Name, userCount, ":"+it.Topic))
 		}
-		_ = sess.write(FormatLine("", serverName, "323", nick, ":End of /LIST"))
+		sess.push(FormatLine("", serverName, "323", nick, ":End of /LIST"))
 	}
 }
 
 func (s *Server) broadcastTyping(userID, network, buffer, nick, state string) {
 	sessions := s.reg.sessionsFor(userID, network)
 	for _, sess := range sessions {
-		if !sess.registered || sess.closed.Load() || !sess.caps[CapMessageTags] {
+		if !sess.registered || sess.closed.Load() || !sess.hasCap(CapMessageTags) {
 			continue
 		}
 		fromPrefix := fmt.Sprintf("%s!stugan@%s", nick, serverName)
 		tags := fmt.Sprintf("+typing=%s", state)
-		_ = sess.write(FormatLine(tags, fromPrefix, "TAGMSG", buffer))
+		sess.push(FormatLine(tags, fromPrefix, "TAGMSG", buffer))
 	}
 }
 
 func (s *Server) broadcastReact(userID, network, buffer, target, nick, reaction string) {
 	sessions := s.reg.sessionsFor(userID, network)
 	for _, sess := range sessions {
-		if !sess.registered || sess.closed.Load() || !sess.caps[CapMessageTags] {
+		if !sess.registered || sess.closed.Load() || !sess.hasCap(CapMessageTags) {
 			continue
 		}
 		fromPrefix := fmt.Sprintf("%s!stugan@%s", nick, serverName)
 		tags := fmt.Sprintf("+draft/react=%s;+draft/reply=%s", EscapeTagValue(reaction), target)
-		_ = sess.write(FormatLine(tags, fromPrefix, "TAGMSG", buffer))
+		sess.push(FormatLine(tags, fromPrefix, "TAGMSG", buffer))
 	}
 }
 
 func (s *Server) broadcastRedact(userID, network, buffer, target, nick, reason string) {
 	sessions := s.reg.sessionsFor(userID, network)
 	for _, sess := range sessions {
-		if !sess.registered || sess.closed.Load() || !sess.caps[CapMessageTags] {
+		if !sess.registered || sess.closed.Load() || !sess.hasCap(CapMessageTags) {
 			continue
 		}
 		fromPrefix := fmt.Sprintf("%s!stugan@%s", nick, serverName)
 		tags := fmt.Sprintf("+draft/delete=%s", target)
-		_ = sess.write(FormatLine(tags, fromPrefix, "TAGMSG", buffer))
+		sess.push(FormatLine(tags, fromPrefix, "TAGMSG", buffer))
 	}
 }
 
 func (s *Server) broadcastReadMarker(userID, network, buffer string, ts time.Time) {
 	sessions := s.reg.sessionsFor(userID, network)
 	for _, sess := range sessions {
-		if !sess.registered || sess.closed.Load() || (!sess.caps[CapReadMarker] && !sess.caps[CapReadMarkerAlt]) {
+		if !sess.registered || sess.closed.Load() || (!sess.hasCap(CapReadMarker) && !sess.hasCap(CapReadMarkerAlt)) {
 			continue
 		}
 		param := "timestamp=" + FormatIrcTime(ts)
-		_ = sess.write(FormatLine("", serverName, "MARKREAD", buffer, param))
+		sess.push(FormatLine("", serverName, "MARKREAD", buffer, param))
 	}
 }

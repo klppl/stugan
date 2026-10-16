@@ -40,6 +40,8 @@ type client struct {
 	// visible is guarded by Server.mu. Default true preserves push suppression
 	// for older clients that predate the presence frame.
 	visible bool
+	// slots bounds this socket's in-flight async handlers (see Server.async).
+	slots chan struct{}
 }
 
 func newClient(ws *websocket.Conn, log *slog.Logger) *client {
@@ -48,6 +50,7 @@ func newClient(ws *websocket.Conn, log *slog.Logger) *client {
 		send:    make(chan proto.Envelope, sendBuffer),
 		log:     log,
 		visible: true,
+		slots:   make(chan struct{}, maxAsyncPerClient),
 	}
 }
 

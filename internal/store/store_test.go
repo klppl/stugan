@@ -652,8 +652,12 @@ func TestMsgidDedupMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Recreate the legacy state: drop the unique index, insert duplicates.
+	// Recreate the legacy state: drop the unique index, insert duplicates, and
+	// mark the schema as pre-migration (legacy DBs have user_version 0).
 	if _, err := s.db.Exec(`DROP INDEX idx_messages_msgid`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`PRAGMA user_version = 0`); err != nil {
 		t.Fatal(err)
 	}
 	for i := range 3 {
@@ -699,6 +703,9 @@ func TestReadMarkerCasemappingMigration(t *testing.T) {
 	}
 	if _, err := s.db.Exec(`INSERT INTO read_markers(network, buffer, ts) VALUES
 		('n', '#[room]', 10), ('n', '#{ROOM}', 20)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`PRAGMA user_version = 0`); err != nil { // legacy DB
 		t.Fatal(err)
 	}
 	s.Close()
@@ -842,4 +849,101 @@ func TestStoreBackupAndImport(t *testing.T) {
 	if len(msgs1) != 1 || msgs1[0].Text != "merge test" {
 		t.Fatalf("s1 oftc backlog after merge: %+v", msgs1)
 	}
+}
+
+// TestImportLegacyColumnOrder: a backup made by an older build has
+// highlight/buffer_fold appended at the end of messages (ALTER TABLE), unlike a
+// fresh schema. Restoring it must map columns by name, not position.
+func TestImportLegacyColumnOrder(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "legacy.db")
+	db, err := sql.Open("sqlite", "file:"+legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE messages (
+		  id INTEGER PRIMARY KEY AUTOINCREMENT, msgid TEXT NOT NULL DEFAULT '',
+		  network TEXT NOT NULL, buffer TEXT NOT NULL, ts INTEGER NOT NULL,
+		  from_nick TEXT NOT NULL DEFAULT '', account TEXT NOT NULL DEFAULT '',
+		  kind TEXT NOT NULL, text TEXT NOT NULL, self INTEGER NOT NULL DEFAULT 0,
+		  tags TEXT NOT NULL DEFAULT '');
+		ALTER TABLE messages ADD COLUMN highlight INTEGER NOT NULL DEFAULT 0;
+		CREATE TABLE read_markers (network TEXT NOT NULL, buffer TEXT NOT NULL, ts INTEGER NOT NULL,
+		  PRIMARY KEY (network, buffer));
+		INSERT INTO messages(msgid, network, buffer, ts, from_nick, kind, text, highlight)
+		VALUES ('m1', 'libera', '#Stugan', 1700000000000, 'alice', 'privmsg', 'legacy line', 1);
+		INSERT INTO read_markers VALUES ('libera', '#Stugan', 5);`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := openFile(t, filepath.Join(dir, "new.db"))
+	if err := s.Import(ctx, legacy, ImportModeReplace); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	got, _, err := s.Backlog(ctx, "libera", "#stugan", 0, 10)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("backlog = %+v err=%v, want the legacy line", got, err)
+	}
+	m := got[0]
+	if m.Text != "legacy line" || m.From != "alice" || !m.Highlight || m.Time.UnixMilli() != 1700000000000 {
+		t.Fatalf("imported row scrambled: %+v", m)
+	}
+	markers, err := s.ReadMarkers(ctx)
+	if err != nil || markers["libera/"+core.FoldIRC("#Stugan")] != 5 {
+		t.Fatalf("read markers = %v err=%v", markers, err)
+	}
+}
+
+// TestMigrationsRunOnce: a fresh database is stamped with the schema version
+// and carries the folded-buffer indexes, not the unused unfolded ones.
+func TestMigrationsRunOnce(t *testing.T) {
+	s := openFile(t, filepath.Join(t.TempDir(), "v.db"))
+	var v int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil || v != schemaVersion {
+		t.Fatalf("user_version = %d err=%v, want %d", v, err, schemaVersion)
+	}
+	for idx, want := range map[string]bool{
+		"idx_messages_fold_ts": true, "idx_messages_buffer_fold": true, "idx_messages_msgid": true,
+		"idx_messages_buffer": false, "idx_messages_buffer_ts": false,
+	} {
+		var n int
+		_ = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, idx).Scan(&n)
+		if (n == 1) != want {
+			t.Errorf("index %s present=%v, want %v", idx, n == 1, want)
+		}
+	}
+}
+
+// TestPruneBatches: pruning more rows than one batch removes them all and
+// leaves newer history alone.
+func TestPruneBatches(t *testing.T) {
+	ctx := context.Background()
+	s := openFile(t, filepath.Join(t.TempDir(), "p.db"))
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range pruneBatch + 500 {
+		s.Print(msg("n", "#c", "a", fmt.Sprintf("old %d", i), core.MsgPrivmsg, old))
+	}
+	s.Print(msg("n", "#c", "a", "fresh", core.MsgPrivmsg, time.Now()))
+	n, err := s.Prune(ctx, old.Add(time.Hour))
+	if err != nil || n != pruneBatch+500 {
+		t.Fatalf("Prune = (%d, %v), want (%d, nil)", n, err, pruneBatch+500)
+	}
+	got, _, _ := s.Backlog(ctx, "n", "#c", 0, 10)
+	if len(got) != 1 || got[0].Text != "fresh" {
+		t.Fatalf("remaining = %+v", got)
+	}
+}
+
+func openFile(t *testing.T, path string) *Store {
+	t.Helper()
+	s, err := Open(path, nil)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
 }

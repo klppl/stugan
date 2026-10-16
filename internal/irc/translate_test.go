@@ -740,3 +740,22 @@ func TestNamesEventPrefixes(t *testing.T) {
 		t.Errorf("standard-set fallback = %+v", ev.Members)
 	}
 }
+
+// TestChannelSettingFlags: membership (+o/+v) and list (+b) modes must not
+// leak into the channel's own mode string.
+func TestChannelSettingFlags(t *testing.T) {
+	const prefix, chanmodes = "(ov)@+", "beI,k,l,imnpst"
+	for _, tt := range []struct{ flags, want string }{
+		{"+o", "+"},
+		{"+ov", "+"},
+		{"+b", "+"},
+		{"+mt", "+mt"},
+		{"+ko", "+k"},
+		{"-o+n", "-+n"},
+		{"+nt-b", "+nt-"},
+	} {
+		if got := channelSettingFlags(prefix, chanmodes, tt.flags); got != tt.want {
+			t.Errorf("channelSettingFlags(%q) = %q, want %q", tt.flags, got, tt.want)
+		}
+	}
+}

@@ -298,7 +298,7 @@ func (c *Conn) registerHandlers() {
 			gc.Config.SASL = nil
 		}
 		c.emit(core.Event{Type: core.EvConnect, Network: c.opts.Network, Nick: gc.GetNick()})
-		c.armMonitor(gc)
+		c.armMonitor()
 	})
 
 	// MONITOR status replies: 730 = the listed nicks are online, 731 = offline.
@@ -394,22 +394,50 @@ func (c *Conn) registerHandlers() {
 	})
 }
 
-// autojoin (re)joins the configured channels after registration. Keyed
-// channels are sent individually with their key; keyless ones are batched.
-func (c *Conn) autojoin(gc *girc.Client) {
-	keyed, keyless := planAutojoin(c.opts.Channels, c.opts.ChannelKeys)
+// joinLineBudget caps the channel list of one batched JOIN so the line stays
+// well inside IRC's 512-byte limit (prefix and tags included).
+const joinLineBudget = 400
+
+// autojoinLines builds the JOIN lines for the auto-join list: keyed channels
+// one per line with their key, keyless ones batched comma-separated.
+func autojoinLines(channels []string, keys map[string]string) []string {
+	keyed, keyless := planAutojoin(channels, keys)
+	var lines []string
 	for _, k := range keyed {
-		gc.Cmd.JoinKey(k.channel, k.key)
+		lines = append(lines, "JOIN "+k.channel+" "+k.key)
 	}
-	if len(keyless) > 0 {
-		gc.Cmd.Join(keyless...)
+	var batch []string
+	size := 0
+	for _, ch := range keyless {
+		if len(batch) > 0 && size+1+len(ch) > joinLineBudget {
+			lines = append(lines, "JOIN "+strings.Join(batch, ","))
+			batch, size = nil, 0
+		}
+		batch = append(batch, ch)
+		size += len(ch) + 1
 	}
+	if len(batch) > 0 {
+		lines = append(lines, "JOIN "+strings.Join(batch, ","))
+	}
+	return lines
 }
 
 // Autojoin joins the configured channels. Registration only emits EvConnect;
 // the engine calls this after its Perform sequence so authentication and user
 // modes (notably QuakeNet +x) take effect before any channel JOIN is sent.
-func (c *Conn) Autojoin() { c.autojoin(c.client) }
+//
+// The lines go through the outbound queue rather than girc's Cmd helpers:
+// those apply flood control synchronously on the caller's goroutine, and the
+// engine calls this from its loop, so a long keyed list would stall every
+// network while girc sleeps between lines.
+func (c *Conn) Autojoin() {
+	for _, line := range autojoinLines(c.opts.Channels, c.opts.ChannelKeys) {
+		if err := c.SendRaw(line); err != nil {
+			c.log.Warn("autojoin", "line", line, "err", err)
+			return
+		}
+	}
+}
 
 // monitorChunk is how many nicks ride one MONITOR + command. MONITOR targets
 // are comma-separated in a single parameter, so this keeps the line well within
@@ -418,11 +446,13 @@ func (c *Conn) Autojoin() { c.autojoin(c.client) }
 const monitorChunk = 15
 
 // armMonitor watches the friends list via MONITOR after registration, chunked
-// so a long list stays within the line-length budget.
-func (c *Conn) armMonitor(gc *girc.Client) {
+// so a long list stays within the line-length budget. Queued rather than sent
+// via gc.Cmd so girc's flood-control sleep never runs on its handler goroutine
+// (which would hold up processing of every inbound line behind it).
+func (c *Conn) armMonitor() {
 	for i := 0; i < len(c.opts.Monitor); i += monitorChunk {
 		end := min(i+monitorChunk, len(c.opts.Monitor))
-		gc.Cmd.Monitor('+', strings.Join(c.opts.Monitor[i:end], ","))
+		_ = c.outbound.enqueue(outboundRequest{raw: "MONITOR + " + strings.Join(c.opts.Monitor[i:end], ",")})
 	}
 }
 

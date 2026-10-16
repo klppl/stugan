@@ -112,9 +112,13 @@ type Event struct {
 	Args        []string     // EvCommand: whitespace-split arguments
 	Members     []Member     // EvNames: the listed channel members
 	MemberModes []MemberMode // EvMode: the membership prefix changes
-	Away        bool         // EvAway: whether Nick is now away
-	Online      bool         // EvMonitor: whether the Args nicks are now online
-	Count       int          // EvListItem: user count
+	// ChanModes (EvMode) is the channel-setting part of the flags, with
+	// membership and list modes removed (e.g. "+o bob" → "+"). Empty means the
+	// producer did not split it, and the flags in Text are used as-is.
+	ChanModes string
+	Away      bool // EvAway: whether Nick is now away
+	Online    bool // EvMonitor: whether the Args nicks are now online
+	Count     int  // EvListItem: user count
 }
 
 // MemberMode is one membership-prefix change carried by EvMode: Nick gains
