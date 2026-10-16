@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import type { Buffer } from "../connection";
 import { bufKey, connection } from "../connection";
 import { readDraft, writeDraft } from "../drafts";
@@ -148,7 +148,27 @@ watch(
   },
 );
 
+// Wrapping depends on the box's width, so a height measured at one width is
+// wrong at another: the input could stay several lines tall after the window
+// widened, or after a first measure taken mid-layout (pane still opening,
+// background tab). Re-measure whenever the width changes — only the width,
+// since autosize itself changes the height.
+let inputRO: ResizeObserver | null = null;
+let lastInputWidth = 0;
+onMounted(() => {
+  nextTick(autosize);
+  if (!("ResizeObserver" in window) || !inputEl.value) return;
+  inputRO = new ResizeObserver(([entry]) => {
+    const w = entry.contentRect.width;
+    if (w === lastInputWidth) return;
+    lastInputWidth = w;
+    autosize();
+  });
+  inputRO.observe(inputEl.value);
+});
+
 onUnmounted(() => {
+  inputRO?.disconnect();
   writeDraft(activeDraftKey, text.value);
   if (props.buffer && text.value.trim()) {
     connection.sendTyping(props.network, props.buffer.name, "done");

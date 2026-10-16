@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { connection, bufKey, foldTarget, type Buffer, type Network } from "../connection";
 import { useContextMenu } from "../contextMenu";
 import { ui, closeDrawers } from "../ui";
@@ -94,6 +94,17 @@ function selectBuffer(network: string, buffer: string) {
   connection.select(network, buffer);
   // On mobile the sidebar is a drawer — collapse it so the user lands in chat.
   if (ui.isMobile) closeDrawers();
+}
+
+// Keyboard equivalent of right-click / long-press: the ContextMenu key or
+// Shift+F10 opens the row's menu under the row and moves focus into it, so
+// mute/leave/key are reachable without a pointer.
+function onRowMenuKey<T>(menu: ReturnType<typeof useContextMenu<T>>, payload: T, e: KeyboardEvent) {
+  if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+  e.preventDefault();
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  menu.open(payload, rect.left + 24, rect.bottom);
+  nextTick(() => document.querySelector<HTMLElement>(".ctx-menu .ctx-item")?.focus());
 }
 
 function isEncrypted(buf: Buffer): boolean {
@@ -241,7 +252,12 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
           'drop-after': hintFor(netKey(net)) === 'after',
         }"
         draggable="true"
+        tabindex="0"
+        role="button"
+        :aria-current="isActive(net.id, STATUS) ? 'page' : undefined"
         @click="selectBuffer(net.id, STATUS)"
+        @keydown.enter.self.prevent="selectBuffer(net.id, STATUS)"
+        @keydown.space.self.prevent="selectBuffer(net.id, STATUS)"
         @dragstart="onNetDragStart(net, $event)"
         @dragover="onNetDragOver(net, $event)"
         @drop="onNetDrop(net, $event)"
@@ -256,7 +272,14 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
             :class="{ highlight: statusBuf(net)!.highlight > 0 }"
             >{{ statusBuf(net)!.unread }}</span
           >
-          <span class="net-gear" @click.stop="settingsFor = net.id" title="network settings">⚙</span>
+          <button
+            type="button"
+            class="net-gear"
+            :aria-label="`${net.name} network settings`"
+            title="network settings"
+            @click.stop="settingsFor = net.id"
+            @keydown.stop
+          >⚙</button>
         </span>
       </div>
       <ul class="buffers">
@@ -272,7 +295,13 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
             'drop-after': hintFor(bufDropKey(net, buf)) === 'after',
           }"
           draggable="true"
+          tabindex="0"
+          role="button"
+          :aria-current="isActive(net.id, buf.name) ? 'page' : undefined"
           @click="selectBuffer(net.id, buf.name)"
+          @keydown.enter.prevent="selectBuffer(net.id, buf.name)"
+          @keydown.space.prevent="selectBuffer(net.id, buf.name)"
+          @keydown="onRowMenuKey(ctx, { network: net.id, buffer: buf.name, kind: buf.kind }, $event)"
           @contextmenu="ctx.onContext({ network: net.id, buffer: buf.name, kind: buf.kind }, $event)"
           @dragstart="onBufDragStart(net, buf, $event)"
           @dragover="onBufDragOver(net, buf, $event)"
@@ -304,7 +333,12 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
           class="friend long-press-target"
           :class="{ offline: !f.online }"
           :title="(f.online ? f.nick + ' is online — click to DM' : f.nick + ' is offline') + '; right-click to remove'"
+          tabindex="0"
+          role="button"
           @click="openFriend(net.id, f.nick)"
+          @keydown.enter.prevent="openFriend(net.id, f.nick)"
+          @keydown.space.prevent="openFriend(net.id, f.nick)"
+          @keydown="onRowMenuKey(friendCtx, { network: net.id, nick: f.nick }, $event)"
           @contextmenu="friendCtx.onContext({ network: net.id, nick: f.nick }, $event)"
           @touchstart.passive="friendCtx.onTouchStart({ network: net.id, nick: f.nick }, $event)"
           @touchmove.passive="friendCtx.onTouchMove($event)"

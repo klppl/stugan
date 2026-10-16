@@ -383,6 +383,22 @@ body {
   overscroll-behavior: none;
 }
 
+/* Keyboard focus ring, themed from the accent. :focus-visible keeps it off
+   mouse clicks. Sidebar rows are full-bleed, so their ring sits inside. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.network-name:focus-visible,
+.buffers li:focus-visible,
+.friends .friend:focus-visible {
+  outline-offset: -2px;
+}
+/* The active row is already accent-filled; contrast the ring against it. */
+.buffers li.active:focus-visible {
+  outline-color: var(--fg);
+}
+
 /* Slim, theme-blended scrollbars. The thumb is a translucent tint of the
    foreground colour so it reads against any --bg and only firms up on hover.
    Firefox uses the standard properties; Chromium/WebKit the pseudo-elements. */
@@ -474,10 +490,17 @@ body {
 }
 .net-gear {
   opacity: 0;
+  font: inherit;
   font-size: 13px;
   padding: 4px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
 }
-.network-name:hover .net-gear {
+.network-name:hover .net-gear,
+.network-name:focus-within .net-gear {
   opacity: 0.8;
 }
 .network-name .nick {
@@ -610,7 +633,8 @@ body {
 }
 .search-box-container {
   position: relative;
-  flex: 0 1 220px;
+  /* Holds its width: the topic is what gives way when the bar gets tight. */
+  flex: 0 0 200px;
 }
 .topbar .search {
   width: 100%;
@@ -709,6 +733,13 @@ body {
   flex: 0 1 auto;
   min-width: 0;
 }
+/* Right-hand controls never shrink or wrap their labels — before this the
+   topic's long content squeezed them into two-line buttons and a "Search r"
+   stub. The topic (min-width 0, ellipsis) absorbs all the squeeze instead. */
+.topbar > .ghost {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 .topbar .topic-edit {
   flex: 0 1 320px;
 }
@@ -749,6 +780,19 @@ body {
   min-width: 30px;
   height: 28px;
   padding: 0 8px;
+}
+/* Narrow desktop (sidebar + members leave little room): drop the button
+   text and keep the glyphs, as on phones. aria-label keeps their names. */
+@media (min-width: 721px) and (max-width: 1180px) {
+  .topbar .btn-label {
+    display: none;
+  }
+  .topbar .btn-icon {
+    display: inline;
+  }
+  .search-box-container {
+    flex-basis: 160px;
+  }
 }
 /* The hamburger and the search-toggle icon are mobile-only. */
 .menu-btn,
@@ -2719,4 +2763,17 @@ body {
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 12px;
+}
+
+/* Honour the OS "reduce motion" setting: drawer slides, menu morphs and
+   hover fades collapse to instant state changes. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

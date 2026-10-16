@@ -547,6 +547,11 @@ function onGlobalKeydown(e: KeyboardEvent) {
   // chat input itself, or anything contenteditable.
   const a = document.activeElement as HTMLElement | null;
   if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) return;
+  // A handler on the focused element already consumed the key (e.g. Space
+  // activating a sidebar row), and Space on any button-like control is its
+  // activation key, not text.
+  if (e.defaultPrevented) return;
+  if (e.key === " " && a && (a.tagName === "BUTTON" || a.getAttribute("role") === "button")) return;
   e.preventDefault();
   inputRef.value?.typeChar(e.key);
 }

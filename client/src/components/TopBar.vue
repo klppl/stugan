@@ -401,6 +401,8 @@ const bufferTitle = computed(() => {
     <button
       class="ghost mentions-btn desktop-action"
       :class="{ active: store.view === 'mentions' }"
+      :aria-label="mentionCount ? `Mentions (${mentionCount})` : 'Mentions'"
+      title="Mentions"
       @click="connection.showMentions()"
     >
       <span class="btn-label">@ Mentions</span>
@@ -411,6 +413,7 @@ const bufferTitle = computed(() => {
       v-if="store.active"
       class="ghost channels-btn desktop-action"
       title="Browse channels"
+      aria-label="Browse channels"
       @click="browse"
     >
       <span class="btn-label">⊞ Channels</span>

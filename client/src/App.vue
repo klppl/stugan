@@ -12,7 +12,7 @@ import Digest from "./components/Digest.vue";
 import ImageViewerModal from "./components/ImageViewerModal.vue";
 import { authState, canEnter, needsMagicWord } from "./auth";
 import { ui, closeDrawers, closeImageViewer, useSwipeNav } from "./ui";
-import { connection } from "./connection";
+import { connection, foldTarget } from "./connection";
 
 const showPalette = ref(false);
 
@@ -25,11 +25,31 @@ function toggleSettings() {
 useSwipeNav();
 
 // Ctrl/Cmd-K toggles the command palette (quick switcher) from anywhere.
+// Alt+↑/↓ steps to the previous/next buffer in sidebar order (irssi/WeeChat
+// muscle memory), wrapping at the ends.
 function onGlobalKey(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
     e.preventDefault();
     showPalette.value = !showPalette.value;
+  } else if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+    e.preventDefault();
+    stepBuffer(e.key === "ArrowUp" ? -1 : 1);
   }
+}
+
+function stepBuffer(dir: 1 | -1) {
+  // Sidebar order: each network's status buffer (its header row), then its
+  // channels and queries.
+  const order = store.networks.flatMap((n) => [
+    ...n.buffers.filter((b) => b.kind === "status"),
+    ...n.buffers.filter((b) => b.kind !== "status"),
+  ].map((b) => ({ network: n.id, buffer: b.name })));
+  if (!order.length) return;
+  const cur = order.findIndex(
+    (o) => o.network === store.active?.network && foldTarget(o.buffer) === foldTarget(store.active?.buffer ?? ""),
+  );
+  const next = order[(cur + dir + order.length) % order.length];
+  connection.select(next.network, next.buffer);
 }
 onMounted(() => window.addEventListener("keydown", onGlobalKey));
 onUnmounted(() => window.removeEventListener("keydown", onGlobalKey));
