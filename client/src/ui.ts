@@ -44,9 +44,12 @@ mq?.addEventListener("change", (e) => {
   ui.membersOpen = !e.matches;
 });
 
+// On desktop the member list isn't a drawer but a docked panel the user
+// toggled on purpose, so leave it alone there — otherwise opening Settings
+// (or a friend's DM) silently hid it for good.
 export function closeDrawers() {
   ui.sidebarOpen = false;
-  ui.membersOpen = false;
+  if (ui.isMobile) ui.membersOpen = false;
 }
 
 export function toggleSidebar() {
