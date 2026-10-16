@@ -7,6 +7,7 @@ import { toggleMircTheme } from "../settings";
 import AddNetwork from "./AddNetwork.vue";
 import EncryptionKey from "./EncryptionKey.vue";
 import NetworkSettings from "./NetworkSettings.vue";
+import Icon from "./Icon.vue";
 
 const store = connection.store;
 const showAdd = ref(false);
@@ -262,7 +263,7 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
         @dragover="onNetDragOver(net, $event)"
         @drop="onNetDrop(net, $event)"
         @dragend="clearDrag"
-        title="server status — click to open; drag to reorder; ⚙ for network settings"
+        title="server status — click to open; drag to reorder; gear for network settings"
       >
         <span class="net-label">{{ net.name }} <span class="nick">({{ net.nick }})</span></span>
         <span class="net-right">
@@ -279,7 +280,7 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
             title="network settings"
             @click.stop="settingsFor = net.id"
             @keydown.stop
-          >⚙</button>
+          ><Icon name="settings" :size="14" /></button>
         </span>
       </div>
       <ul class="buffers">
@@ -314,9 +315,9 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
           @selectstart.prevent
           title="right-click (or long-press) for buffer options; drag to reorder"
         >
-          <span v-if="isEncrypted(buf)" class="lock-icon" :title="`encrypted (${buf.state.encrypted})`">🔒</span>
+          <span v-if="isEncrypted(buf)" class="lock-icon" :title="`encrypted (${buf.state.encrypted})`"><Icon name="lock" :size="13" /></span>
           <span class="buf-name">{{ buf.name }}</span>
-          <span v-if="connection.isMuted(bufKey(net.id, buf.name))" class="mute-icon">🔇</span>
+          <span v-if="connection.isMuted(bufKey(net.id, buf.name))" class="mute-icon" title="muted"><Icon name="mute" :size="14" /></span>
           <span
             v-else-if="buf.unread > 0 && !isActive(net.id, buf.name)"
             class="badge"

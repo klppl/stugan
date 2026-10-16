@@ -26,6 +26,11 @@ export const ui = reactive({
   membersOpen: !startMobile,
   isMobile: startMobile,
   activeImage: null as ActiveImage | null,
+  // Channel browser (network id) and channel-details modal. They live here,
+  // not in TopBar, so the Cmd-K palette can open them when the top bar is
+  // hidden by the "Show top bar" setting.
+  browseNet: null as string | null,
+  inspectorOpen: false,
 });
 
 // Reset drawer/panel state on a viewport-class change so neither side

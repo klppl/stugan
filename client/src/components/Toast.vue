@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import { connection, type ToastLevel } from "../connection";
+import Icon, { type IconName } from "./Icon.vue";
 
 const store = connection.store;
 
-function toastIcon(level?: ToastLevel) {
+function toastIcon(level?: ToastLevel): IconName {
   switch (level) {
     case "success":
-      return "✓";
+      return "check";
     case "info":
-      return "ℹ";
+      return "info";
     case "warning":
-      return "⚠";
+      return "alert-circle";
     case "error":
     default:
-      return "✕";
+      return "x";
   }
 }
 </script>
@@ -30,7 +31,7 @@ function toastIcon(level?: ToastLevel) {
       role="status"
       @click="connection.dismissToast(t.id)"
     >
-      <span class="toast-icon" aria-hidden="true">{{ toastIcon(t.level) }}</span>
+      <Icon :name="toastIcon(t.level)" class="toast-icon" />
       <span class="toast-msg">{{ t.message }}</span>
       <span
         v-if="t.code && t.code !== 'success' && t.code !== 'info' && t.code !== 'error'"

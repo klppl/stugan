@@ -36,7 +36,7 @@ function usePreset(p: PresetTheme) {
 <template>
   <div class="settings-section">
     <div class="section-header">
-      <h3 class="section-title">🎨 Appearance</h3>
+      <h3 class="section-title">Appearance</h3>
       <p class="section-desc">Customize the look, color themes, and font size of stugan.</p>
     </div>
 
@@ -119,6 +119,16 @@ function usePreset(p: PresetTheme) {
         <select v-model.number="settings.fontSize" class="setting-input">
           <option v-for="s in FONT_SIZES" :key="s" :value="s">{{ s }} px</option>
         </select>
+      </label>
+
+      <div class="setting-divider" />
+
+      <label class="setting-row checkbox-row">
+        <div class="setting-label">
+          <span>Show Top Bar</span>
+          <span class="setting-hint">The bar above the chat with the channel name, topic, search and buttons. When it's off, press Ctrl/Cmd-K for search, mentions, channels and the member list. Phones always show it.</span>
+        </div>
+        <input v-model="settings.showTopBar" type="checkbox" class="toggle-switch" />
       </label>
     </div>
   </div>

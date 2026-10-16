@@ -42,7 +42,7 @@ watch(
 <template>
   <div class="settings-section">
     <div class="section-header">
-      <h3 class="section-title">⚡ Command Aliases</h3>
+      <h3 class="section-title">Command Aliases</h3>
       <p class="section-desc">Configure slash-command shortcuts and argument expansion rules.</p>
     </div>
 

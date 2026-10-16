@@ -9,6 +9,7 @@ import UploadSettings from "./UploadSettings.vue";
 import BackupSettings from "./BackupSettings.vue";
 import NotificationAccountSettings from "./NotificationAccountSettings.vue";
 import { connection } from "../../connection";
+import Icon, { type IconName } from "../Icon.vue";
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -25,7 +26,7 @@ export type SettingTabId =
 interface SettingCategory {
   id: SettingTabId;
   label: string;
-  icon: string;
+  icon: IconName;
   desc: string;
   component: unknown;
   cap?: string;
@@ -42,35 +43,35 @@ const categories: SettingCategory[] = [
   {
     id: "appearance",
     label: "Appearance",
-    icon: "🎨",
+    icon: "palette",
     desc: "Themes, custom CSS, text size",
     component: AppearanceSettings,
   },
   {
     id: "chat",
     label: "Chat & Formatting",
-    icon: "💬",
+    icon: "message",
     desc: "Events, previews, nicks, reactions",
     component: ChatBehaviorSettings,
   },
   {
     id: "highlights",
     label: "Highlights",
-    icon: "🔔",
+    icon: "bell",
     desc: "Keyword & exception regexes",
     component: HighlightSettings,
   },
   {
     id: "aliases",
     label: "Aliases",
-    icon: "⚡",
+    icon: "zap",
     desc: "Slash command shortcuts",
     component: AliasSettings,
   },
   {
     id: "plugins",
     label: "Plugins",
-    icon: "🔌",
+    icon: "plug",
     desc: "Lua scripts & extension settings",
     component: PluginSettings,
     cap: "plugins",
@@ -78,7 +79,7 @@ const categories: SettingCategory[] = [
   {
     id: "uploads",
     label: "Uploads",
-    icon: "📁",
+    icon: "folder",
     desc: "Stored file listing & expiry",
     component: UploadSettings,
     cap: "uploads",
@@ -86,14 +87,14 @@ const categories: SettingCategory[] = [
   {
     id: "backup",
     label: "Backup & Data",
-    icon: "💾",
+    icon: "database",
     desc: "Export & import portable backups",
     component: BackupSettings,
   },
   {
     id: "account",
     label: "Account & Notifications",
-    icon: "👤",
+    icon: "user",
     desc: "WebPush notifications, user session",
     component: NotificationAccountSettings,
   },
@@ -106,12 +107,14 @@ const settingSearchItems: SettingSearchItem[] = [
   { tab: "appearance", label: "Theme", desc: "Choose your preferred visual theme", keywords: "colors dark light" },
   { tab: "appearance", label: "Install Custom Theme", desc: "Create or paste CSS theme variables", keywords: "preset custom css remove" },
   { tab: "appearance", label: "Text Size", desc: "Change the font size for messages and buffers", keywords: "font" },
+  { tab: "appearance", label: "Show Top Bar", desc: "Show or hide the bar above the chat (desktop)", keywords: "header toolbar search mentions channels hide minimal" },
   { tab: "chat", label: "Fold Join / Part Events", desc: "Group join, part, and quit messages", keywords: "collapse events" },
   { tab: "chat", label: "Expand Link Previews", desc: "Show rich previews for HTTP links", keywords: "url cards" },
   { tab: "chat", label: "Colored Nicks", desc: "Assign consistent colors to user nicknames", keywords: "names users" },
   { tab: "chat", label: "Reactions", desc: "Add and view emoji reactions on messages", keywords: "emoji ircv3" },
   { tab: "chat", label: "Send Typing Notifications", desc: "Broadcast a typing indicator while you type", keywords: "status" },
   { tab: "chat", label: "Show Others' Typing", desc: "Display typing indicators from other users", keywords: "status" },
+  { tab: "chat", label: "What You Missed on Return", desc: "Open the catch-up summary after being away", keywords: "digest away unread mentions" },
   { tab: "highlights", label: "Highlight Keywords", desc: "Regular expressions that trigger highlights and notifications", keywords: "mentions regex patterns" },
   { tab: "highlights", label: "Highlight Exceptions", desc: "Patterns that prevent a highlight", keywords: "ignore regex exclusions" },
   { tab: "aliases", label: "Alias Rules", desc: "Configure slash-command shortcuts", keywords: "commands expansion" },
@@ -191,7 +194,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           title="Back to Chat (Esc)"
           @click="closeSettings"
         >
-          <span class="back-arrow" aria-hidden="true">←</span>
+          <Icon name="arrow-left" class="back-arrow" />
           <span class="back-text">Back to Chat</span>
         </button>
         <h2 class="settings-title">Settings</h2>
@@ -210,7 +213,6 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
       <div class="settings-header-right">
         <span class="esc-badge" title="Press Escape to exit settings">Esc</span>
-        <button class="btn btn-ghost close-icon-btn" aria-label="Close settings" @click="closeSettings">✕</button>
       </div>
     </header>
 
@@ -226,7 +228,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             :class="{ active: activeTab === cat.id }"
             @click="activeTab = cat.id"
           >
-            <span class="nav-item-icon" aria-hidden="true">{{ cat.icon }}</span>
+            <Icon :name="cat.icon" :size="18" class="nav-item-icon" />
             <div class="nav-item-text">
               <span class="nav-item-label">{{ cat.label }}</span>
               <span class="nav-item-desc">{{ cat.desc }}</span>
@@ -242,7 +244,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             class="settings-nav-item settings-search-result"
             @click="selectSearchResult(result)"
           >
-            <span class="nav-item-icon" aria-hidden="true">{{ categories.find((cat) => cat.id === result.tab)?.icon }}</span>
+            <Icon :name="categories.find((cat) => cat.id === result.tab)?.icon ?? 'settings'" :size="18" class="nav-item-icon" />
             <div class="nav-item-text">
               <span class="nav-item-label">{{ result.label }}</span>
               <span class="nav-item-desc">{{ result.desc }}</span>

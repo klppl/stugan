@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted } from "vue";
 import { connection } from "../connection";
 import type { MessageDTO } from "../proto/events";
 import MessageItem from "./MessageItem.vue";
+import Icon from "./Icon.vue";
 
 // Digest is the "what you missed" overlay shown on connect: the highlight lines
 // that arrived since the user's read markers (store.missed, fetched by
@@ -63,7 +64,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
           <h2>While you were away</h2>
           <p class="summary">{{ summary }}</p>
         </div>
-        <button class="ghost" title="Close" @click="connection.closeDigest()">✕</button>
+        <button class="ghost icon-btn" title="Close" aria-label="Close" @click="connection.closeDigest()"><Icon name="x" /></button>
       </header>
 
       <!-- The actual mention lines (server-fetched), click to jump. -->

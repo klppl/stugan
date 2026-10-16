@@ -7,8 +7,9 @@ import { settings } from "../settings";
 import { nickColor } from "../nickColor";
 import { connection, messageRefKey } from "../connection";
 import { openImageViewer } from "../ui";
+import Icon from "./Icon.vue";
 
-const props = defineProps<{ msg: MessageDTO; showBuffer?: boolean; showDate?: boolean }>();
+const props = defineProps<{ msg: MessageDTO; showBuffer?: boolean; showDate?: boolean; cont?: boolean }>();
 
 // A small fixed palette for one-click reactions; the chip row also lets you
 // toggle any reaction already present.
@@ -163,7 +164,7 @@ function onLinkClick(url: string, e: MouseEvent) {
 <template>
   <div
     class="message"
-    :class="[msg.kind, { highlight: msg.highlight, self: msg.self }]"
+    :class="[msg.kind, { highlight: msg.highlight, self: msg.self, cont }]"
     :data-msgid="msg.id || undefined"
   >
     <span class="ts">{{ time(msg.time) }}</span>
@@ -285,8 +286,8 @@ function onLinkClick(url: string, e: MouseEvent) {
 
     <!-- hover toolbar: react / delete -->
     <span v-if="canReact || canRedact" class="msg-actions">
-      <button v-if="canReact" type="button" class="msg-act" title="Add reaction" @click="showReactPicker = !showReactPicker">☺+</button>
-      <button v-if="canRedact" type="button" class="msg-act danger" title="Delete message" @click="doRedact">✕</button>
+      <button v-if="canReact" type="button" class="msg-act" title="Add reaction" aria-label="Add reaction" @click="showReactPicker = !showReactPicker"><Icon name="smile-plus" :size="15" /></button>
+      <button v-if="canRedact" type="button" class="msg-act danger" title="Delete message" aria-label="Delete message" @click="doRedact"><Icon name="trash" :size="15" /></button>
       <span v-if="showReactPicker" class="react-picker">
         <button v-for="e in QUICK_REACTS" :key="e" type="button" @click="toggleReact(e)">{{ e }}</button>
       </span>

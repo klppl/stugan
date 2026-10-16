@@ -9,6 +9,7 @@ import type { MemberDTO, MessageDTO } from "../proto/events";
 import MessageItem from "./MessageItem.vue";
 import MentionRow from "./MentionRow.vue";
 import ChatInput from "./ChatInput.vue";
+import Icon from "./Icon.vue";
 
 const store = connection.store;
 
@@ -160,7 +161,29 @@ function dayKey(iso: string): string {
 // row (when settings.foldEvents is on) so busy channels don't drown in churn.
 // A day boundary or any real message closes an open run.
 const EVENT_KINDS = ["join", "part", "quit", "nick"];
-type Row = { day?: string; msg?: MessageDTO; events?: MessageDTO[] };
+// cont marks a message that continues the previous one's group: same sender,
+// a few minutes apart, nothing in between. Phones use it to drop the repeated
+// nick + timestamp header (see .message.cont in style.css).
+type Row = { day?: string; msg?: MessageDTO; events?: MessageDTO[]; cont?: boolean };
+const GROUP_GAP_MS = 5 * 60 * 1000;
+
+// Server notices ("*** Checking Ident", "*** Looking up your hostname") come
+// from the server's name, which always contains a dot; nicks never can.
+function isServerNotice(m: MessageDTO): boolean {
+  return m.kind === "notice" && !m.self && (!m.from || m.from.includes("."));
+}
+// foldType says which kind of collapsible run a line belongs to, if any. Runs
+// of different types never merge, so the summary stays honest.
+function foldType(m: MessageDTO): "events" | "server" | null {
+  if (EVENT_KINDS.includes(m.kind)) return "events";
+  if (isServerNotice(m)) return "server";
+  return null;
+}
+function groupsWith(prev: MessageDTO | null, m: MessageDTO): boolean {
+  if (!prev || (m.kind !== "privmsg" && m.kind !== "notice") || prev.kind !== m.kind) return false;
+  if (prev.self !== m.self || prev.from.toLowerCase() !== m.from.toLowerCase()) return false;
+  return Date.parse(m.time) - Date.parse(prev.time) <= GROUP_GAP_MS;
+}
 
 const rows = computed<Row[]>(() => {
   const msgs = buffer.value?.messages ?? [];
@@ -168,6 +191,10 @@ const rows = computed<Row[]>(() => {
   let prev = "";
   let pending: MessageDTO[] = [];
   let pendingDay: string | undefined;
+  let pendingType: string | null = null;
+  // The last plain message row, for grouping; anything else in between
+  // (a fold, a day separator) breaks the group.
+  let last: MessageDTO | null = null;
 
   const flush = () => {
     if (!pending.length) return;
@@ -175,21 +202,32 @@ const rows = computed<Row[]>(() => {
     else out.push({ events: pending, day: pendingDay });
     pending = [];
     pendingDay = undefined;
+    pendingType = null;
+    last = null;
   };
 
   for (const m of msgs) {
     const k = m.time ? dayKey(m.time) : "";
     const day = k && k !== prev ? dayLabel(m.time) : undefined;
     if (k) prev = k;
-    if (day) flush(); // let the day separator render above the next row
+    if (day) {
+      flush(); // let the day separator render above the next row
+      last = null;
+    }
 
-    if (settings.foldEvents && EVENT_KINDS.includes(m.kind)) {
-      if (!pending.length) pendingDay = day;
+    const t = settings.foldEvents ? foldType(m) : null;
+    if (t) {
+      if (pending.length && pendingType !== t) flush();
+      if (!pending.length) {
+        pendingDay = day;
+        pendingType = t;
+      }
       pending.push(m);
       continue;
     }
     flush();
-    out.push({ msg: m, day });
+    out.push({ msg: m, day, cont: groupsWith(last, m) });
+    last = m;
   }
   flush();
   return out;
@@ -213,6 +251,9 @@ function toggleFold(events: MessageDTO[]) {
   expandedFolds.value = next;
 }
 function eventSummary(events: MessageDTO[]): string {
+  if (isServerNotice(events[0])) {
+    return `${events.length} server notices from ${events[0].from || "the server"}`;
+  }
   const counts: Record<string, number> = { join: 0, part: 0, quit: 0, nick: 0 };
   for (const e of events) counts[e.kind] = (counts[e.kind] ?? 0) + 1;
   const parts: string[] = [];
@@ -241,6 +282,30 @@ const members = computed(() => {
     return a.nick.toLowerCase().localeCompare(b.nick.toLowerCase());
   });
 });
+
+// The member list is split into rank groups with a count each, and narrowed by
+// the filter box (case-insensitive substring on the nick). The filter resets
+// on buffer switch so a stale query never hides a new channel's list.
+const memberFilter = ref("");
+watch(() => store.active && bufKey(store.active.network, store.active.buffer), () => (memberFilter.value = ""));
+
+const MEMBER_GROUPS: { label: string; prefixes: string }[] = [
+  { label: "Operators", prefixes: "~&@" },
+  { label: "Half-ops", prefixes: "%" },
+  { label: "Voiced", prefixes: "+" },
+];
+const memberGroups = computed(() => {
+  const q = memberFilter.value.trim().toLowerCase();
+  const list = q ? members.value.filter((m) => m.nick.toLowerCase().includes(q)) : members.value;
+  const groups = [...MEMBER_GROUPS.map((g) => ({ ...g, members: [] as MemberDTO[] })), { label: "Users", prefixes: "", members: [] as MemberDTO[] }];
+  for (const m of list) {
+    const c = m.modes[0];
+    const g = (c && groups.find((g) => g.prefixes.includes(c))) || groups[groups.length - 1];
+    g.members.push(m);
+  }
+  return groups.filter((g) => g.members.length);
+});
+const filteredMemberCount = computed(() => memberGroups.value.reduce((n, g) => n + g.members.length, 0));
 
 function memberTitle(mem: MemberDTO): string {
   const details = [mem.nick];
@@ -659,10 +724,10 @@ function applyFilterHint(prefix: string) {
             <template v-for="(r, i) in rows" :key="r.msg?.id || (r.events && foldKey(r.events)) || i">
               <div v-if="r.day" class="day-sep"><span>{{ r.day }}</span></div>
               <div v-if="r.msg && markerMsg && r.msg === markerMsg" class="unread-sep"><span>new messages</span></div>
-              <MessageItem v-if="r.msg" :msg="r.msg" />
+              <MessageItem v-if="r.msg" :msg="r.msg" :cont="r.cont && r.msg !== markerMsg" />
               <template v-else-if="r.events">
                 <div class="fold" :class="{ open: isFoldOpen(r.events) }" @click="toggleFold(r.events)">
-                  <span class="fold-caret">{{ isFoldOpen(r.events) ? "▾" : "▸" }}</span>
+                  <Icon :name="isFoldOpen(r.events) ? 'chevron-down' : 'chevron-right'" :size="13" class="fold-caret" />
                   <span class="fold-summary">{{ eventSummary(r.events) }}</span>
                 </div>
                 <template v-if="isFoldOpen(r.events)">
@@ -681,13 +746,25 @@ function applyFilterHint(prefix: string) {
           <button type="button" class="unread-jump-go" @click="jumpToMarker">
             ↑ {{ remaining }} new message{{ remaining === 1 ? "" : "s" }} — jump to first unread
           </button>
-          <button type="button" class="unread-jump-x" aria-label="Dismiss" @click="dismissMarker">✕</button>
+          <button type="button" class="unread-jump-x" aria-label="Dismiss" @click="dismissMarker"><Icon name="x" :size="14" /></button>
         </div>
         <aside v-if="members.length" class="members" :class="{ open: ui.membersOpen }">
-          <div class="members-head">{{ members.length }} users</div>
+          <div class="members-head">{{ members.length.toLocaleString() }} users</div>
+          <input
+            v-if="members.length > 8"
+            v-model="memberFilter"
+            type="search"
+            class="members-filter"
+            placeholder="Filter"
+            aria-label="Filter members"
+            @keydown.escape.stop="memberFilter = ''"
+          />
+          <p v-if="!filteredMemberCount" class="members-empty">No one matches “{{ memberFilter }}”</p>
+          <template v-for="g in memberGroups" :key="g.label">
+          <div class="members-group">{{ g.label }} · {{ g.members.length.toLocaleString() }}</div>
           <ul>
             <li
-              v-for="mem in members"
+              v-for="mem in g.members"
               :key="mem.nick"
               class="long-press-target"
               :class="{ away: mem.away }"
@@ -703,6 +780,7 @@ function applyFilterHint(prefix: string) {
               <span class="modes">{{ mem.modes }}</span><span :style="{ color: memberColor(mem.nick) }">{{ mem.nick }}</span>
             </li>
           </ul>
+          </template>
         </aside>
 
         <div

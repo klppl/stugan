@@ -26,7 +26,7 @@ async function enableNotifications() {
 <template>
   <div class="settings-section">
     <div class="section-header">
-      <h3 class="section-title">👤 Account & Notifications</h3>
+      <h3 class="section-title">Account & Notifications</h3>
       <p class="section-desc">Manage system notifications, session status, and user profile authentication.</p>
     </div>
 

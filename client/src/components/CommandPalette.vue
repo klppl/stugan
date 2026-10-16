@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { connection } from "../connection";
+import { connection, bufKey } from "../connection";
+import { settings } from "../settings";
+import { ui, toggleMembers } from "../ui";
 
 // CommandPalette is a Ctrl/Cmd-K quick switcher: fuzzy-jump to any buffer on
 // any network, plus a few global actions. Pure client-side over store state.
@@ -24,11 +26,38 @@ interface Item {
 }
 
 // Static global actions, always offered (subject to the fuzzy filter).
-const actions = computed<Item[]>(() => [
-  { key: "act:settings", label: "Settings", sub: "Open settings", unread: 0, highlight: 0, run: () => { emit("settings"); close(); } },
-  { key: "act:mentions", label: "Mentions", sub: "View all mentions", unread: 0, highlight: 0, run: () => { connection.showMentions(); close(); } },
-  { key: "act:digest", label: "What you missed", sub: "Activity since you were away", unread: 0, highlight: 0, run: () => { connection.openDigest(); close(); } },
-]);
+// The buffer-scoped ones (channel browser, details, member list) also stand in
+// for the top bar's buttons when the "Show top bar" setting hides it.
+const actions = computed<Item[]>(() => {
+  const act = (key: string, label: string, sub: string, fn: () => void): Item => ({
+    key, label, sub, unread: 0, highlight: 0, run: () => { fn(); close(); },
+  });
+  const out = [
+    act("act:mentions", "Mentions", "View all mentions", () => connection.showMentions()),
+    act("act:digest", "What you missed", "Activity since you were away", () => connection.openDigest()),
+  ];
+  const a = store.active;
+  const buf = connection.activeBuffer();
+  if (a) out.push(act("act:browse", "Browse channels", "Find a channel to join", () => (ui.browseNet = a.network)));
+  if (buf?.kind === "channel") out.push(act("act:details", "Channel details", "Topic, modes and info", () => (ui.inspectorOpen = true)));
+  if (buf?.members.length) out.push(act("act:members", ui.membersOpen ? "Hide member list" : "Show member list", "Toggle the user list", toggleMembers));
+  out.push(
+    act("act:topbar", settings.showTopBar ? "Hide top bar" : "Show top bar", "Toggle the bar above the chat", () => (settings.showTopBar = !settings.showTopBar)),
+    act("act:settings", "Settings", "Open settings", () => emit("settings")),
+  );
+  return out;
+});
+
+// With a query typed, offer a full-text search for it (the top bar's search
+// box, reachable from here when the bar is hidden).
+const searchItem = computed<Item | null>(() => {
+  const q = query.value.trim();
+  if (!q || !connection.hasCap("search")) return null;
+  return {
+    key: "act:search", label: `Search messages for “${q}”`, sub: "Full-text search", unread: 0, highlight: 0,
+    run: () => { connection.search(q); close(); },
+  };
+});
 
 // Every buffer across every network becomes a jump target.
 const buffers = computed<Item[]>(() => {
@@ -36,7 +65,7 @@ const buffers = computed<Item[]>(() => {
   for (const n of store.networks) {
     for (const b of n.buffers) {
       out.push({
-        key: n.id + "\x1f" + b.name,
+        key: bufKey(n.id, b.name),
         label: b.name,
         sub: n.name,
         unread: b.unread,
@@ -75,20 +104,27 @@ const results = computed<Item[]>(() => {
   const q = query.value.trim();
   const all = [...buffers.value, ...actions.value];
   if (!q) {
-    // No query: show actions first, then buffers with activity, then the rest.
+    // No query: recently visited buffers first, newest first, so the previous
+    // buffer sits pre-selected at the top and Cmd-K → Enter flips back to it
+    // (Slack-style). The current buffer drops to the end. Unvisited buffers
+    // follow by activity, then the global actions.
+    const cur = store.active ? bufKey(store.active.network, store.active.buffer) : "";
+    const recency = new Map(store.recent.map((k, i) => [k, i]));
+    const rank = (it: Item) => (it.key === cur ? Infinity : recency.get(it.key) ?? 1e6);
     return [
-      ...actions.value,
       ...buffers.value
         .slice()
-        .sort((a, b) => b.highlight - a.highlight || b.unread - a.unread),
+        .sort((a, b) => rank(a) - rank(b) || b.highlight - a.highlight || b.unread - a.unread),
+      ...actions.value,
     ].slice(0, 50);
   }
-  return all
+  const matches = all
     .map((it) => ({ it, s: Math.max(fuzzyScore(it.label, q), fuzzyScore(it.sub + " " + it.label, q) - 2) }))
     .filter((r) => r.s >= 0)
     .sort((a, b) => b.s - a.s || b.it.highlight - a.it.highlight || b.it.unread - a.it.unread)
-    .slice(0, 50)
+    .slice(0, 49)
     .map((r) => r.it);
+  return searchItem.value ? [...matches, searchItem.value] : matches;
 });
 
 // Keep the selection in range whenever the result set changes.

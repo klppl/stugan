@@ -383,6 +383,13 @@ body {
   overscroll-behavior: none;
 }
 
+/* SVG icons (Icon.vue) sit on the text baseline and never squash. */
+.icon {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: -0.15em;
+}
+
 /* Keyboard focus ring, themed from the accent. :focus-visible keeps it off
    mouse clicks. Sidebar rows are full-bleed, so their ring sits inside. */
 :focus-visible {
@@ -489,6 +496,8 @@ body {
   gap: 6px;
 }
 .net-gear {
+  display: inline-flex;
+  align-items: center;
   opacity: 0;
   font: inherit;
   font-size: 13px;
@@ -600,9 +609,10 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.lock-icon {
+.lock-icon,
+.mute-icon {
   flex-shrink: 0;
-  font-size: 11px;
+  display: inline-flex;
   opacity: 0.85;
 }
 .badge {
@@ -781,14 +791,22 @@ body {
   height: 28px;
   padding: 0 8px;
 }
+/* "Show top bar" off (desktop only — phones need the bar for the drawer
+   button). display:contents drops the bar's box while its fixed-position
+   modals (channel browser, channel details) still render for Cmd-K. */
+@media (min-width: 721px) {
+  .topbar.bar-hidden {
+    display: contents;
+  }
+  .topbar.bar-hidden > :not(.modal-backdrop) {
+    display: none !important;
+  }
+}
 /* Narrow desktop (sidebar + members leave little room): drop the button
    text and keep the glyphs, as on phones. aria-label keeps their names. */
 @media (min-width: 721px) and (max-width: 1180px) {
   .topbar .btn-label {
     display: none;
-  }
-  .topbar .btn-icon {
-    display: inline;
   }
   .search-box-container {
     flex-basis: 160px;
@@ -821,8 +839,13 @@ body {
 .menu-icon.open span:nth-child(1) { top: 6px; transform: rotate(45deg); }
 .menu-icon.open span:nth-child(2) { opacity: 0; }
 .menu-icon.open span:nth-child(3) { top: 6px; transform: rotate(-45deg); }
-.btn-icon {
-  display: none;
+/* Labelled top bar buttons: icon + text, collapsing to the icon alone. */
+.mentions-btn,
+.channels-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
 }
 .conn-pill {
   font-size: 11px;
@@ -995,7 +1018,7 @@ body {
 .fold {
   display: flex;
   gap: 6px;
-  align-items: baseline;
+  align-items: center;
   padding: 1px 0 1px 4px;
   color: var(--fg-dim);
   font-style: italic;
@@ -1071,6 +1094,8 @@ body {
   display: inline-flex;
 }
 .msg-act {
+  display: inline-flex;
+  align-items: center;
   border: none;
   background: transparent;
   color: var(--fg-dim);
@@ -1284,10 +1309,37 @@ body {
 .members li.away {
   opacity: 0.45;
 }
+/* Mode prefixes stay neutral: the group heading already says who's an op,
+   and an accent-blue @ competed with the coloured nick beside it. */
 .members .modes {
-  color: var(--accent);
+  color: var(--fg-dim);
   display: inline-block;
   width: 0.8em;
+}
+.members-filter {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 0 10px 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+.members-group {
+  padding: 10px 14px 3px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.members-empty {
+  margin: 6px 14px;
+  color: var(--fg-dim);
+  font-size: 13px;
 }
 
 /* Input + autocomplete */
@@ -1613,17 +1665,6 @@ body {
   color: var(--fg-dim);
 }
 
-.close-icon-btn {
-  padding: 4px 8px;
-  border: none;
-  background: transparent;
-  color: var(--fg-dim);
-  cursor: pointer;
-  font-size: 16px;
-}
-.close-icon-btn:hover {
-  color: var(--fg);
-}
 
 .settings-body {
   display: flex;
@@ -1668,8 +1709,8 @@ body {
 }
 
 .nav-item-icon {
-  font-size: 16px;
   flex-shrink: 0;
+  opacity: 0.85;
 }
 
 .nav-item-text {
@@ -1775,8 +1816,16 @@ body {
   align-items: center;
   gap: 16px;
 }
+/* Toggle rows: the whole row is the <label>, so make it look like one
+   target — it bleeds to the card's padding and lights up on hover. */
 .setting-row.checkbox-row {
   cursor: pointer;
+  margin: -8px -12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+.setting-row.checkbox-row:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
 
 .setting-label {
@@ -2391,6 +2440,10 @@ body {
     padding: 8px 14px;
     font-size: 15px;
   }
+  .members-filter {
+    font-size: 16px; /* prevent iOS zoom-in-on-focus */
+    padding: 7px 10px;
+  }
 
   .drawer-backdrop {
     display: block;
@@ -2501,10 +2554,8 @@ body {
     color: var(--hl);
   }
   .mobile-action-item .item-icon {
-    font-size: 16px;
     width: 20px;
-    display: inline-flex;
-    justify-content: center;
+    color: var(--fg-dim);
   }
   .mobile-action-item .item-label {
     flex: 1;
@@ -2537,14 +2588,9 @@ body {
     min-height: 36px;
     padding: 6px 9px;
   }
-  /* Swap text labels for short icons on tight viewports. */
+  /* Icons only on tight viewports. */
   .btn-label {
     display: none;
-  }
-  .btn-icon {
-    display: inline;
-    font-size: 16px;
-    line-height: 1;
   }
 
   .chat-header {
@@ -2564,6 +2610,37 @@ body {
   }
   .message {
     gap: 6px;
+  }
+  /* Phones stack chat lines Discord-style: a nick + time header, then the
+     body at full width, so the timestamp column stops eating ~40px of every
+     line. Consecutive lines from the same sender (.cont, see ChatView rows)
+     drop the header entirely. Actions and system lines keep the inline form. */
+  .message.privmsg,
+  .message.notice {
+    row-gap: 0;
+  }
+  .message.privmsg:not(.cont),
+  .message.notice:not(.cont) {
+    margin-top: 6px;
+  }
+  .message.privmsg > .from,
+  .message.notice > .from {
+    order: 0;
+  }
+  .message.privmsg > .ts,
+  .message.notice > .ts {
+    order: 1;
+    align-self: center;
+    font-size: 0.8em;
+  }
+  .message.privmsg > .body,
+  .message.notice > .body {
+    order: 2;
+    flex-basis: 100%;
+  }
+  .message.cont > .ts,
+  .message.cont > .from {
+    display: none;
   }
   .embed-media {
     max-width: 100%;

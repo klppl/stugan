@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { connection } from "../../connection";
+import Icon from "../Icon.vue";
 import type { PluginInfo, CuratedPluginInfo, PluginSetting } from "../../proto/events";
 
 const hasPlugins = connection.hasCap("plugins");
@@ -210,7 +211,7 @@ function handlePluginAction(name: string, action: "load" | "unload" | "reload") 
   <div class="settings-section">
     <div class="section-header-row">
       <div class="section-header">
-        <h3 class="section-title">🔌 Lua Plugins</h3>
+        <h3 class="section-title">Lua Plugins</h3>
         <p class="section-desc">Manage Lua scripts and official curated extensions<span v-if="canImport">, including trusted remote imports</span>.</p>
       </div>
 
@@ -221,8 +222,7 @@ function handlePluginAction(name: string, action: "load" | "unload" | "reload") 
           @click="handleCheckUpdates"
           title="Check remote sources for script updates"
         >
-          <span v-if="isCheckingUpdates" class="spin">🔄</span>
-          <span v-else>🔍</span>
+          <Icon name="search" :size="14" />
           <span>{{ isCheckingUpdates ? "Checking..." : "Check for Updates" }}</span>
         </button>
       </div>
@@ -293,7 +293,7 @@ function handlePluginAction(name: string, action: "load" | "unload" | "reload") 
               <span v-else class="plugin-badge off">off</span>
 
               <!-- Version Status Badge -->
-              <span v-if="p.update_available" class="plugin-badge update-badge">⚡ Update available</span>
+              <span v-if="p.update_available" class="plugin-badge update-badge">Update available</span>
               <span v-else-if="p.source_type !== 'manual' || p.source_url" class="plugin-badge up-to-date" title="Running latest version from remote source">✓ Up to date</span>
               <span v-if="justUpdatedPlugins[p.name]" class="plugin-badge just-updated">✓ Updated just now!</span>
             </div>
@@ -375,7 +375,7 @@ function handlePluginAction(name: string, action: "load" | "unload" | "reload") 
                 <span v-else-if="c.installed" class="plugin-badge off">installed</span>
                 <span v-else class="plugin-badge category-curated">official</span>
                 
-                <span v-if="c.update_available" class="plugin-badge update-badge">⚡ Update</span>
+                <span v-if="c.update_available" class="plugin-badge update-badge">Update</span>
                 <span v-else-if="c.installed" class="plugin-badge up-to-date">✓ Up to date</span>
                 <span v-if="justUpdatedPlugins[c.name]" class="plugin-badge just-updated">✓ Updated just now!</span>
               </div>

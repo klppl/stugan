@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from "vue";
 import { connection } from "../connection";
+import Icon from "./Icon.vue";
 import type { ChannelDTO } from "../proto/events";
 
 const props = defineProps<{
@@ -81,7 +82,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           <h2>{{ channel.name }}</h2>
           <span class="kind-badge">{{ channel.kind }}</span>
         </div>
-        <button class="close-btn" aria-label="Close" @click="emit('close')">✕</button>
+        <button class="close-btn" aria-label="Close" @click="emit('close')"><Icon name="x" /></button>
       </header>
 
       <div class="modal-body">

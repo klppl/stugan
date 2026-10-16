@@ -5,7 +5,7 @@ import { settings } from "../../settings";
 <template>
   <div class="settings-section">
     <div class="section-header">
-      <h3 class="section-title">💬 Chat & Formatting</h3>
+      <h3 class="section-title">Chat & Formatting</h3>
       <p class="section-desc">Configure message formatting, events folding, link previews, and typing state.</p>
     </div>
 
@@ -13,7 +13,7 @@ import { settings } from "../../settings";
       <label class="setting-row checkbox-row">
         <div class="setting-label">
           <span>Fold Join / Part Events</span>
-          <span class="setting-hint">Group consecutive join, part, and quit messages to declutter chat log</span>
+          <span class="setting-hint">Group consecutive join, part, and quit messages and server notices to declutter chat log</span>
         </div>
         <input v-model="settings.foldEvents" type="checkbox" class="toggle-switch" />
       </label>
@@ -66,6 +66,16 @@ import { settings } from "../../settings";
           <span class="setting-hint">Display typing indicators when other users in the buffer are typing</span>
         </div>
         <input v-model="settings.showTyping" type="checkbox" class="toggle-switch" />
+      </label>
+
+      <div class="setting-divider" />
+
+      <label class="setting-row checkbox-row">
+        <div class="setting-label">
+          <span>What You Missed on Return</span>
+          <span class="setting-hint">Open a summary of mentions and unread channels when you come back after 10 minutes or more away</span>
+        </div>
+        <input v-model="settings.digestOnReturn" type="checkbox" class="toggle-switch" />
       </label>
     </div>
   </div>

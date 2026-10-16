@@ -46,7 +46,7 @@ async function handleDelete(u: UploadEntry) {
 <template>
   <div class="settings-section">
     <div class="section-header">
-      <h3 class="section-title">📁 Stored Uploads</h3>
+      <h3 class="section-title">Stored Uploads</h3>
       <p class="section-desc">Manage files uploaded to the server and view retention expiry schedules.</p>
     </div>
 

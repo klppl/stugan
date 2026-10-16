@@ -1,4 +1,4 @@
-import { reactive, markRaw } from "vue";
+import { reactive, markRaw, watch } from "vue";
 import { settings, LEGACY_MUTES_KEY, loadSettingsPayload } from "./settings";
 import { closeDrawers } from "./ui";
 import { stripFormatting } from "./links";
@@ -202,6 +202,10 @@ export interface Store {
   // auto-opens once per page session when missed is non-empty.
   missed: MessageDTO[];
   digestOpen: boolean;
+  // Most-recently-visited buffers as bufKey strings, newest first. Drives the
+  // Cmd-K palette's default ordering (previous buffer pre-selected). Kept
+  // per-browser in localStorage alongside lastActive.
+  recent: string[];
   readMarkers: Record<string, number>;
 }
 
@@ -286,6 +290,48 @@ function loadLastActive(): { network: string; buffer: string } | null {
   return null;
 }
 
+// lastSeen is when this browser last had stugan in view, so a fresh page load
+// can tell "back after a while" (open What you missed) from a quick reload.
+const LAST_SEEN_KEY = "stugan.lastSeen";
+// AWAY_MS is how long out of view counts as "away" for the digest.
+const AWAY_MS = 10 * 60 * 1000;
+
+function loadLastSeen(): number {
+  try {
+    return Number(localStorage.getItem(LAST_SEEN_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveLastSeen() {
+  try {
+    localStorage.setItem(LAST_SEEN_KEY, String(Date.now()));
+  } catch {
+    // ignore unavailable storage
+  }
+}
+
+const RECENT_KEY = "stugan.recent";
+const RECENT_MAX = 20;
+
+function loadRecent(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+    return Array.isArray(v) ? v.filter((k) => typeof k === "string").slice(0, RECENT_MAX) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecent(recent: string[]) {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
+  } catch {
+    // ignore unavailable storage
+  }
+}
+
 function saveLastActive(active: { network: string; buffer: string } | null) {
   try {
     if (active) localStorage.setItem(LAST_ACTIVE_KEY, JSON.stringify(active));
@@ -334,6 +380,7 @@ export class Connection {
     muted: [],
     missed: [],
     digestOpen: false,
+    recent: loadRecent(),
     readMarkers: {},
   });
 
@@ -364,6 +411,13 @@ export class Connection {
   // session: a reconnect re-fetches the digest (counts may have changed) but
   // won't re-pop the overlay if the user already saw/dismissed it.
   private digestAutoShown = false;
+  // Away tracking for the digest-on-return: awayOnLoad is fixed at startup
+  // from the persisted lastSeen; hiddenAt marks when the tab was last hidden;
+  // digestReturnPending asks the next applyMissed to open the digest.
+  private awayOnLoad = Date.now() - loadLastSeen() >= AWAY_MS;
+  private hiddenAt = 0;
+  private digestReturnPending = false;
+  private loadChecked = false; // awayOnLoad applies to the first digest fetch only
   private typingTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   private readMarkTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   private lastTypingSent = 0;
@@ -446,8 +500,19 @@ export class Connection {
           // A hidden-tab reconnect deferred its read-marker ack (see
           // applyInit); the user is looking at the buffer now.
           this.ackActiveBuffer();
+          // Back after a while: refresh the digest and let applyMissed open
+          // it if anything happened.
+          if (this.hiddenAt && Date.now() - this.hiddenAt >= AWAY_MS && settings.digestOnReturn) {
+            this.digestReturnPending = true;
+            this.fetchMissed();
+          }
+          this.hiddenAt = 0;
+        } else {
+          this.hiddenAt = Date.now();
+          saveLastSeen();
         }
       });
+      window.addEventListener("pagehide", saveLastSeen);
     }
     if (typeof window !== "undefined") {
       window.addEventListener("online", () => this.checkLiveness());
@@ -830,9 +895,27 @@ export class Connection {
   // applyMissed stores the missed-highlights digest and auto-opens the overlay
   // the first time it's non-empty in a page session (reconnects refresh the
   // data but don't re-nag — see digestAutoShown).
+  // With "What you missed on return" on, it also opens when you come back
+  // after AWAY_MS out of view (a page load, or the tab shown again) and
+  // anything is unread — not only when there are missed mentions.
   private applyMissed(d: MissedResp) {
     this.store.missed = (d.messages ?? []).map(markRaw);
-    if (this.store.missed.length > 0 && !this.digestAutoShown) {
+    const returning = this.digestReturnPending || (!this.loadChecked && this.awayOnLoad);
+    this.digestReturnPending = false;
+    this.loadChecked = true;
+    if (!settings.digestOnReturn || this.store.digestOpen) return;
+    // The buffer you land on isn't "missed" (it's acked as soon as it's in
+    // view), and muted buffers never count.
+    const a = this.store.active;
+    const cur = a ? bufKey(a.network, a.buffer) : "";
+    const unread = this.store.networks.some((n) =>
+      n.buffers.some((b) => {
+        const k = bufKey(n.id, b.name);
+        return b.unread > 0 && k !== cur && !this.isMuted(k);
+      }),
+    );
+    const hasMissed = this.store.missed.length > 0;
+    if ((hasMissed && !this.digestAutoShown) || (returning && (hasMissed || unread))) {
       this.digestAutoShown = true;
       this.store.digestOpen = true;
     }
@@ -1752,3 +1835,17 @@ export class Connection {
 }
 
 export const connection = new Connection();
+
+// Record every buffer that becomes active — picked in the sidebar, restored
+// from lastActive on load, or opened by a join — for the palette's recency
+// ordering. One watcher instead of a call at each place active is assigned.
+watch(
+  () => (connection.store.active ? bufKey(connection.store.active.network, connection.store.active.buffer) : ""),
+  (key) => {
+    if (!key) return;
+    const s = connection.store;
+    s.recent = [key, ...s.recent.filter((k) => k !== key)].slice(0, RECENT_MAX);
+    saveRecent(s.recent);
+  },
+  { immediate: true },
+);

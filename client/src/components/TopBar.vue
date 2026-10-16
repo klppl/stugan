@@ -2,15 +2,14 @@
 import { computed, nextTick, ref, watch, onMounted, onUnmounted } from "vue";
 import { connection } from "../connection";
 import { ui, toggleSidebar, toggleMembers } from "../ui";
-import { toggleMircTheme } from "../settings";
+import { settings, toggleMircTheme } from "../settings";
 import ChannelBrowser from "./ChannelBrowser.vue";
 import ChannelInspectorModal from "./ChannelInspectorModal.vue";
+import Icon from "./Icon.vue";
 
 const emit = defineEmits<{ settings: [] }>();
 const store = connection.store;
 const q = ref("");
-const browseNet = ref<string | null>(null);
-const showInspector = ref(false);
 // On mobile we hide the search input behind a magnifier button; this toggles it.
 const searchOpen = ref(false);
 const searchEl = ref<HTMLInputElement | null>(null);
@@ -290,7 +289,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 const buffer = computed(() => connection.activeBuffer());
 
 function browse() {
-  if (store.active) browseNet.value = store.active.network;
+  if (store.active) ui.browseNet = store.active.network;
 }
 
 const mentionCount = computed(() => store.mentions.length);
@@ -324,7 +323,9 @@ const bufferTitle = computed(() => {
 </script>
 
 <template>
-  <header class="topbar">
+  <!-- The "Show top bar" setting hides the bar on desktop (bar-hidden, see
+       style.css); its modals stay mounted so Cmd-K can still open them. -->
+  <header class="topbar" :class="{ 'bar-hidden': !settings.showTopBar }">
     <button
       class="ghost icon-btn menu-btn"
       aria-label="Menu"
@@ -337,7 +338,7 @@ const bufferTitle = computed(() => {
     </button>
 
     <template v-if="showBufferHeader && buffer">
-      <span class="buffer-name" title="Channel Info & Topic Details" @click="showInspector = true">
+      <span class="buffer-name" title="Channel Info & Topic Details" @click="ui.inspectorOpen = true">
         {{ bufferTitle }}
       </span>
       <button
@@ -345,13 +346,13 @@ const bufferTitle = computed(() => {
         class="ghost icon-btn inspector-btn"
         title="Channel Details / Inspector"
         aria-label="Channel Details"
-        @click="showInspector = true"
-      >ℹ</button>
+        @click="ui.inspectorOpen = true"
+      ><Icon name="info" /></button>
       <span
         class="topic"
         :class="{ editable: buffer.kind === 'channel' }"
         title="Click for Channel Details"
-        @click="showInspector = true"
+        @click="ui.inspectorOpen = true"
       >{{ buffer.topic || (buffer.kind === "channel" ? "(set topic…)" : "") }}</span>
     </template>
 
@@ -396,7 +397,7 @@ const bufferTitle = computed(() => {
       aria-label="Search"
       title="Search"
       @click="toggleSearch"
-    >🔍</button>
+    ><Icon name="search" /></button>
 
     <button
       class="ghost mentions-btn desktop-action"
@@ -405,8 +406,8 @@ const bufferTitle = computed(() => {
       title="Mentions"
       @click="connection.showMentions()"
     >
-      <span class="btn-label">@ Mentions</span>
-      <span class="btn-icon" aria-hidden="true">@</span>
+      <Icon name="at" />
+      <span class="btn-label">Mentions</span>
       <span v-if="mentionCount" class="badge" :class="{ highlight: mentionCount > 0 }">{{ mentionCount }}</span>
     </button>
     <button
@@ -416,8 +417,8 @@ const bufferTitle = computed(() => {
       aria-label="Browse channels"
       @click="browse"
     >
-      <span class="btn-label">⊞ Channels</span>
-      <span class="btn-icon" aria-hidden="true">⊞</span>
+      <Icon name="hash" />
+      <span class="btn-label">Channels</span>
     </button>
     <button
       v-if="hasMembers"
@@ -426,13 +427,13 @@ const bufferTitle = computed(() => {
       aria-label="Members"
       title="Members"
       @click="toggleMembers"
-    >👥</button>
+    ><Icon name="users" /></button>
     <button
       class="ghost icon-btn settings-btn desktop-action"
       aria-label="Settings"
       title="Settings"
       @click="emit('settings')"
-    >⚙</button>
+    ><Icon name="settings" /></button>
 
     <div class="mobile-actions-wrapper">
       <button
@@ -442,7 +443,7 @@ const bufferTitle = computed(() => {
         title="Actions"
         @click="mobileMenuOpen = !mobileMenuOpen"
       >
-        <span class="mobile-actions-icon" aria-hidden="true">⋮</span>
+        <Icon name="more" :size="18" class="mobile-actions-icon" />
         <span v-if="mentionCount" class="badge dot-badge" />
       </button>
 
@@ -463,7 +464,7 @@ const bufferTitle = computed(() => {
           role="menuitem"
           @click="handleMobileSearch"
         >
-          <span class="item-icon" aria-hidden="true">🔍</span>
+          <Icon name="search" class="item-icon" />
           <span class="item-label">Search</span>
         </button>
         <button
@@ -472,7 +473,7 @@ const bufferTitle = computed(() => {
           role="menuitem"
           @click="handleMobileMentions"
         >
-          <span class="item-icon" aria-hidden="true">@</span>
+          <Icon name="at" class="item-icon" />
           <span class="item-label">Mentions</span>
           <span v-if="mentionCount" class="badge" :class="{ highlight: mentionCount > 0 }">{{ mentionCount }}</span>
         </button>
@@ -482,7 +483,7 @@ const bufferTitle = computed(() => {
           role="menuitem"
           @click="handleMobileBrowse"
         >
-          <span class="item-icon" aria-hidden="true">⊞</span>
+          <Icon name="hash" class="item-icon" />
           <span class="item-label">Channels</span>
         </button>
         <button
@@ -492,7 +493,7 @@ const bufferTitle = computed(() => {
           role="menuitem"
           @click="handleMobileMembers"
         >
-          <span class="item-icon" aria-hidden="true">👥</span>
+          <Icon name="users" class="item-icon" />
           <span class="item-label">Userlist</span>
         </button>
         <button
@@ -500,7 +501,7 @@ const bufferTitle = computed(() => {
           role="menuitem"
           @click="handleMobileSettings"
         >
-          <span class="item-icon" aria-hidden="true">⚙</span>
+          <Icon name="settings" class="item-icon" />
           <span class="item-label">Settings</span>
         </button>
       </div>
@@ -514,12 +515,12 @@ const bufferTitle = computed(() => {
       <button class="mirc-wb mirc-close" tabindex="-1" title="Close" @click="toggleMircTheme()">✕</button>
     </span>
 
-    <ChannelBrowser v-if="browseNet" :network="browseNet" @close="browseNet = null" />
+    <ChannelBrowser v-if="ui.browseNet" :network="ui.browseNet" @close="ui.browseNet = null" />
     <ChannelInspectorModal
-      v-if="showInspector && store.active && buffer"
+      v-if="ui.inspectorOpen && store.active && buffer"
       :network="store.active.network"
       :channel="buffer"
-      @close="showInspector = false"
+      @close="ui.inspectorOpen = false"
     />
   </header>
 </template>

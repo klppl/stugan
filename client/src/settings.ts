@@ -126,6 +126,8 @@ interface Settings {
   reactions: boolean; // show emoji reactions (off by default; most servers don't support it)
   sendTyping: boolean; // broadcast our own +typing notifications (opt-in: others can see when you type)
   showTyping: boolean; // display other people's typing notifications
+  showTopBar: boolean; // desktop: show the top bar (channel name, search, buttons); Cmd-K covers it when off
+  digestOnReturn: boolean; // open "What you missed" when coming back after a while away
 }
 
 const KEY = "stugan.settings";
@@ -154,6 +156,8 @@ function load(): Settings {
       reactions: typeof s.reactions === "boolean" ? s.reactions : false,
       sendTyping: typeof s.sendTyping === "boolean" ? s.sendTyping : false,
       showTyping: typeof s.showTyping === "boolean" ? s.showTyping : true,
+      showTopBar: typeof s.showTopBar === "boolean" ? s.showTopBar : true,
+      digestOnReturn: typeof s.digestOnReturn === "boolean" ? s.digestOnReturn : true,
     };
   } catch {
     return {
@@ -166,6 +170,8 @@ function load(): Settings {
       reactions: false,
       sendTyping: false,
       showTyping: true,
+      showTopBar: true,
+      digestOnReturn: true,
     };
   }
 }
@@ -208,6 +214,8 @@ export function loadSettingsPayload(s: Record<string, unknown>) {
     if (typeof s.reactions === "boolean") settings.reactions = s.reactions;
     if (typeof s.sendTyping === "boolean") settings.sendTyping = s.sendTyping;
     if (typeof s.showTyping === "boolean") settings.showTyping = s.showTyping;
+    if (typeof s.showTopBar === "boolean") settings.showTopBar = s.showTopBar;
+    if (typeof s.digestOnReturn === "boolean") settings.digestOnReturn = s.digestOnReturn;
   } finally {
     isSyncingRemote = false;
   }

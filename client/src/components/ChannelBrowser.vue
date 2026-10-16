@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { connection } from "../connection";
+import Icon from "./Icon.vue";
 
 const props = defineProps<{ network: string }>();
 const emit = defineEmits<{ close: [] }>();
@@ -47,7 +48,7 @@ onUnmounted(() => {
         <div class="header-title">
           <h2>Channels on {{ network }}</h2>
         </div>
-        <button class="close-btn" aria-label="Close" @click="emit('close')">✕</button>
+        <button class="close-btn" aria-label="Close" @click="emit('close')"><Icon name="x" /></button>
       </header>
 
       <div class="modal-search-bar">
@@ -80,7 +81,7 @@ onUnmounted(() => {
           >
             <div class="item-left">
               <span class="bc-name">{{ c.name }}</span>
-              <span class="bc-users" title="Member count">👥 {{ c.users }}</span>
+              <span class="bc-users" title="Member count"><Icon name="users" :size="13" /> {{ c.users }}</span>
             </div>
             <span class="bc-topic">{{ c.topic || "(no topic set)" }}</span>
           </div>

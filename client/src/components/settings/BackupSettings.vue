@@ -115,7 +115,7 @@ function fmtSize(bytes: number): string {
 <template>
   <div class="settings-section">
     <div class="section-header">
-      <h3 class="section-title">💾 Backup & Data Portability</h3>
+      <h3 class="section-title">Backup & Data Portability</h3>
       <p class="section-desc">
         Export and import portable full backups of your chat history, networks, plugins, and preferences.
       </p>

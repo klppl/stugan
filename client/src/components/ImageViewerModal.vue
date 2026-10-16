@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { ActiveImage } from "../ui";
 import { connection } from "../connection";
+import Icon from "./Icon.vue";
 
 const props = defineProps<{
   image: ActiveImage;
@@ -394,7 +395,7 @@ onUnmounted(() => {
           aria-label="Close"
           @click="dismiss()"
         >
-          ✕
+          <Icon name="x" :size="18" />
         </button>
       </div>
     </header>

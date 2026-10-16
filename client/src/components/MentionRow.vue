@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { connection } from "../connection";
 import type { MessageDTO } from "../proto/events";
 import MessageItem from "./MessageItem.vue";
+import Icon from "./Icon.vue";
 
 // One row in the Mentions / Search panes. Clicking the row expands the chat
 // surrounding the message inline (fetched on demand, keyed by message id) so
@@ -21,7 +22,7 @@ const open = computed(() => ctx.value?.open ?? false);
       :title="open ? 'Hide context' : `Show chat around this message in ${msg.buffer}`"
       @click="connection.toggleContext(msg)"
     >
-      <span class="disclosure" aria-hidden="true">{{ open ? "▾" : "▸" }}</span>
+      <Icon :name="open ? 'chevron-down' : 'chevron-right'" :size="14" class="disclosure" />
       <MessageItem :msg="msg" :show-buffer="true" :show-date="showDate" />
     </div>
     <div v-if="open" class="mention-context">

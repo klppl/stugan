@@ -34,7 +34,7 @@ watch(
 <template>
   <div class="settings-section">
     <div class="section-header">
-      <h3 class="section-title">🔔 Highlights</h3>
+      <h3 class="section-title">Highlights</h3>
       <p class="section-desc">Define custom keywords and exception patterns for highlight notifications.</p>
     </div>
 
