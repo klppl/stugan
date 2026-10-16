@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watchEffect } from "vue";
 import Sidebar from "./components/Sidebar.vue";
 import ChatView from "./components/ChatView.vue";
 import TopBar from "./components/TopBar.vue";
@@ -13,6 +13,7 @@ import ImageViewerModal from "./components/ImageViewerModal.vue";
 import { authState, canEnter, needsMagicWord } from "./auth";
 import { ui, closeDrawers, closeImageViewer, useSwipeNav } from "./ui";
 import { connection, foldTarget } from "./connection";
+import { settings } from "./settings";
 
 const showPalette = ref(false);
 
@@ -23,6 +24,14 @@ function toggleSettings() {
 // Mobile: swipe right/left across the viewport to reveal the channel
 // sidebar / members drawer.
 useSwipeNav();
+
+// Resolve the message layout setting ("auto" follows the phone breakpoint)
+// onto <html>, where style.css switches the chat log between the classic
+// one-line IRC form and the Discord-style "cozy" header-over-text form.
+watchEffect(() => {
+  const l = settings.messageLayout;
+  document.documentElement.dataset.msgLayout = l === "auto" ? (ui.isMobile ? "cozy" : "classic") : l;
+});
 
 // Ctrl/Cmd-K toggles the command palette (quick switcher) from anywhere.
 // Alt+↑/↓ steps to the previous/next buffer in sidebar order (irssi/WeeChat

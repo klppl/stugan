@@ -128,6 +128,21 @@ interface Settings {
   showTyping: boolean; // display other people's typing notifications
   showTopBar: boolean; // desktop: show the top bar (channel name, search, buttons); Cmd-K covers it when off
   digestOnReturn: boolean; // open "What you missed" when coming back after a while away
+  messageLayout: MessageLayout; // classic one-line IRC, cozy (nick header + body, Discord-style), or auto by screen size
+}
+
+// MESSAGE_LAYOUTS: "classic" is one line per message (time, nick, text);
+// "cozy" puts a nick + time header over the text and folds consecutive
+// lines from the same sender under one header; "auto" is cozy on phones
+// and classic on desktop. App.vue resolves it onto <html data-msg-layout>.
+export const MESSAGE_LAYOUTS = ["auto", "classic", "cozy"] as const;
+export type MessageLayout = (typeof MESSAGE_LAYOUTS)[number];
+function isLayout(v: unknown): v is MessageLayout {
+  return (MESSAGE_LAYOUTS as readonly unknown[]).includes(v);
+}
+// Early builds called "cozy" "grouped"; read the old value as the new one.
+function migrateLayout(v: unknown): unknown {
+  return v === "grouped" ? "cozy" : v;
 }
 
 const KEY = "stugan.settings";
@@ -158,6 +173,7 @@ function load(): Settings {
       showTyping: typeof s.showTyping === "boolean" ? s.showTyping : true,
       showTopBar: typeof s.showTopBar === "boolean" ? s.showTopBar : true,
       digestOnReturn: typeof s.digestOnReturn === "boolean" ? s.digestOnReturn : true,
+      messageLayout: isLayout(migrateLayout(s.messageLayout)) ? (migrateLayout(s.messageLayout) as MessageLayout) : "auto",
     };
   } catch {
     return {
@@ -172,6 +188,7 @@ function load(): Settings {
       showTyping: true,
       showTopBar: true,
       digestOnReturn: true,
+      messageLayout: "auto",
     };
   }
 }
@@ -216,6 +233,8 @@ export function loadSettingsPayload(s: Record<string, unknown>) {
     if (typeof s.showTyping === "boolean") settings.showTyping = s.showTyping;
     if (typeof s.showTopBar === "boolean") settings.showTopBar = s.showTopBar;
     if (typeof s.digestOnReturn === "boolean") settings.digestOnReturn = s.digestOnReturn;
+    const layout = migrateLayout(s.messageLayout);
+    if (isLayout(layout)) settings.messageLayout = layout;
   } finally {
     isSyncingRemote = false;
   }

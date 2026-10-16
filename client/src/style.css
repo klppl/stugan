@@ -1014,6 +1014,35 @@ body {
   font-style: italic;
 }
 
+/* Cozy message layout (Message Layout setting; "auto" picks it on phones,
+   resolved onto <html data-msg-layout> by App.vue). A nick + time header sits
+   over the text at full width, so the timestamp column stops eating the start
+   of every line, and consecutive lines from the same sender (.cont, see
+   ChatView rows) drop the header entirely. Actions and system lines keep the
+   inline form. Scoped to the chat log; search/mention rows stay classic. */
+:root[data-msg-layout="cozy"] .messages-content .message:is(.privmsg, .notice) {
+  row-gap: 0;
+}
+:root[data-msg-layout="cozy"] .messages-content .message:is(.privmsg, .notice):not(.cont) {
+  margin-top: 8px;
+}
+:root[data-msg-layout="cozy"] .messages-content .message:is(.privmsg, .notice) > .from {
+  order: 0;
+}
+:root[data-msg-layout="cozy"] .messages-content .message:is(.privmsg, .notice) > .ts {
+  order: 1;
+  align-self: center;
+  font-size: 0.8em;
+}
+:root[data-msg-layout="cozy"] .messages-content .message:is(.privmsg, .notice) > .body {
+  order: 2;
+  flex-basis: 100%;
+}
+:root[data-msg-layout="cozy"] .messages-content .message.cont > .ts,
+:root[data-msg-layout="cozy"] .messages-content .message.cont > .from {
+  display: none;
+}
+
 /* Folded run of join/part/quit/nick lines — one dim, clickable summary. */
 .fold {
   display: flex;
@@ -2610,37 +2639,6 @@ body {
   }
   .message {
     gap: 6px;
-  }
-  /* Phones stack chat lines Discord-style: a nick + time header, then the
-     body at full width, so the timestamp column stops eating ~40px of every
-     line. Consecutive lines from the same sender (.cont, see ChatView rows)
-     drop the header entirely. Actions and system lines keep the inline form. */
-  .message.privmsg,
-  .message.notice {
-    row-gap: 0;
-  }
-  .message.privmsg:not(.cont),
-  .message.notice:not(.cont) {
-    margin-top: 6px;
-  }
-  .message.privmsg > .from,
-  .message.notice > .from {
-    order: 0;
-  }
-  .message.privmsg > .ts,
-  .message.notice > .ts {
-    order: 1;
-    align-self: center;
-    font-size: 0.8em;
-  }
-  .message.privmsg > .body,
-  .message.notice > .body {
-    order: 2;
-    flex-basis: 100%;
-  }
-  .message.cont > .ts,
-  .message.cont > .from {
-    display: none;
   }
   .embed-media {
     max-width: 100%;

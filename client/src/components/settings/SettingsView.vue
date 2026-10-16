@@ -108,6 +108,7 @@ const settingSearchItems: SettingSearchItem[] = [
   { tab: "appearance", label: "Install Custom Theme", desc: "Create or paste CSS theme variables", keywords: "preset custom css remove" },
   { tab: "appearance", label: "Text Size", desc: "Change the font size for messages and buffers", keywords: "font" },
   { tab: "appearance", label: "Show Top Bar", desc: "Show or hide the bar above the chat (desktop)", keywords: "header toolbar search mentions channels hide minimal" },
+  { tab: "chat", label: "Message Layout", desc: "Classic one-line IRC or cozy grouped messages", keywords: "discord compact cozy irc style group stack timestamp" },
   { tab: "chat", label: "Fold Join / Part Events", desc: "Group join, part, and quit messages", keywords: "collapse events" },
   { tab: "chat", label: "Expand Link Previews", desc: "Show rich previews for HTTP links", keywords: "url cards" },
   { tab: "chat", label: "Colored Nicks", desc: "Assign consistent colors to user nicknames", keywords: "names users" },

@@ -10,6 +10,20 @@ import { settings } from "../../settings";
     </div>
 
     <div class="settings-card">
+      <label class="setting-row">
+        <div class="setting-label">
+          <span>Message Layout</span>
+          <span class="setting-hint">Classic IRC puts time, nick and text on one line. Cozy puts the nick and time above the text and stacks consecutive messages from the same person. Auto uses Cozy on phones and Classic on desktop.</span>
+        </div>
+        <select v-model="settings.messageLayout" class="setting-input">
+          <option value="auto">Auto</option>
+          <option value="classic">Classic IRC</option>
+          <option value="cozy">Cozy</option>
+        </select>
+      </label>
+
+      <div class="setting-divider" />
+
       <label class="setting-row checkbox-row">
         <div class="setting-label">
           <span>Fold Join / Part Events</span>
