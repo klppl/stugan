@@ -79,11 +79,12 @@ func (s *Server) program(sess ssh.Session) *tea.Program {
 	opts := append(bm.MakeOptions(sess), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	p := tea.NewProgram(m, opts...)
 
-	entry := &session{user: userID, prog: p}
+	entry := newSession(userID, p)
 	s.reg.add(entry)
 	go func() {
 		<-sess.Context().Done()
 		s.reg.remove(entry)
+		entry.stop()
 	}()
 	return p
 }

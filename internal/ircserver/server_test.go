@@ -437,3 +437,85 @@ func TestBouncerReadMarker(t *testing.T) {
 	}
 	_ = srv
 }
+
+// attachAlice registers a bouncer client bound to libera and drains the
+// attach burst (up to the history-free 422/notice tail).
+func attachAlice(t *testing.T, addr string) (net.Conn, *bufio.Reader) {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	reader := bufio.NewReader(conn)
+	fmt.Fprintf(conn, "PASS alice/libera:password123\r\nNICK alice\r\nUSER alice 0 * :Alice\r\n")
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("reading burst: %v", err)
+		}
+		if strings.Contains(line, " 366 ") { // end of NAMES: burst done
+			return conn, reader
+		}
+	}
+}
+
+// TestBouncerNetworkChangedOnlyOnTransition: NetworkChanged fires on every
+// membership change; the client must hear about it only when the connection
+// state actually changes.
+func TestBouncerNetworkChangedOnlyOnTransition(t *testing.T) {
+	srv, eng, _, addr, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+	conn, reader := attachAlice(t, addr)
+	defer conn.Close()
+
+	n := eng.SnapshotNetwork("libera")
+	for range 5 { // e.g. five joins: same state, no notice
+		srv.broadcastNetworkChanged("alice", n)
+	}
+	n.State = core.StateDisconnected
+	srv.broadcastNetworkChanged("alice", n)
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(line, "is disconnected") {
+		t.Fatalf("first line after unchanged updates = %q, want the disconnect notice", line)
+	}
+}
+
+// TestBouncerCapReqAfterRegistrationRace exercises a post-registration CAP
+// REQ concurrently with sink fan-out (which reads the caps). Under -race this
+// used to report a concurrent map read/write, a fatal error in production.
+func TestBouncerCapReqAfterRegistrationRace(t *testing.T) {
+	srv, _, _, addr, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+	conn, reader := attachAlice(t, addr)
+	defer conn.Close()
+	go func() { // keep the socket drained
+		for {
+			if _, err := reader.ReadString('\n'); err != nil {
+				return
+			}
+		}
+	}()
+
+	stop := make(chan struct{})
+	go func() {
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			srv.broadcastTyping("alice", "libera", "#stugan", "bob", "active")
+		}
+	}()
+	for range 50 {
+		fmt.Fprintf(conn, "CAP REQ :message-tags\r\nCAP REQ :-message-tags\r\n")
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(stop)
+}

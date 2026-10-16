@@ -216,3 +216,27 @@ func TestPluginsOverlayTabs(t *testing.T) {
 		t.Fatalf("after second tab key, tab = %d, want 0", p.tab)
 	}
 }
+
+// TestDeliverNeverBlocks: a session whose program never consumes messages (a
+// stalled SSH client) must not block the sink — the engine loop calls it —
+// and is killed once its queue overflows.
+func TestDeliverNeverBlocks(t *testing.T) {
+	s := newSession("alice", tea.NewProgram(nil))
+	finished := make(chan struct{})
+	go func() {
+		for range sessionQueue * 2 {
+			s.deliver(printMsg{})
+		}
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("deliver blocked on a stalled program")
+	}
+	select {
+	case <-s.done:
+	default:
+		t.Fatal("overflowing session was not stopped")
+	}
+}

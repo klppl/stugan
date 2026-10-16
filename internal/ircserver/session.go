@@ -22,6 +22,12 @@ const (
 	heartbeatPingAfter  = 90 * time.Second
 	heartbeatReapAfter  = 240 * time.Second
 	maxSaslResponse     = 8 * 1024
+	// outQueueSize bounds a session's outbound queue (lines). Large enough to
+	// absorb a full LIST result or a burst of live traffic; a client further
+	// behind than this is dropped.
+	outQueueSize = 4096
+	// writeTimeout bounds one socket write to a downstream client.
+	writeTimeout = 30 * time.Second
 )
 
 type echoEntry struct {
@@ -38,11 +44,30 @@ type Session struct {
 	engine     *core.Engine
 	history    History
 
-	writeMu sync.Mutex
-	reader  *bufio.Reader
+	reader *bufio.Reader
 
+	// out is the outbound line queue drained by writeLoop, the only goroutine
+	// that touches conn for writing. Sink fan-out runs on the engine loop and
+	// must never block on a slow client, so it enqueues with push (drop the
+	// session when full); the session's own goroutine uses write, which may
+	// wait for room. done is closed by destroy to stop the writer.
+	out  chan string
+	done chan struct{}
+
+	// caps is written by the session goroutine (CAP REQ, also after
+	// registration) and read by the engine loop's sink fan-out, so every
+	// access goes through capsMu (hasCap/setCap).
+	capsMu         sync.RWMutex
 	caps           map[string]bool
 	capNegotiating bool
+
+	// lastState remembers the connection state last announced per network so
+	// NetworkChanged (which fires on every membership change) only produces a
+	// notice/BOUNCER NETWORK line on an actual state transition. Guarded by
+	// stateMu: NetworkChanged can arrive from the engine loop and from server
+	// goroutines (network edits).
+	stateMu   sync.Mutex
+	lastState map[string]core.ConnState
 
 	saslMech    string
 	saslBuf     string
@@ -79,7 +104,11 @@ func newSession(conn net.Conn, srv *Server, hub Hub) *Session {
 		hub:        hub,
 		reader:     bufio.NewReaderSize(conn, maxInputBuffer),
 		caps:       make(map[string]bool),
+		out:        make(chan string, outQueueSize),
+		done:       make(chan struct{}),
+		lastState:  make(map[string]core.ConnState),
 	}
+	go s.writeLoop()
 	s.lastActivity.Store(time.Now().Unix())
 	s.regTimer = time.AfterFunc(registrationTimeout, func() {
 		s.closeWithError("Registration timeout")
@@ -91,17 +120,121 @@ func (s *Session) isRegistered() bool {
 	return s.registered
 }
 
+// sanitizeLine strips characters that would let a value break out of one IRC
+// line and frames it with CRLF.
+func sanitizeLine(line string) string {
+	clean := strings.ReplaceAll(line, "\r", " ")
+	clean = strings.ReplaceAll(clean, "\n", " ")
+	clean = strings.ReplaceAll(clean, "\x00", " ")
+	return clean + "\r\n"
+}
+
+// write queues a line, waiting for room if the queue is full. Only for the
+// session's own goroutine (command replies, attach burst, playback), which may
+// legitimately produce more lines than the queue holds.
 func (s *Session) write(line string) error {
 	if s.closed.Load() {
 		return net.ErrClosed
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	clean := strings.ReplaceAll(line, "\r", " ")
-	clean = strings.ReplaceAll(clean, "\n", " ")
-	clean = strings.ReplaceAll(clean, "\x00", " ")
-	_, err := s.conn.Write([]byte(clean + "\r\n"))
-	return err
+	select {
+	case s.out <- sanitizeLine(line):
+		return nil
+	case <-s.done:
+		return net.ErrClosed
+	}
+}
+
+// push queues a line without ever blocking. It is the path for the engine
+// loop's sink fan-out (and other shared goroutines): a client that has fallen
+// a whole queue behind is disconnected rather than allowed to stall the
+// engine, and resyncs on reconnect.
+func (s *Session) push(line string) {
+	if s.closed.Load() {
+		return
+	}
+	select {
+	case s.out <- sanitizeLine(line):
+	default:
+		s.srv.log.Warn("bouncer: client send queue full; disconnecting", "user", s.userID, "remote", s.remoteAddr)
+		go s.destroy("SendQ exceeded")
+	}
+}
+
+// writeLoop drains the outbound queue to the socket, coalescing queued lines
+// into one write. Each write carries a deadline so a client that stops reading
+// is torn down instead of pinning the goroutine forever.
+func (s *Session) writeLoop() {
+	var buf []byte
+	flush := func() bool {
+		if len(buf) == 0 {
+			return true
+		}
+		_ = s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+		_, err := s.conn.Write(buf)
+		buf = buf[:0]
+		return err == nil
+	}
+	for {
+		select {
+		case line := <-s.out:
+			buf = append(buf, line...)
+		drain:
+			for len(buf) < 64<<10 {
+				select {
+				case more := <-s.out:
+					buf = append(buf, more...)
+				default:
+					break drain
+				}
+			}
+			if !flush() {
+				s.destroy("Write error")
+				return
+			}
+		case <-s.done:
+			// Best-effort flush of what was queued before teardown (e.g. the
+			// ERROR line from closeWithError), then close the socket.
+			for {
+				select {
+				case line := <-s.out:
+					buf = append(buf, line...)
+					continue
+				default:
+				}
+				break
+			}
+			if len(buf) > 0 {
+				_ = s.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+				_, _ = s.conn.Write(buf)
+			}
+			_ = s.conn.Close()
+			return
+		}
+	}
+}
+
+// hasCap reports whether the client negotiated capability c.
+func (s *Session) hasCap(c string) bool {
+	s.capsMu.RLock()
+	defer s.capsMu.RUnlock()
+	return s.caps[c]
+}
+
+// stateChanged records st as the last announced state for network and reports
+// whether it differs from the previously recorded one (true when unknown).
+func (s *Session) stateChanged(network string, st core.ConnState) bool {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	prev, ok := s.lastState[network]
+	s.lastState[network] = st
+	return !ok || prev != st
+}
+
+// noteState records a network's state as already announced (attach burst).
+func (s *Session) noteState(network string, st core.ConnState) {
+	s.stateMu.Lock()
+	s.lastState[network] = st
+	s.stateMu.Unlock()
 }
 
 func (s *Session) numeric(code string, params ...string) {
@@ -119,10 +252,8 @@ func (s *Session) notice(text string) {
 
 func (s *Session) currentNick() string {
 	if s.engine != nil && s.networkID != "" {
-		if netSnapshot := s.engine.SnapshotNetwork(s.networkID); netSnapshot != nil {
-			if netSnapshot.Nick != "" {
-				return netSnapshot.Nick
-			}
+		if nick := s.engine.NetworkNick(s.networkID); nick != "" {
+			return nick
 		}
 	}
 	return s.clientNick
@@ -144,7 +275,7 @@ func (s *Session) selfPrefix() string {
 }
 
 func (s *Session) wantsSelfMessages() bool {
-	return s.caps[CapSelfMessage] || s.caps[CapEchoMessage]
+	return s.hasCap(CapSelfMessage) || s.hasCap(CapEchoMessage)
 }
 
 func (s *Session) serve() {
@@ -234,11 +365,13 @@ func (s *Session) handleCap(msg *Message) {
 
 	case "LIST":
 		var active []string
+		s.capsMu.RLock()
 		for c, ok := range s.caps {
 			if ok {
 				active = append(active, c)
 			}
 		}
+		s.capsMu.RUnlock()
 		_ = s.write(FormatLine("", serverName, "CAP", nick, "LIST", ":"+strings.Join(active, " ")))
 
 	case "REQ":
@@ -261,6 +394,7 @@ func (s *Session) handleCap(msg *Message) {
 			_ = s.write(FormatLine("", serverName, "CAP", nick, "NAK", ":"+reqStr))
 			return
 		}
+		s.capsMu.Lock()
 		for _, c := range requested {
 			if strings.HasPrefix(c, "-") {
 				delete(s.caps, strings.TrimPrefix(c, "-"))
@@ -268,6 +402,7 @@ func (s *Session) handleCap(msg *Message) {
 				s.caps[c] = true
 			}
 		}
+		s.capsMu.Unlock()
 		_ = s.write(FormatLine("", serverName, "CAP", nick, "ACK", ":"+reqStr))
 
 	case "END":
@@ -285,7 +420,7 @@ func (s *Session) handleSasl(msg *Message) {
 		arg = msg.Params[0]
 	}
 
-	if !s.caps[CapSasl] {
+	if !s.hasCap(CapSasl) {
 		_ = s.write(FormatLine("", serverName, "904", nick, ":You must request the sasl capability first"))
 		return
 	}
@@ -376,7 +511,7 @@ func (s *Session) finishSaslPlain(b64 string, nick string) {
 }
 
 func (s *Session) handleBouncerPreReg(msg *Message) {
-	if !s.caps[CapBouncerNetworks] {
+	if !s.hasCap(CapBouncerNetworks) {
 		_ = s.write(FormatLine("", serverName, "FAIL", "BOUNCER", "UNKNOWN_COMMAND", ":Negotiate soju.im/bouncer-networks capability first"))
 		return
 	}
@@ -477,7 +612,7 @@ func (s *Session) completeAttach(userID string, networkSel string) {
 
 	// Control mode (unbound)
 	hasSelector := s.boundNetID != "" || networkSel != ""
-	if !hasSelector && s.caps[CapBouncerNetworks] {
+	if !hasSelector && s.hasCap(CapBouncerNetworks) {
 		s.registerControl(userID)
 		return
 	}
@@ -538,6 +673,7 @@ func (s *Session) bindNetwork(userID string, network *core.Network) {
 	s.engine = tenant.Engine
 	s.history = tenant.History
 	s.registered = true
+	s.noteState(network.ID, network.State)
 
 	if s.regTimer != nil {
 		s.regTimer.Stop()
@@ -590,10 +726,10 @@ func (s *Session) sendAttachBurst() {
 
 	// 005 ISUPPORT
 	tokens := defaultISupportTokens()
-	if s.caps[CapBouncerNetworks] {
+	if s.hasCap(CapBouncerNetworks) {
 		tokens = append(tokens, fmt.Sprintf("BOUNCER_NETID=%s", s.networkID))
 	}
-	if s.caps[CapChatHistory] {
+	if s.hasCap(CapChatHistory) {
 		tokens = append(tokens, fmt.Sprintf("CHATHISTORY=%d", maxChatHistory), "MSGREFTYPES=timestamp")
 	}
 	tokens = append(tokens, ":are supported by this server")
@@ -612,7 +748,7 @@ func (s *Session) sendAttachBurst() {
 		s.sendPlayback(netSnapshot)
 	}
 
-	if s.caps[CapBouncerNetworksNotify] {
+	if s.hasCap(CapBouncerNetworksNotify) {
 		s.sendNetworkList()
 	}
 }
@@ -626,7 +762,7 @@ func (s *Session) sendControlBurst() {
 	_ = s.write(FormatLine("", serverName, "005", nick, "NETWORK=stugan", "CASEMAPPING=rfc1459", ":are supported by this server"))
 	_ = s.write(FormatLine("", serverName, "422", nick, ":MOTD File is missing"))
 
-	if s.caps[CapBouncerNetworksNotify] {
+	if s.hasCap(CapBouncerNetworksNotify) {
 		s.sendNetworkList()
 	}
 }
@@ -688,7 +824,7 @@ func (s *Session) sendPlayback(n *core.Network) {
 
 func (s *Session) withBatch(batchType string, params []string, fn func(ref string)) {
 	ref := ""
-	if s.caps[CapBatch] {
+	if s.hasCap(CapBatch) {
 		s.batchSeq++
 		ref = fmt.Sprintf("b%d", s.batchSeq)
 		var bParams []string
@@ -719,6 +855,7 @@ func (s *Session) sendNetworkList() {
 			tag = fmt.Sprintf("batch=%s", ref)
 		}
 		for _, netw := range u.Networks {
+			s.noteState(netw.ID, netw.State)
 			state := "disconnected"
 			if netw.State == core.StateRegistered {
 				state = "connected"
@@ -789,12 +926,14 @@ func (s *Session) heartbeat(now time.Time) {
 	if idle > heartbeatReapAfter {
 		s.closeWithError("Ping timeout")
 	} else if idle > heartbeatPingAfter {
-		_ = s.write(fmt.Sprintf("PING :%s", serverName))
+		s.push(fmt.Sprintf("PING :%s", serverName))
 	}
 }
 
+// closeWithError sends ERROR and tears the session down. Never blocks, so it
+// is safe from the engine loop (network removal) and timers.
 func (s *Session) closeWithError(reason string) {
-	_ = s.write(fmt.Sprintf("ERROR :%s", reason))
+	s.push(fmt.Sprintf("ERROR :%s", reason))
 	s.destroy(reason)
 }
 
@@ -807,7 +946,9 @@ func (s *Session) destroy(reason string) {
 		s.regTimer = nil
 	}
 	s.srv.reg.remove(s)
-	_ = s.conn.Close()
+	// The writer flushes anything still queued and closes the socket, which
+	// also unblocks serve's read.
+	close(s.done)
 	if s.registered {
 		s.srv.log.Info("bouncer: client detached", "user", s.userID, "network", s.networkID, "remote", s.remoteAddr, "reason", reason)
 	}

@@ -714,3 +714,37 @@ func TestExportAndImportAPI(t *testing.T) {
 		t.Fatalf("import status: %d, body: %s", importResp.StatusCode, string(b))
 	}
 }
+
+// TestLargeFrameAccepted: a frame over the websocket library's 32 KiB default
+// (a long paste) must not close the socket.
+func TestLargeFrameAccepted(t *testing.T) {
+	eng := core.New(core.Options{Sink: noopSink{}})
+	srv := New(SingleUser(&Tenant{Engine: eng}), Options{})
+	eng.AddSink(srv.Sink(defaultUser))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = eng.Run(ctx) }()
+
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(hs.URL, "http")+"/ws", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer ws.CloseNow()
+	readFrame(t, ctx, ws) // hello
+	readFrame(t, ctx, ws) // init
+
+	big, _ := proto.Frame(proto.TDraftSet, proto.DraftDTO{Network: "n", Buffer: "#c", Text: strings.Repeat("x", 200<<10)})
+	if err := wsjson.Write(ctx, ws, big); err != nil {
+		t.Fatalf("write big frame: %v", err)
+	}
+	ping, _ := proto.Frame(proto.TPing, struct{}{})
+	if err := wsjson.Write(ctx, ws, ping); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+	if env := readFrame(t, ctx, ws); env.T != proto.TPong {
+		t.Fatalf("frame = %q, want pong (socket survived the large frame)", env.T)
+	}
+}

@@ -142,6 +142,20 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 			})
 		}
 		return
+
+	case "connect", "disconnect":
+		// /connect with arguments is the IRC operator command (server links),
+		// so only the bare form is ours: (re)connect or drop this network.
+		if name == "connect" && len(ev.Args) > 0 {
+			break
+		}
+		if err := e.SetConnected(ev.Network, name == "connect"); err != nil {
+			e.inject(Message{
+				Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+				Kind: MsgSystem, Text: fmt.Sprintf("%s failed: %v", name, err),
+			})
+		}
+		return
 	}
 
 	conn := e.connFor(ev.Network)
@@ -606,12 +620,7 @@ func (a engineAPI) Members(network, channel string) []MemberInfo {
 	return out
 }
 
-func (a engineAPI) Nick(network string) string {
-	if n := a.e.SnapshotNetwork(network); n != nil {
-		return n.Nick
-	}
-	return ""
-}
+func (a engineAPI) Nick(network string) string { return a.e.NetworkNick(network) }
 
 func (a engineAPI) Backlog(network, buffer string, limit int) []MessageInfo {
 	if a.e.history == nil {

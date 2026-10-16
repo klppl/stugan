@@ -525,6 +525,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer ws.CloseNow()
+	// The library default (32 KiB) closes the socket on any larger frame,
+	// e.g. a long paste in msg:send.
+	ws.SetReadLimit(maxFrameBytes)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -583,6 +586,31 @@ func (s *Server) readPump(ctx context.Context, c *client) {
 	}
 }
 
+// maxFrameBytes bounds one inbound WebSocket frame.
+const maxFrameBytes = 1 << 20
+
+// maxAsyncPerClient bounds how many slow requests one socket may have in
+// flight off the read loop.
+const maxAsyncPerClient = 4
+
+// async runs a slow request handler (database queries, plugin downloads,
+// completion hooks) off the read loop. The protocol-level pong is consumed by
+// the reader, so a handler blocking it for longer than pongTimeout would get a
+// healthy socket killed by pingLoop. Replies are correlated by id, so their
+// order doesn't matter. Past maxAsyncPerClient the handler runs inline, which
+// throttles a client flooding slow requests.
+func (s *Server) async(c *client, fn func()) {
+	select {
+	case c.slots <- struct{}{}:
+		go func() {
+			defer func() { <-c.slots }()
+			fn()
+		}()
+	default:
+		fn()
+	}
+}
+
 func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	switch env.T {
 	case proto.TMsgSend:
@@ -591,10 +619,10 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			func(d proto.MsgSend) error { return c.tenant.Engine.SendInput(d.Network, d.Buffer, d.Text) })
 
 	case proto.TBacklogFetch:
-		s.handleBacklog(ctx, c, env)
+		s.async(c, func() { s.handleBacklog(ctx, c, env) })
 
 	case proto.TContextFetch:
-		s.handleContext(ctx, c, env)
+		s.async(c, func() { s.handleContext(ctx, c, env) })
 
 	case proto.TRead:
 		bestHandle(env,
@@ -614,16 +642,18 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 			})
 
 	case proto.TCompleteReq:
-		bestHandle(env, nil, func(d proto.CompleteReq) {
-			items := c.tenant.Engine.Complete(d.Network, d.Buffer, d.Word)
-			s.reply(c, env.ID, proto.TCompleteRes, proto.CompleteRes{Seq: d.Seq, Items: items})
+		s.async(c, func() {
+			bestHandle(env, nil, func(d proto.CompleteReq) {
+				items := c.tenant.Engine.Complete(d.Network, d.Buffer, d.Word)
+				s.reply(c, env.ID, proto.TCompleteRes, proto.CompleteRes{Seq: d.Seq, Items: items})
+			})
 		})
 
 	case proto.TSearch:
-		s.handleSearch(ctx, c, env)
+		s.async(c, func() { s.handleSearch(ctx, c, env) })
 
 	case proto.TMissedFetch:
-		s.handleMissed(ctx, c, env)
+		s.async(c, func() { s.handleMissed(ctx, c, env) })
 
 	case proto.TNetAdd:
 		reqHandle(c, env, "net:add requires name and addr",
@@ -691,73 +721,7 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 		})
 
 	case proto.TPluginAction:
-		var d proto.PluginAction
-		if err := decode(env, &d); err != nil || d.Action == "" {
-			c.sendError(env.ID, "bad_request", "plugin:action requires action")
-			return
-		}
-		var err error
-		switch d.Action {
-		case "load":
-			if d.Name == "" {
-				c.sendError(env.ID, "bad_request", "plugin:action load requires name")
-				return
-			}
-			err = c.tenant.Engine.LoadPlugin(d.Name)
-		case "unload":
-			if d.Name == "" {
-				c.sendError(env.ID, "bad_request", "plugin:action unload requires name")
-				return
-			}
-			err = c.tenant.Engine.UnloadPlugin(d.Name)
-		case "uninstall":
-			if d.Name == "" {
-				c.sendError(env.ID, "bad_request", "plugin:action uninstall requires name")
-				return
-			}
-			err = c.tenant.Engine.UninstallPlugin(d.Name)
-		case "reload":
-			if d.Name == "" {
-				c.sendError(env.ID, "bad_request", "plugin:action reload requires name")
-				return
-			}
-			err = c.tenant.Engine.ReloadPlugin(d.Name)
-		case "import":
-			if s.hub.AuthEnabled() {
-				c.sendError(env.ID, "forbidden", "remote plugin imports are disabled in multi-user mode")
-				return
-			}
-			if d.URL == "" {
-				c.sendError(env.ID, "bad_request", "plugin:action import requires url")
-				return
-			}
-			err = c.tenant.Engine.ImportPlugin(ctx, d.URL, d.Name)
-		case "update":
-			if d.Name == "" {
-				c.sendError(env.ID, "bad_request", "plugin:action update requires name")
-				return
-			}
-			err = c.tenant.Engine.UpdatePlugin(ctx, d.Name)
-		case "download":
-			if d.Name == "" {
-				c.sendError(env.ID, "bad_request", "plugin:action download requires name")
-				return
-			}
-			err = c.tenant.Engine.DownloadPlugin(ctx, d.Name)
-		case "check_updates":
-			err = c.tenant.Engine.CheckPluginUpdates(ctx, d.Name)
-		default:
-			c.sendError(env.ID, "bad_request", "invalid plugin:action action")
-			return
-		}
-		if err != nil {
-			c.sendError(env.ID, "bad_request", err.Error())
-			return
-		}
-		s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
-			Plugins: toPluginInfos(c.tenant.Engine.Plugins()),
-			Curated: toCuratedPluginInfos(c.tenant.Engine.CuratedPlugins()),
-		})
+		s.async(c, func() { s.handlePluginAction(ctx, c, env) })
 
 	case proto.TPluginSet:
 		reqHandle(c, env, "plugin:setting requires name and key",
@@ -900,6 +864,78 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 	default:
 		s.log.Debug("ignoring unknown frame", "t", env.T)
 	}
+}
+
+// handlePluginAction answers plugin:action (load/unload/…/download/import),
+// some of which fetch scripts over the network.
+func (s *Server) handlePluginAction(ctx context.Context, c *client, env proto.Envelope) {
+	var d proto.PluginAction
+	if err := decode(env, &d); err != nil || d.Action == "" {
+		c.sendError(env.ID, "bad_request", "plugin:action requires action")
+		return
+	}
+	var err error
+	switch d.Action {
+	case "load":
+		if d.Name == "" {
+			c.sendError(env.ID, "bad_request", "plugin:action load requires name")
+			return
+		}
+		err = c.tenant.Engine.LoadPlugin(d.Name)
+	case "unload":
+		if d.Name == "" {
+			c.sendError(env.ID, "bad_request", "plugin:action unload requires name")
+			return
+		}
+		err = c.tenant.Engine.UnloadPlugin(d.Name)
+	case "uninstall":
+		if d.Name == "" {
+			c.sendError(env.ID, "bad_request", "plugin:action uninstall requires name")
+			return
+		}
+		err = c.tenant.Engine.UninstallPlugin(d.Name)
+	case "reload":
+		if d.Name == "" {
+			c.sendError(env.ID, "bad_request", "plugin:action reload requires name")
+			return
+		}
+		err = c.tenant.Engine.ReloadPlugin(d.Name)
+	case "import":
+		if s.hub.AuthEnabled() {
+			c.sendError(env.ID, "forbidden", "remote plugin imports are disabled in multi-user mode")
+			return
+		}
+		if d.URL == "" {
+			c.sendError(env.ID, "bad_request", "plugin:action import requires url")
+			return
+		}
+		err = c.tenant.Engine.ImportPlugin(ctx, d.URL, d.Name)
+	case "update":
+		if d.Name == "" {
+			c.sendError(env.ID, "bad_request", "plugin:action update requires name")
+			return
+		}
+		err = c.tenant.Engine.UpdatePlugin(ctx, d.Name)
+	case "download":
+		if d.Name == "" {
+			c.sendError(env.ID, "bad_request", "plugin:action download requires name")
+			return
+		}
+		err = c.tenant.Engine.DownloadPlugin(ctx, d.Name)
+	case "check_updates":
+		err = c.tenant.Engine.CheckPluginUpdates(ctx, d.Name)
+	default:
+		c.sendError(env.ID, "bad_request", "invalid plugin:action action")
+		return
+	}
+	if err != nil {
+		c.sendError(env.ID, "bad_request", err.Error())
+		return
+	}
+	s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
+		Plugins: toPluginInfos(c.tenant.Engine.Plugins()),
+		Curated: toCuratedPluginInfos(c.tenant.Engine.CuratedPlugins()),
+	})
 }
 
 // reqHandle decodes env's payload into a T, validates it, and runs fn — the
@@ -1064,6 +1100,9 @@ func (s *Server) addClient(user string, c *client) {
 func (s *Server) removeClient(user string, c *client) {
 	s.mu.Lock()
 	delete(s.clients[user], c)
+	if len(s.clients[user]) == 0 {
+		delete(s.clients, user)
+	}
 	s.mu.Unlock()
 }
 

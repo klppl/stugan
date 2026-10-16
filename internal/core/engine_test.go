@@ -1790,3 +1790,105 @@ func TestPluginSlashCommands(t *testing.T) {
 	}
 	host.mu.Unlock()
 }
+
+// TestModeMemberChangeKeepsChannelMode: a "+o nick" (membership) or "+b mask"
+// (list) change must not add o/b to the channel's mode string.
+func TestModeMemberChangeKeepsChannelMode(t *testing.T) {
+	e := New(Options{})
+	e.AddNetwork(NetworkParams{ID: "net", Name: "net", Nick: "me", Addr: "x:1"}, nil)
+	e.apply(Event{Type: EvJoin, Network: "net", Buffer: "#go", Nick: "me"})
+	e.apply(Event{Type: EvMode, Network: "net", Buffer: "#go", Text: "+nt"}) // 324
+	e.apply(Event{Type: EvMode, Network: "net", Buffer: "#go", Nick: "x",
+		Text: "+o me", ChanModes: "+", MemberModes: []MemberMode{{Nick: "me", Symbol: "@", Add: true}}})
+	e.apply(Event{Type: EvMode, Network: "net", Buffer: "#go", Nick: "x", Text: "+b *!*@h", ChanModes: "+"})
+	if got := e.SnapshotNetwork("net").Channel("#go").Mode; got != "+nt" {
+		t.Fatalf("channel mode = %q, want +nt", got)
+	}
+}
+
+// TestConnectAfterAuthFailureRedials: once a network is parked on bad
+// credentials, the Connect button (SetConnected true) and bare /connect must
+// dial a fresh connection instead of reporting "already connected".
+func TestConnectAfterAuthFailureRedials(t *testing.T) {
+	fc := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: fc})
+	conn := &authFailConn{}
+	e.AddNetwork(NetworkParams{ID: "net", Name: "net", Nick: "me", Addr: "x:1"}, conn)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { _ = e.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	deadline := time.After(3 * time.Second)
+	for {
+		e.mu.RLock()
+		parked := e.connCancels["net"] == nil && conn.tries() == 1
+		e.mu.RUnlock()
+		if parked {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("auth-failed network kept its run slot")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if err := e.SendInput("net", StatusBuffer, "/connect"); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.After(3 * time.Second)
+	for {
+		e.mu.RLock()
+		dialed := fc.dialed
+		e.mu.RUnlock()
+		if dialed == 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("/connect after auth failure did not redial")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// TestNetworkSnapshotsCoalesce: a burst of membership events (a join flood or
+// netsplit) must produce a handful of network snapshots, not one per event —
+// each snapshot deep-copies every member and is shipped to every client.
+func TestNetworkSnapshotsCoalesce(t *testing.T) {
+	sink := &captureSink{}
+	e := New(Options{Sink: sink})
+	e.AddNetwork(NetworkParams{ID: "net", Name: "net", Nick: "me"}, &fakeRuntimeConn{})
+	// Queue the whole burst before the loop starts so it is handled
+	// back-to-back, as during a real flood.
+	e.HandleEvent(Event{Type: EvJoin, Network: "net", Nick: "me", Buffer: "#go"})
+	for i := range 200 {
+		e.HandleEvent(Event{Type: EvJoin, Network: "net", Nick: fmt.Sprintf("u%d", i), Buffer: "#go"})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = e.Run(ctx); close(done) }()
+	deadline := time.After(3 * time.Second)
+	for {
+		if n := e.SnapshotNetwork("net"); n != nil && n.Channel("#go") != nil && len(n.Channel("#go").Members) == 201 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("burst not applied")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	time.Sleep(50 * time.Millisecond) // let the final flush land
+	cancel()
+	<-done
+	if got := len(sink.nets); got == 0 || got > 10 {
+		t.Fatalf("network snapshots for a 201-event burst = %d, want 1..10", got)
+	}
+	last := sink.nets[len(sink.nets)-1]
+	if got := len(last.Channel("#go").Members); got != 201 {
+		t.Fatalf("last snapshot has %d members, want 201", got)
+	}
+}

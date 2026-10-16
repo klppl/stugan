@@ -7,7 +7,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -173,5 +175,32 @@ func TestPlanAutojoin(t *testing.T) {
 	keyed, keyless = planAutojoin(channels, nil)
 	if len(keyed) != 0 || len(keyless) != len(channels) {
 		t.Errorf("nil keys: keyed=%v keyless=%v", keyed, keyless)
+	}
+}
+
+func TestAutojoinLines(t *testing.T) {
+	got := autojoinLines([]string{"#a", "#secret", "#b"}, map[string]string{"#secret": "pw"})
+	want := []string{"JOIN #secret pw", "JOIN #a,#b"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("autojoinLines = %q, want %q", got, want)
+	}
+	// A long keyless list is split so no line exceeds the budget.
+	var many []string
+	for i := range 200 {
+		many = append(many, fmt.Sprintf("#channel-%03d", i))
+	}
+	lines := autojoinLines(many, nil)
+	if len(lines) < 2 {
+		t.Fatalf("expected the list split across lines, got %d", len(lines))
+	}
+	joined := 0
+	for _, l := range lines {
+		if len(l) > joinLineBudget+len("JOIN ") {
+			t.Errorf("line too long (%d): %.40s…", len(l), l)
+		}
+		joined += strings.Count(l, "#")
+	}
+	if joined != len(many) {
+		t.Errorf("joined %d channels, want %d", joined, len(many))
 	}
 }

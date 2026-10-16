@@ -163,7 +163,21 @@ type Engine struct {
 	events chan Event
 	done   chan struct{}
 	closeo sync.Once
+
+	// dirty collects networks whose structure changed while committing events
+	// on the loop; their snapshot is pushed once the event queue drains (or at
+	// least every maxNotifyDelay under sustained load) instead of once per
+	// event. A netsplit or join burst therefore costs one deep copy + one
+	// net:update frame per network, not one per QUIT. kick wakes an idle loop
+	// to flush changes made off-loop (plugin prints, background goroutines).
+	dirtyMu sync.Mutex
+	dirty   map[string]struct{}
+	kick    chan struct{}
 }
+
+// maxNotifyDelay bounds how long a coalesced network snapshot may be held back
+// while events keep arriving.
+const maxNotifyDelay = 250 * time.Millisecond
 
 // New builds an Engine from opts.
 func New(opts Options) *Engine {
@@ -210,6 +224,8 @@ func New(opts Options) *Engine {
 		idBase:       randHex(6),
 		events:       make(chan Event, 256),
 		done:         make(chan struct{}),
+		dirty:        map[string]struct{}{},
+		kick:         make(chan struct{}, 1),
 	}
 }
 
@@ -715,11 +731,18 @@ func (e *Engine) SetConnected(id string, connect bool) error {
 			e.mu.Unlock()
 			return err
 		}
+		// The previous connection (parked after an auth failure, or closed by
+		// a disconnect) is replaced; close it so its outbound writer goroutine
+		// and client don't leak.
+		old := e.conns[id]
 		e.conns[id] = conn
 		if e.running {
 			e.startConnLocked(id, conn)
 		}
 		e.mu.Unlock()
+		if old != nil && old != conn {
+			_ = old.Close()
+		}
 		return nil
 	}
 	// Disconnect: stop the reconnect goroutine and close the socket.
@@ -795,6 +818,18 @@ func (e *Engine) RemoveMonitor(networkID, nick string) error {
 	}
 	e.persistAndNotify(p)
 	return nil
+}
+
+// NetworkNick returns our current nick on a network ("" if unknown). Unlike
+// SnapshotNetwork it copies nothing, so it is cheap enough for per-message
+// paths (plugin hooks, bouncer line formatting). Safe from any goroutine.
+func (e *Engine) NetworkNick(id string) string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if n := e.user.Network(id); n != nil {
+		return n.Nick
+	}
+	return ""
 }
 
 // connFor returns the connection for a network id, race-safely.
@@ -999,6 +1034,11 @@ func (e *Engine) runConn(ctx context.Context, id string, conn IRCConn) {
 			// server (and services) with the same wrong password. Park the
 			// network; editing it or /connect dials a fresh connection.
 			e.log.Warn("authentication failed; not retrying", "network", id, "err", err)
+			// This goroutine is ending on its own, so release its run slot:
+			// otherwise SetConnected(true) still sees a live connCancels entry
+			// and treats the parked network as "already connected", leaving
+			// the Connect button and /connect as silent no-ops.
+			e.releaseConn(id, conn)
 			e.HandleEvent(Event{Type: evSetState, Network: id, State: StateDisconnected})
 			e.HandleEvent(Event{
 				Type: EvNumeric, Network: id,
@@ -1026,16 +1066,82 @@ func (e *Engine) runConn(ctx context.Context, id string, conn IRCConn) {
 	}
 }
 
+// releaseConn clears a network's run slot when its connection goroutine exits
+// by itself — only if conn is still the network's current connection, so a
+// goroutine superseded by an edit or reconnect can't clear its successor.
+func (e *Engine) releaseConn(id string, conn IRCConn) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.conns[id] != conn {
+		return
+	}
+	if cancel := e.connCancels[id]; cancel != nil {
+		cancel()
+		delete(e.connCancels, id)
+	}
+}
+
 // loop is the single goroutine that mutates state. Every event passes
 // through here in arrival order.
 func (e *Engine) loop(ctx context.Context) {
+	lastFlush := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case ev := <-e.events:
 			e.handle(ctx, ev)
+			if len(e.events) == 0 || time.Since(lastFlush) >= maxNotifyDelay {
+				e.flushDirty()
+				lastFlush = time.Now()
+			}
+		case <-e.kick:
+			e.flushDirty()
+			lastFlush = time.Now()
 		}
+	}
+}
+
+// markDirty records that network id's structure changed; its snapshot is
+// pushed by the next flushDirty. Safe from any goroutine.
+func (e *Engine) markDirty(id string) {
+	e.dirtyMu.Lock()
+	e.dirty[id] = struct{}{}
+	e.dirtyMu.Unlock()
+}
+
+// flushDirty pushes one fresh snapshot per changed network to the sinks.
+func (e *Engine) flushDirty() {
+	e.dirtyMu.Lock()
+	if len(e.dirty) == 0 {
+		e.dirtyMu.Unlock()
+		return
+	}
+	ids := make([]string, 0, len(e.dirty))
+	for id := range e.dirty {
+		ids = append(ids, id)
+	}
+	clear(e.dirty)
+	e.dirtyMu.Unlock()
+	slices.Sort(ids) // deterministic order across networks
+	for _, id := range ids {
+		e.notifyNetwork(id)
+	}
+}
+
+// wakeFlush makes sure a change recorded off the loop gets flushed: it nudges
+// a running loop, or flushes inline when there is no loop (startup, tests).
+func (e *Engine) wakeFlush() {
+	e.mu.RLock()
+	running := e.running
+	e.mu.RUnlock()
+	if !running {
+		e.flushDirty()
+		return
+	}
+	select {
+	case e.kick <- struct{}{}:
+	default: // a flush is already pending
 	}
 }
 
@@ -1051,7 +1157,7 @@ func (e *Engine) loop(ctx context.Context) {
 func (e *Engine) handle(ctx context.Context, ev Event) {
 	switch ev.Type {
 	case evSetState:
-		e.apply(ev)
+		e.commit(ev)
 
 	case EvMessageIn, EvMessageOut, EvTopic:
 		// Topics, like messages, are dispatched as rewritable: a plugin may
@@ -1061,7 +1167,7 @@ func (e *Engine) handle(ctx context.Context, ev Event) {
 		if !keep {
 			return // a hook dropped it
 		}
-		e.apply(out)
+		e.commit(out)
 
 	case EvCommand:
 		if _, keep := e.host.Dispatch(ctx, ev); !keep {
@@ -1071,7 +1177,7 @@ func (e *Engine) handle(ctx context.Context, ev Event) {
 
 	default: // join, part, quit, nick, connect, disconnect
 		e.host.Dispatch(ctx, ev) // notify-only
-		e.apply(ev)
+		e.commit(ev)
 		if ev.Type == EvConnect {
 			e.runPerform(ev.Network)
 		}
@@ -1359,9 +1465,18 @@ func expandPerformVariables(line string, variables map[string]string) string {
 	return b.String()
 }
 
-// apply commits an event: it mutates state under the write lock, then
-// performs I/O (sink fan-out) with the lock released.
+// apply commits an event and immediately pushes any resulting network
+// snapshot. The loop uses commit and coalesces snapshots instead; apply is the
+// synchronous form for callers outside the loop (and tests).
 func (e *Engine) apply(ev Event) {
+	e.commit(ev)
+	e.flushDirty()
+}
+
+// commit commits an event: it mutates state under the write lock, then
+// performs I/O (sink fan-out) with the lock released. Structural changes only
+// mark the network dirty; the caller flushes.
+func (e *Engine) commit(ev Event) {
 	// LIST results accumulate, then flush to observers as one batch.
 	switch ev.Type {
 	case EvListItem:
@@ -1428,7 +1543,7 @@ func (e *Engine) apply(ev Event) {
 		}
 	}
 	if netChanged {
-		e.notifyNetwork(ev.Network)
+		e.markDirty(ev.Network)
 	}
 }
 
@@ -1540,7 +1655,7 @@ func (e *Engine) applyMessageOut(ev Event) {
 		e.broadcast(m)
 	}
 	if created {
-		e.notifyNetwork(ev.Network)
+		e.markDirty(ev.Network)
 	}
 }
 
@@ -1639,7 +1754,8 @@ func (e *Engine) inject(m Message) {
 	}
 	e.broadcast(m)
 	if created {
-		e.notifyNetwork(m.Network)
+		e.markDirty(m.Network)
+		e.wakeFlush()
 	}
 }
 
@@ -1686,6 +1802,15 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 
 	case EvDisconnect:
 		e.resetJoinGateLocked(ev.Network)
+		// Lookups still awaiting their end-of marker will never get one on
+		// this connection; drop them so they can't accumulate or misroute a
+		// later reply. (pendingWhois is loop-only, like applyNumeric.)
+		prefix := ev.Network + "\t"
+		for k := range e.pendingWhois {
+			if strings.HasPrefix(k, prefix) {
+				delete(e.pendingWhois, k)
+			}
+		}
 		n.State = StateDisconnected
 		msg := "disconnected"
 		if ev.Text != "" {
@@ -1887,7 +2012,11 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 			c.Mode = ev.Text
 			netChanged = true
 		} else if ev.Text != "" {
-			c.Mode = updateChannelMode(c.Mode, ev.Text)
+			change := ev.ChanModes
+			if change == "" {
+				change = ev.Text
+			}
+			c.Mode = updateChannelMode(c.Mode, change)
 			sys(ev.Buffer, fmt.Sprintf("%s sets mode %s", ev.Nick, ev.Text))
 			netChanged = true
 		}

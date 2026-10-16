@@ -249,6 +249,10 @@ A `/command` event that no plugin claims falls back to `runBuiltinCommand`
 - **Lookups** (replies route back to the issuing buffer via `numeric` events):
   `/whois`, `/whowas`, `/who`, `/names`.
 - **History:** `/chathistory [count]` (server-side, where supported).
+- **Connection:** bare `/connect` (re)dials the current network — e.g. after an
+  authentication failure parked it — and `/disconnect` drops it without
+  forgetting it. `/connect` with arguments is passed through as the IRC
+  operator `CONNECT` command.
 - **Raw:** `/raw` (alias `/quote`). An unrecognized command is sent as a raw
   IRC line; a line beginning `//` is sent literally.
 

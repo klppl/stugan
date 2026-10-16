@@ -83,10 +83,10 @@ func (s *Session) formatTags(msgTime time.Time, msgID string, batchRef string) s
 	if batchRef != "" {
 		tags = append(tags, fmt.Sprintf("batch=%s", batchRef))
 	}
-	if s.caps[CapServerTime] && !msgTime.IsZero() {
+	if s.hasCap(CapServerTime) && !msgTime.IsZero() {
 		tags = append(tags, fmt.Sprintf("time=%s", FormatIrcTime(msgTime)))
 	}
-	if s.caps[CapMessageTags] && msgID != "" {
+	if s.hasCap(CapMessageTags) && msgID != "" {
 		tags = append(tags, fmt.Sprintf("msgid=%s", msgID))
 	}
 	if len(tags) == 0 {

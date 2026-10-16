@@ -103,7 +103,31 @@ func channelModeEvent(network string, e *girc.Event, prefix, chanmodes string) (
 		Buffer: e.Params[0], Nick: from,
 		Text:        strings.TrimSpace(flags + " " + strings.Join(args, " ")),
 		MemberModes: mods,
+		ChanModes:   channelSettingFlags(prefix, chanmodes, flags),
 	}, true
+}
+
+// channelSettingFlags returns the part of a MODE flag string that changes the
+// channel's own settings: membership-prefix letters (+o/+v …) and list modes
+// (+b/+e/+I …) are dropped, sign characters kept. It always starts with a sign
+// so the engine can tell "nothing channel-level changed" ("+") from an event
+// that carries no parsed flags at all.
+func channelSettingFlags(prefix, chanmodes, flags string) string {
+	letters, _ := splitPrefixSpec(prefix)
+	listArgs, _, _, _ := splitChanmodes(chanmodes)
+	var b strings.Builder
+	if !strings.HasPrefix(flags, "+") && !strings.HasPrefix(flags, "-") {
+		b.WriteByte('+')
+	}
+	for i := 0; i < len(flags); i++ {
+		c := flags[i]
+		if c != '+' && c != '-' &&
+			(strings.IndexByte(letters, c) >= 0 || strings.IndexByte(listArgs, c) >= 0) {
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
 
 // membershipModeChanges parses a channel MODE flags/args pair and returns the

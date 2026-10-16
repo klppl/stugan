@@ -15,6 +15,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -24,11 +25,48 @@ import (
 )
 
 // Store is a SQLite-backed message store.
+//
+// Message writes (Print, Redact) arrive on the engine loop, so they are not
+// executed there: they are queued to a single writer goroutine that commits
+// whatever has accumulated in one transaction (group commit). Under a burst
+// that turns hundreds of fsyncs into a few, and the engine never waits on the
+// disk unless the queue is full. Readers call flush first, so a query always
+// sees every line committed before it was issued.
 type Store struct {
 	db   *sql.DB
 	path string
 	log  *slog.Logger
+
+	writes     chan writeOp
+	writerDone chan struct{}
+	closeMu    sync.RWMutex
+	closed     bool
+	insertStmt *sql.Stmt
 }
+
+// writeOp is one queued write: a message to insert, a redaction, or (barrier
+// non-nil) a flush marker closed once everything queued before it committed.
+type writeOp struct {
+	msg     *core.Message
+	redact  *redactOp
+	barrier chan struct{}
+}
+
+type redactOp struct{ network, bufferFold, msgid string }
+
+// writeQueue bounds queued writes; Print blocks only when the disk falls this
+// far behind.
+const writeQueue = 4096
+
+// maxBatch caps the writes committed in one transaction.
+const maxBatch = 1024
+
+// schemaVersion is stored in PRAGMA user_version once the one-time migrations
+// below have run, so a restart doesn't repeat full-table rewrites.
+const schemaVersion = 2
+
+const insertMessageSQL = `INSERT OR IGNORE INTO messages(msgid, network, buffer, buffer_fold, ts, from_nick, account, kind, text, self, highlight, tags)
+	 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 var (
 	_ core.Sink         = (*Store)(nil)
@@ -51,8 +89,8 @@ CREATE TABLE IF NOT EXISTS messages (
   highlight INTEGER NOT NULL DEFAULT 0,
   tags      TEXT NOT NULL DEFAULT ''     -- JSON object
 );
-CREATE INDEX IF NOT EXISTS idx_messages_buffer ON messages(network, buffer, id);
-CREATE INDEX IF NOT EXISTS idx_messages_buffer_ts ON messages(network, buffer, ts);
+-- (network, buffer_fold, id) and (network, buffer_fold, ts) indexes are
+-- created by the migrations in Open, after buffer_fold exists on old DBs.
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   text, content='messages', content_rowid='id', tokenize='trigram'
@@ -95,11 +133,18 @@ func Open(path string, log *slog.Logger) (*Store, error) {
 	if log == nil {
 		log = slog.Default()
 	}
+	// synchronous=NORMAL is the recommended setting for WAL: a commit no
+	// longer fsyncs, the WAL is synced at checkpoints instead. A power loss can
+	// drop the last moments of history but never corrupts the database.
 	dsn := "file:" + path +
-		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
+	}
+	if path == ":memory:" {
+		// Every pooled connection to :memory: is a separate, empty database.
+		db.SetMaxOpenConns(1)
 	}
 	if err := db.Ping(); err != nil {
 		db.Close()
@@ -113,27 +158,57 @@ func Open(path string, log *slog.Logger) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate search index: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	ins, err := db.Prepare(insertMessageSQL)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("prepare insert: %w", err)
+	}
+	s := &Store{
+		db: db, path: path, log: log,
+		writes:     make(chan writeOp, writeQueue),
+		writerDone: make(chan struct{}),
+		insertStmt: ins,
+	}
+	go s.writer()
+	return s, nil
+}
+
+// migrate brings a database created by an older build up to schemaVersion.
+// Each step is a full-table operation, so it runs once per database (gated by
+// PRAGMA user_version), not on every start.
+func migrate(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if version >= schemaVersion {
+		return nil
+	}
 	// Tolerant migrations for databases created by earlier versions.
 	for _, alter := range []string{
 		`ALTER TABLE messages ADD COLUMN highlight INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE messages ADD COLUMN buffer_fold TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
-			db.Close()
-			return nil, fmt.Errorf("migrate: %w", err)
+			return fmt.Errorf("migrate: %w", err)
 		}
 	}
 	if _, err := db.Exec(`UPDATE messages SET buffer_fold = ` + sqlFoldBuffer + ` WHERE buffer_fold = ''`); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate buffer casemapping: %w", err)
+		return fmt.Errorf("migrate buffer casemapping: %w", err)
 	}
 	if err := migrateReadMarkers(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate read-marker casemapping: %w", err)
+		return fmt.Errorf("migrate read-marker casemapping: %w", err)
 	}
 	// Deduplicate rows persisted before msgid uniqueness was enforced
 	// (chathistory playback re-inserted the same messages on every run),
-	// then add the unique index that makes replays no-ops in Print.
+	// then add the unique index that makes replays no-ops in Print. The
+	// unfolded-buffer indexes are unused (every query keys on buffer_fold)
+	// and only slowed inserts; (network, buffer_fold, ts) serves the
+	// read-marker queries (unread counts, missed highlights).
 	for _, stmt := range []string{
 		`DROP INDEX IF EXISTS idx_messages_msgid`,
 		`DELETE FROM messages WHERE msgid <> '' AND id NOT IN (
@@ -141,13 +216,18 @@ func Open(path string, log *slog.Logger) (*Store, error) {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_msgid
 		   ON messages(network, buffer_fold, msgid) WHERE msgid <> ''`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_buffer_fold ON messages(network, buffer_fold, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_fold_ts ON messages(network, buffer_fold, ts)`,
+		`DROP INDEX IF EXISTS idx_messages_buffer`,
+		`DROP INDEX IF EXISTS idx_messages_buffer_ts`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("migrate msgid dedup: %w", err)
+			return fmt.Errorf("migrate indexes: %w", err)
 		}
 	}
-	return &Store{db: db, path: path, log: log}, nil
+	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
+	}
+	return nil
 }
 
 const sqlFoldBuffer = `replace(replace(replace(replace(lower(buffer), '[', '{'), ']', '}'), '\', '|'), '~', '^')`
@@ -223,32 +303,152 @@ func migrateSearchIndex(db *sql.DB) error {
 	return tx.Commit()
 }
 
-// Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+// Close drains the write queue and closes the database.
+func (s *Store) Close() error {
+	s.closeMu.Lock()
+	if !s.closed {
+		s.closed = true
+		close(s.writes)
+	}
+	s.closeMu.Unlock()
+	<-s.writerDone
+	s.insertStmt.Close()
+	return s.db.Close()
+}
 
-// Print implements core.Sink: it persists a committed buffer line.
-func (s *Store) Print(m core.Message) {
-	tags := ""
-	if len(m.Tags) > 0 {
-		if b, err := json.Marshal(m.Tags); err == nil {
-			tags = string(b)
+// enqueue hands a write to the writer goroutine. It reports false once the
+// store is closed.
+func (s *Store) enqueue(op writeOp) bool {
+	s.closeMu.RLock()
+	defer s.closeMu.RUnlock()
+	if s.closed {
+		return false
+	}
+	s.writes <- op
+	return true
+}
+
+// flush waits until every write queued before it has been committed.
+func (s *Store) flush() {
+	done := make(chan struct{})
+	if s.enqueue(writeOp{barrier: done}) {
+		<-done
+	}
+}
+
+// writer is the single goroutine that executes queued writes, committing
+// each accumulated batch in one transaction.
+func (s *Store) writer() {
+	defer close(s.writerDone)
+	batch := make([]writeOp, 0, maxBatch)
+	for op := range s.writes {
+		batch = append(batch[:0], op)
+	fill:
+		for len(batch) < maxBatch {
+			select {
+			case more, ok := <-s.writes:
+				if !ok {
+					break fill
+				}
+				batch = append(batch, more)
+			default:
+				break fill
+			}
+		}
+		s.commitBatch(batch)
+		for _, op := range batch {
+			if op.barrier != nil {
+				close(op.barrier)
+			}
 		}
 	}
-	ts := m.Time
-	if ts.IsZero() {
-		ts = time.Now()
+}
+
+// commitBatch writes a batch in one transaction, falling back to one
+// statement at a time if the transaction cannot be used, so a single bad row
+// or a busy database never loses the rest.
+func (s *Store) commitBatch(batch []writeOp) {
+	n := 0
+	for _, op := range batch {
+		if op.barrier == nil {
+			n++
+		}
 	}
-	// OR IGNORE: a message with a msgid we already hold (chathistory or
-	// bouncer replay of a line stored live) must not duplicate the row.
-	_, err := s.db.Exec(
-		`INSERT OR IGNORE INTO messages(msgid, network, buffer, buffer_fold, ts, from_nick, account, kind, text, self, highlight, tags)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.Network, m.Buffer, core.FoldIRC(m.Buffer), ts.UnixMilli(), m.From, m.Account,
-		string(m.Kind), m.Text, boolToInt(m.Self), boolToInt(m.Highlight), tags,
-	)
-	if err != nil {
-		s.log.Error("persist message", "network", m.Network, "buffer", m.Buffer, "err", err)
+	if n == 0 {
+		return
 	}
+	tx, err := s.db.Begin()
+	if err == nil {
+		ins := tx.Stmt(s.insertStmt)
+		for _, op := range batch {
+			if err = s.execOp(tx, ins, op); err != nil {
+				break
+			}
+		}
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			_ = tx.Rollback()
+		}
+		if err == nil {
+			return
+		}
+	}
+	s.log.Warn("batched history write failed; retrying row by row", "rows", n, "err", err)
+	for _, op := range batch {
+		if err := s.execOp(nil, s.insertStmt, op); err != nil {
+			s.logWriteError(op, err)
+		}
+	}
+}
+
+// execOp runs one write, inside tx when non-nil.
+func (s *Store) execOp(tx *sql.Tx, ins *sql.Stmt, op writeOp) error {
+	switch {
+	case op.msg != nil:
+		m := op.msg
+		tags := ""
+		if len(m.Tags) > 0 {
+			if b, err := json.Marshal(m.Tags); err == nil {
+				tags = string(b)
+			}
+		}
+		_, err := ins.Exec(
+			m.ID, m.Network, m.Buffer, core.FoldIRC(m.Buffer), m.Time.UnixMilli(), m.From, m.Account,
+			string(m.Kind), m.Text, boolToInt(m.Self), boolToInt(m.Highlight), tags,
+		)
+		return err
+	case op.redact != nil:
+		r := op.redact
+		const q = `DELETE FROM messages WHERE network = ? AND buffer_fold = ? AND msgid = ?`
+		var err error
+		if tx != nil {
+			_, err = tx.Exec(q, r.network, r.bufferFold, r.msgid)
+		} else {
+			_, err = s.db.Exec(q, r.network, r.bufferFold, r.msgid)
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) logWriteError(op writeOp, err error) {
+	switch {
+	case op.msg != nil:
+		s.log.Error("persist message", "network", op.msg.Network, "buffer", op.msg.Buffer, "err", err)
+	case op.redact != nil:
+		s.log.Error("redact message", "network", op.redact.network, "msgid", op.redact.msgid, "err", err)
+	}
+}
+
+// Print implements core.Sink: it queues a committed buffer line for
+// persistence. OR IGNORE on insert: a message with a msgid we already hold
+// (chathistory or bouncer replay of a line stored live) is not duplicated.
+func (s *Store) Print(m core.Message) {
+	if m.Time.IsZero() {
+		m.Time = time.Now()
+	}
+	s.enqueue(writeOp{msg: &m})
 }
 
 // NetworkChanged is a no-op for the store: only committed lines are saved.
@@ -274,28 +474,43 @@ func (s *Store) React(string, string, string, string, string) {}
 // Redact removes the target line from history: the message-redaction spec's
 // intent is removal, and a line that only disappears live but resurfaces in
 // backlog/search after a reload isn't redacted. The server only relays
-// REDACTs it accepted (author or op), so no authorship check here.
+// REDACTs it accepted (author or op), so no authorship check here. Queued
+// behind any pending insert of the same line, so ordering is preserved.
 func (s *Store) Redact(network, buffer, target, _, _ string) {
 	if target == "" {
 		return
 	}
-	if _, err := s.db.Exec(
-		`DELETE FROM messages WHERE network = ? AND buffer_fold = ? AND msgid = ?`,
-		network, core.FoldIRC(buffer), target,
-	); err != nil {
-		s.log.Error("redact message", "network", network, "buffer", buffer, "msgid", target, "err", err)
-	}
+	s.enqueue(writeOp{redact: &redactOp{network: network, bufferFold: core.FoldIRC(buffer), msgid: target}})
 }
+
+// pruneBatch is how many rows one prune statement deletes. Small batches keep
+// each write transaction short so live inserts are never stuck behind a
+// retention sweep of millions of rows (and their FTS index entries).
+const pruneBatch = 2000
 
 // Prune deletes messages older than before, in every buffer. The FTS delete
 // trigger keeps the search index in sync. Returns the number of rows removed.
 func (s *Store) Prune(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM messages WHERE ts < ?`, before.UnixMilli())
-	if err != nil {
-		return 0, fmt.Errorf("prune messages: %w", err)
+	s.flush()
+	var total int64
+	for {
+		res, err := s.db.ExecContext(ctx,
+			`DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE ts < ? LIMIT ?)`,
+			before.UnixMilli(), pruneBatch)
+		if err != nil {
+			return total, fmt.Errorf("prune messages: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n < pruneBatch {
+			return total, nil
+		}
+		select { // let queued live writes in between batches
+		case <-ctx.Done():
+			return total, ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
-	n, _ := res.RowsAffected()
-	return n, nil
 }
 
 // SaveNetwork upserts a persisted network (core.NetworkStore).
@@ -444,6 +659,7 @@ func (s *Store) ReadMarkers(ctx context.Context) (map[string]int64, error) {
 // live counter. Used at connect time to seed unread badges that survive a
 // page reload.
 func (s *Store) UnreadCounts(ctx context.Context) ([]core.UnreadCount, error) {
+	s.flush() // see every line queued before this call
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT m.network, MIN(m.buffer), COUNT(*), COALESCE(SUM(m.highlight), 0)
 		 FROM messages m
@@ -476,6 +692,7 @@ func (s *Store) UnreadCounts(ctx context.Context) ([]core.UnreadCount, error) {
 // newest matches (ORDER BY id DESC) and the result reversed so the digest reads
 // in arrival order.
 func (s *Store) MissedHighlights(ctx context.Context, limit int) ([]core.Message, error) {
+	s.flush() // see every line queued before this call
 	if limit <= 0 {
 		limit = 50
 	}
@@ -520,6 +737,7 @@ func (s *Store) MissedHighlights(ctx context.Context, limit int) ([]core.Message
 // boundary millisecond and stall paging; keyset paging on the indexed id is
 // exact.
 func (s *Store) Backlog(ctx context.Context, network, buffer string, beforeSeq int64, limit int) (msgs []core.Message, more bool, err error) {
+	s.flush() // see every line queued before this call
 	if limit <= 0 {
 		limit = 100
 	}
@@ -568,6 +786,7 @@ func (s *Store) Backlog(ctx context.Context, network, buffer string, beforeSeq i
 // Used to land the user on the conversation surrounding a specific
 // message — e.g. clicking a mention — in a single round trip.
 func (s *Store) BacklogAround(ctx context.Context, network, buffer, anchor string, around time.Time, limit int) ([]core.Message, bool, bool, error) {
+	s.flush() // see every line queued before this call
 	if limit <= 0 {
 		limit = 100
 	}
@@ -739,6 +958,7 @@ func searchQuery(raw string) (match string, short []string) {
 // network and/or buffer narrow the scope when non-empty. Structured query
 // filters (from:nick, in:#chan, has:link, before/after dates) are supported.
 func (s *Store) Search(ctx context.Context, query, network, buffer string, limit int) ([]core.Message, error) {
+	s.flush() // see every line queued before this call
 	if limit <= 0 {
 		limit = 50
 	}
@@ -853,12 +1073,65 @@ func (s *Store) Path() string { return s.path }
 // Backup creates a clean, consistent, standalone snapshot of the database
 // at destPath using SQLite's VACUUM INTO.
 func (s *Store) Backup(ctx context.Context, destPath string) error {
+	s.flush() // see every line queued before this call
 	_ = os.Remove(destPath)
 	query := fmt.Sprintf("VACUUM INTO '%s'", strings.ReplaceAll(destPath, "'", "''"))
 	if _, err := s.db.ExecContext(ctx, query); err != nil {
 		return fmt.Errorf("backup database: %w", err)
 	}
 	return nil
+}
+
+// importMessagesSQL builds the INSERT … SELECT that copies import_db.messages
+// into messages by column name. Columns an older backup lacks get their
+// defaults; keepIDs preserves row ids (replace mode, so stored cursors stay
+// valid) and otherwise lets new ids be assigned (merge).
+func importMessagesSQL(ctx context.Context, tx *sql.Tx, keepIDs bool) (string, error) {
+	rows, err := tx.QueryContext(ctx, `PRAGMA import_db.table_info(messages)`)
+	if err != nil {
+		return "", fmt.Errorf("inspect import messages: %w", err)
+	}
+	src := map[string]bool{}
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, typ        string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return "", err
+		}
+		src[name] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	for _, req := range []string{"network", "buffer", "ts", "kind", "text"} {
+		if !src[req] {
+			return "", fmt.Errorf("import messages: backup lacks column %q", req)
+		}
+	}
+	cols := []struct{ name, def string }{
+		{"msgid", "''"}, {"network", ""}, {"buffer", ""}, {"buffer_fold", "''"}, {"ts", ""},
+		{"from_nick", "''"}, {"account", "''"}, {"kind", ""}, {"text", ""},
+		{"self", "0"}, {"highlight", "0"}, {"tags", "''"},
+	}
+	if keepIDs && src["id"] {
+		cols = append([]struct{ name, def string }{{"id", ""}}, cols...)
+	}
+	var dst, sel []string
+	for _, c := range cols {
+		dst = append(dst, c.name)
+		if src[c.name] {
+			sel = append(sel, c.name)
+		} else {
+			sel = append(sel, c.def)
+		}
+	}
+	return "INSERT OR IGNORE INTO messages(" + strings.Join(dst, ", ") + ") SELECT " +
+		strings.Join(sel, ", ") + " FROM import_db.messages", nil
 }
 
 // ImportMode specifies whether imported data replaces or merges into existing tables.
@@ -871,6 +1144,7 @@ const (
 
 // Import imports data from a source SQLite database at srcPath into the store.
 func (s *Store) Import(ctx context.Context, srcPath string, mode ImportMode) error {
+	s.flush() // see every line queued before this call
 	srcDSN := "file:" + srcPath + "?mode=ro"
 	srcDB, err := sql.Open("sqlite", srcDSN)
 	if err != nil {
@@ -913,59 +1187,53 @@ func (s *Store) Import(ctx context.Context, srcPath string, mode ImportMode) err
 				return fmt.Errorf("clear table %s: %w", tbl, err)
 			}
 		}
+	}
 
-		for _, tbl := range []string{"messages", "networks", "read_markers", "plugin_kv", "prefs"} {
-			var count int
-			err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name=?", tbl).Scan(&count)
-			if err == nil && count > 0 {
-				if _, err := tx.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s SELECT * FROM import_db.%s", tbl, tbl)); err != nil {
-					return fmt.Errorf("import table %s: %w", tbl, err)
-				}
-			}
+	// Every copy names its columns: a backup's column order depends on the
+	// build that created it (older databases got highlight/buffer_fold
+	// appended by ALTER TABLE), so a positional SELECT * would silently put
+	// values in the wrong columns. In replace mode the tables are empty, so the
+	// merge statements below are exact copies.
+	has := func(tbl string) bool {
+		var n int
+		_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name=?", tbl).Scan(&n)
+		return n > 0
+	}
+	for _, c := range []struct{ tbl, cols string }{
+		{"networks", "id, data"},
+		{"plugin_kv", "script, key, value"},
+		{"prefs", "key, value"},
+	} {
+		if !has(c.tbl) {
+			continue
 		}
-	} else {
-		var hasNetworks int
-		_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name='networks'").Scan(&hasNetworks)
-		if hasNetworks > 0 {
-			if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO networks(id, data) SELECT id, data FROM import_db.networks"); err != nil {
-				return fmt.Errorf("merge networks: %w", err)
-			}
+		q := fmt.Sprintf("INSERT OR REPLACE INTO %s(%s) SELECT %s FROM import_db.%s", c.tbl, c.cols, c.cols, c.tbl)
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("import %s: %w", c.tbl, err)
 		}
-
-		var hasMarkers int
-		_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name='read_markers'").Scan(&hasMarkers)
-		if hasMarkers > 0 {
-			if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO read_markers(network, buffer, ts)
-				SELECT i.network, i.buffer, MAX(i.ts, COALESCE(r.ts, 0))
-				FROM import_db.read_markers i
-				LEFT JOIN read_markers r ON r.network = i.network AND r.buffer = i.buffer`); err != nil {
-				return fmt.Errorf("merge read_markers: %w", err)
-			}
+	}
+	if has("read_markers") {
+		// Fold buffer names (legacy backups hold raw spellings) and keep the
+		// furthest marker per buffer.
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO read_markers(network, buffer, ts)
+			SELECT i.network, i.fb, MAX(i.ts, COALESCE(r.ts, 0))
+			FROM (SELECT network, `+sqlFoldBuffer+` AS fb, MAX(ts) AS ts
+			      FROM import_db.read_markers GROUP BY network, fb) i
+			LEFT JOIN read_markers r ON r.network = i.network AND r.buffer = i.fb`); err != nil {
+			return fmt.Errorf("import read_markers: %w", err)
 		}
-
-		var hasKV int
-		_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name='plugin_kv'").Scan(&hasKV)
-		if hasKV > 0 {
-			if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO plugin_kv(script, key, value) SELECT script, key, value FROM import_db.plugin_kv"); err != nil {
-				return fmt.Errorf("merge plugin_kv: %w", err)
-			}
+	}
+	if has("messages") {
+		q, err := importMessagesSQL(ctx, tx, mode == ImportModeReplace)
+		if err != nil {
+			return err
 		}
-
-		var hasPrefs int
-		_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name='prefs'").Scan(&hasPrefs)
-		if hasPrefs > 0 {
-			if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO prefs(key, value) SELECT key, value FROM import_db.prefs"); err != nil {
-				return fmt.Errorf("merge prefs: %w", err)
-			}
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("import messages: %w", err)
 		}
-
-		var hasMessages int
-		_ = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM import_db.sqlite_master WHERE type='table' AND name='messages'").Scan(&hasMessages)
-		if hasMessages > 0 {
-			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO messages(msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags, buffer_fold)
-				SELECT msgid, network, buffer, ts, from_nick, account, kind, text, self, highlight, tags, buffer_fold FROM import_db.messages`); err != nil {
-				return fmt.Errorf("merge messages: %w", err)
-			}
+		// Rows from a backup that predates buffer_fold arrive with it empty.
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET buffer_fold = `+sqlFoldBuffer+` WHERE buffer_fold = ''`); err != nil {
+			return fmt.Errorf("fold imported buffers: %w", err)
 		}
 	}
 
