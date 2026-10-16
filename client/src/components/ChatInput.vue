@@ -35,9 +35,20 @@ const inputEl = ref<HTMLTextAreaElement | null>(null);
 // full length it wraps inside the narrow mobile input — pushing the resting
 // one-row box to two lines with a scrollbar. Use a short, touch-appropriate
 // placeholder on mobile.
-const placeholder = computed(() =>
-  ui.isMobile ? "Message" : "Enter to send · Shift+Enter for a new line",
-);
+//
+// When the network (or stugan itself) is down the box says so instead: you can
+// still type, and /commands still go through, but a plain line would bounce.
+const net = computed(() => connection.store.networks.find((n) => n.id === props.network));
+const offlineText = computed(() => {
+  if (connection.store.status !== "open") return "Not connected to stugan — reconnecting…";
+  const n = net.value;
+  if (!n || n.state === "registered") return "";
+  return n.state === "connecting" ? `Reconnecting to ${n.name}…` : `${n.name} is disconnected`;
+});
+const placeholder = computed(() => {
+  if (offlineText.value) return offlineText.value;
+  return ui.isMobile ? "Message" : "Enter to send · Shift+Enter for a new line · Tab completes nicks";
+});
 
 // Auto-grow the textarea up to a few lines, then scroll. Called after every
 // change (typed, recalled, programmatic) so the box tracks its content.
@@ -55,23 +66,64 @@ function autosize() {
   el.style.height = Math.min(el.scrollHeight + border, MAX_INPUT_PX) + "px";
 }
 
-// Input history: a session-scoped ring of sent lines, recalled with ↑/↓ when
-// the autocomplete menu is closed (irssi/weechat style). histIdx walks back
-// from the newest entry; -1 means "live", i.e. the user's current draft, which
-// is stashed in histDraft so ↓ past the newest entry restores it. Not
-// persisted — recalled lines can contain /msg-style content.
+// Input history, recalled with ↑/↓ when no menu is open (irssi/weechat style).
+// One ring per buffer. histIdx walks back from the newest entry; -1 means
+// "live", i.e. the user's current draft, which is stashed in histDraft so ↓
+// past the newest entry restores it. Plain lines survive a reload via
+// sessionStorage (this tab only); slash commands stay in memory, since they
+// can carry things like /msg NickServ IDENTIFY.
 const HISTORY_MAX = 100;
-const history: string[] = [];
+const HISTORY_KEY = "stugan.inputHistory";
+const histories = new Map<string, string[]>();
 let histIdx = -1;
 let histDraft = "";
 
-// setText replaces the input and parks the caret at the end on the next tick
-// (v-model hasn't flushed to the DOM yet), mirroring typeChar's approach.
-function setText(s: string) {
+function isCommandLine(s: string): boolean {
+  return s.startsWith("/") && !s.startsWith("//");
+}
+
+function readStoredHistories(): Record<string, unknown> {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(HISTORY_KEY) || "{}");
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+function historyFor(key: string): string[] {
+  let h = histories.get(key);
+  if (!h) {
+    const stored = readStoredHistories()[key];
+    h = Array.isArray(stored) ? stored.filter((s): s is string => typeof s === "string") : [];
+    histories.set(key, h);
+  }
+  return h;
+}
+
+function rememberLine(key: string, line: string) {
+  if (!key) return;
+  const h = historyFor(key);
+  if (h[h.length - 1] !== line) {
+    h.push(line);
+    if (h.length > HISTORY_MAX) h.shift();
+  }
+  try {
+    const all = readStoredHistories();
+    all[key] = h.filter((l) => !isCommandLine(l));
+    sessionStorage.setItem(HISTORY_KEY, JSON.stringify(all));
+  } catch {
+    // ignore unavailable storage
+  }
+}
+
+// setText replaces the input and parks the caret at `caret` (default: the end)
+// on the next tick (v-model hasn't flushed to the DOM yet).
+function setText(s: string, caret = s.length) {
   text.value = s;
   nextTick(() => {
     const el = inputEl.value;
-    if (el) el.setSelectionRange(s.length, s.length);
+    if (el) el.setSelectionRange(caret, caret);
     autosize();
   });
 }
@@ -89,6 +141,7 @@ function caretOnLastLine(): boolean {
 }
 
 function historyPrev() {
+  const history = historyFor(activeDraftKey);
   if (!history.length) return;
   if (histIdx === -1) {
     histDraft = text.value;
@@ -101,6 +154,7 @@ function historyPrev() {
 
 function historyNext() {
   if (histIdx === -1) return;
+  const history = historyFor(activeDraftKey);
   if (histIdx < history.length - 1) {
     histIdx++;
     setText(history[histIdx]);
@@ -110,15 +164,34 @@ function historyNext() {
   }
 }
 
+// Completion runs in two modes:
+//  - "type": a menu that follows the caret as you type, only for /commands
+//    and :emoji (prefixes that can't be ordinary prose). Enter still sends
+//    unless you picked a row with the arrow keys; Tab takes the top row.
+//  - "tab": irssi/WeeChat-style Tab completion for everything (nicks,
+//    #channels, commands, emoji). The first Tab inserts the first match in
+//    place, each further Tab (Shift+Tab backwards) swaps in the next, Escape
+//    restores what you typed, and any other key just keeps the current pick.
 interface AC {
   open: boolean;
+  mode: "type" | "tab";
   items: string[]; // the full replacement token for each candidate
   labels: string[]; // what to show
   index: number;
   start: number; // index in text where the token begins
-  end: number;
+  end: number; // index where it ends (moves as tab mode swaps candidates in)
+  navigated: boolean; // type mode: user moved through the list with arrows
+  original: string; // tab mode: the token as typed, restored on Escape
 }
-const ac = reactive<AC>({ open: false, items: [], labels: [], index: 0, start: 0, end: 0 });
+const ac = reactive<AC>({
+  open: false, mode: "type", items: [], labels: [], index: 0, start: 0, end: 0, navigated: false, original: "",
+});
+
+function closeAC() {
+  ac.open = false;
+  ac.navigated = false;
+  reqSeq++; // drop any in-flight plugin reply for this token
+}
 
 // Save the old target before restoring the new target's draft. ChatInput is
 // deliberately not keyed in ChatView, so without this transition a draft
@@ -134,7 +207,7 @@ watch(
     activeDraftKey = targetKey(network, buffer);
     histIdx = -1;
     histDraft = "";
-    ac.open = false;
+    closeAC();
     setText(readDraft(activeDraftKey));
   },
 );
@@ -213,95 +286,176 @@ function token(): { word: string; start: number; end: number } {
 // late complete:res can't reopen or mutate a menu the user moved past.
 let reqSeq = 0;
 
-function refresh() {
-  const { word, start, end } = token();
-  let items: string[] = [];
-  let labels: string[] = [];
-  if (word.startsWith("/") && start === 0) {
-    const p = word.slice(1).toLowerCase();
-    const m = BUILTINS.filter((c) => c.startsWith(p));
-    items = m.map((c) => "/" + c + " ");
-    labels = m.map((c) => "/" + c);
-  } else if (word.startsWith("#")) {
-    const m = allChannels.value.filter((c) => c.toLowerCase().startsWith(word.toLowerCase()));
-    items = m.map((c) => c + " ");
-    labels = m;
-  } else if (word.startsWith(":") && word.length > 1) {
-    const m = emojiMatches(word.slice(1));
-    items = m.map((e) => e.char + " ");
-    labels = m.map((e) => `${e.char} :${e.code}:`);
-  } else if (word.length >= 1) {
-    const m = recentNicks.value.filter((n) => n.toLowerCase().startsWith(word.toLowerCase())).slice(0, 8);
-    items = m.map((n) => (start === 0 ? n + ": " : n + " "));
-    labels = m;
-  }
-  ac.items = items;
-  ac.labels = labels;
-  ac.start = start;
-  ac.end = end;
-  ac.index = 0;
-  ac.open = items.length > 0;
+function commandItems(word: string) {
+  const p = word.slice(1).toLowerCase();
+  const m = BUILTINS.filter((c) => c.startsWith(p));
+  return { items: m.map((c) => "/" + c + " "), labels: m.map((c) => "/" + c) };
+}
+function emojiItems(word: string) {
+  const m = emojiMatches(word.slice(1));
+  return { items: m.map((e) => e.char + " "), labels: m.map((e) => `${e.char} :${e.code}:`) };
+}
 
-  // Plugins (hook_completion) contribute extra candidates over the wire. The
-  // request is async, so the local menu shows instantly and plugin items are
-  // appended when the reply lands — unless the token has moved on by then.
+// tabCandidates: everything Tab can complete for the word under the caret.
+function tabCandidates(word: string, start: number): { items: string[]; labels: string[] } {
+  if (word.startsWith("/") && start === 0) return commandItems(word);
+  if (word.startsWith(":") && word.length > 1) return emojiItems(word);
+  if (word.startsWith("#")) {
+    const m = allChannels.value.filter((c) => c.toLowerCase().startsWith(word.toLowerCase()));
+    return { items: m.map((c) => c + " "), labels: m };
+  }
+  const m = recentNicks.value.filter((n) => n.toLowerCase().startsWith(word.toLowerCase())).slice(0, 12);
+  return { items: m.map((n) => (start === 0 ? n + ": " : n + " ")), labels: m };
+}
+
+// Plugins (hook_completion) contribute extra candidates over the wire. The
+// request is async, so the local list shows at once and plugin items arrive
+// later; `onExtra` gets them only while this pass is still current.
+function requestExtras(word: string, onExtra: (items: string[], labels: string[]) => void) {
   const mine = ++reqSeq;
-  if (props.buffer && word.length >= 1) {
-    connection.requestCompletions(props.network, props.buffer.name, word).then((extra) => {
-      if (mine !== reqSeq || !extra.length) return;
-      const cur = token();
-      if (cur.word !== word) return; // user kept typing; this reply is stale
-      const have = new Set(ac.items);
-      for (const e of extra) {
-        const item = e.endsWith(" ") ? e : e + " ";
-        if (have.has(item)) continue;
-        have.add(item);
-        ac.items.push(item);
-        ac.labels.push(e);
-      }
-      ac.start = cur.start;
-      ac.end = cur.end;
-      ac.open = ac.items.length > 0;
+  if (!props.buffer || !word) return;
+  connection.requestCompletions(props.network, props.buffer.name, word).then((extra) => {
+    if (mine !== reqSeq || !extra.length) return;
+    const have = new Set(ac.open ? ac.items : []);
+    const items: string[] = [];
+    const labels: string[] = [];
+    for (const e of extra) {
+      const item = e.endsWith(" ") ? e : e + " ";
+      if (have.has(item)) continue;
+      have.add(item);
+      items.push(item);
+      labels.push(e);
+    }
+    if (items.length) onExtra(items, labels);
+  });
+}
+
+// suggestAsYouType runs on every edit. It only ever opens the menu for a
+// leading /command or an :emoji code — never for nicks or #channels, which
+// look like ordinary words and would otherwise hijack Enter.
+function suggestAsYouType() {
+  const { word, start, end } = token();
+  let found = { items: [] as string[], labels: [] as string[] };
+  if (word.startsWith("/") && start === 0 && !word.startsWith("//")) found = commandItems(word);
+  else if (word.startsWith(":") && word.length > 2) found = emojiItems(word);
+  else {
+    closeAC();
+    return;
+  }
+  Object.assign(ac, { mode: "type", items: found.items, labels: found.labels, start, end, index: 0, navigated: false });
+  ac.open = found.items.length > 0;
+  if (word.startsWith("/")) {
+    requestExtras(word, (items, labels) => {
+      if (token().word !== word) return; // user kept typing; this reply is stale
+      ac.items.push(...items);
+      ac.labels.push(...labels);
+      ac.open = true;
     });
   }
 }
 
-function accept(i = ac.index) {
-  if (!ac.open || !ac.items[i]) return;
-  text.value = text.value.slice(0, ac.start) + ac.items[i] + text.value.slice(ac.end);
-  ac.open = false;
-  reqSeq++; // drop any in-flight plugin reply for the token we just replaced
+// applyCandidate swaps candidate i in for the token in place (tab mode).
+function applyCandidate(i: number) {
+  const item = ac.items[i];
+  if (item === undefined) return;
+  const next = text.value.slice(0, ac.start) + item + text.value.slice(ac.end);
+  ac.end = ac.start + item.length;
+  ac.index = i;
+  setText(next, ac.end);
+  writeDraft(activeDraftKey, next);
 }
 
+function startCycle(items: string[], labels: string[], start: number, end: number, word: string) {
+  Object.assign(ac, { mode: "tab", items, labels, start, end, index: 0, navigated: false, original: word });
+  applyCandidate(0);
+  // A single match is simply completed; there's nothing to cycle through.
+  ac.open = items.length > 1;
+}
+
+function tabComplete(dir: 1 | -1) {
+  if (ac.open && ac.mode === "tab") {
+    applyCandidate((ac.index + dir + ac.items.length) % ac.items.length);
+    return;
+  }
+  if (ac.open && ac.mode === "type") {
+    accept();
+    return;
+  }
+  const { word, start, end } = token();
+  if (!word) return;
+  const local = tabCandidates(word, start);
+  if (local.items.length) startCycle(local.items, local.labels, start, end, word);
+  requestExtras(word, (items, labels) => {
+    if (ac.open && ac.mode === "tab") {
+      ac.items.push(...items);
+      ac.labels.push(...labels);
+    } else if (!local.items.length && token().word === word) {
+      startCycle(items, labels, start, end, word);
+    }
+  });
+}
+
+// accept takes a type-mode suggestion (Tab, click, or Enter after arrowing).
+function accept(i = ac.index) {
+  if (!ac.open) return;
+  if (ac.mode === "tab") {
+    applyCandidate(i);
+    closeAC();
+    return;
+  }
+  const item = ac.items[i];
+  if (item === undefined) return;
+  const next = text.value.slice(0, ac.start) + item + text.value.slice(ac.end);
+  setText(next, ac.start + item.length);
+  writeDraft(activeDraftKey, next);
+  closeAC();
+}
+
+// Keys that leave a Tab cycle alone; anything else (typing, caret moves)
+// commits the current pick and ends the cycle.
+const CYCLE_KEYS = new Set(["Tab", "Shift", "Enter", "Escape", "ArrowUp", "ArrowDown"]);
+
 function onKeydown(e: KeyboardEvent) {
+  if (e.isComposing) return;
+  if (ac.open && ac.mode === "tab" && !CYCLE_KEYS.has(e.key)) closeAC();
+
+  if (e.key === "Tab") {
+    e.preventDefault();
+    tabComplete(e.shiftKey ? -1 : 1);
+    return;
+  }
   if (ac.open) {
-    if (e.key === "Tab" || e.key === "Enter") {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const d = e.key === "ArrowDown" ? 1 : -1;
+      const i = (ac.index + d + ac.items.length) % ac.items.length;
+      if (ac.mode === "tab") applyCandidate(i);
+      else {
+        ac.index = i;
+        ac.navigated = true;
+      }
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (ac.mode === "tab") {
+        const next = text.value.slice(0, ac.start) + ac.original + text.value.slice(ac.end);
+        setText(next, ac.start + ac.original.length);
+        writeDraft(activeDraftKey, next);
+      }
+      closeAC();
+      return;
+    }
+    if (e.key === "Enter" && ac.mode === "type" && ac.navigated && !e.shiftKey) {
       e.preventDefault();
       accept();
       return;
     }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      ac.index = (ac.index + 1) % ac.items.length;
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      ac.index = (ac.index - 1 + ac.items.length) % ac.items.length;
-      return;
-    }
-    if (e.key === "Escape") {
-      ac.open = false;
-      reqSeq++;
-      return;
-    }
-  } else if (e.key === "Enter" && !e.shiftKey) {
+  }
+  if (e.key === "Enter" && !e.shiftKey) {
     // Enter sends; Shift+Enter falls through to insert a newline.
     e.preventDefault();
     submit();
-  } else if (e.key === "Tab") {
-    e.preventDefault();
-    refresh();
   } else if (e.key === "ArrowUp" && caretOnFirstLine()) {
     e.preventDefault();
     historyPrev();
@@ -313,7 +467,7 @@ function onKeydown(e: KeyboardEvent) {
 
 function onInput() {
   writeDraft(activeDraftKey, text.value);
-  refresh();
+  suggestAsYouType();
   autosize();
   if (!props.buffer) return;
   if (text.value.trim()) connection.sendTyping(props.network, props.buffer.name, "active");
@@ -327,16 +481,12 @@ function submit() {
   // clearing it would silently destroy the message.
   if (!connection.send(props.network, props.buffer.name, replaceEmoji(t))) return;
   connection.sendTyping(props.network, props.buffer.name, "done");
-  if (history[history.length - 1] !== t) {
-    history.push(t);
-    if (history.length > HISTORY_MAX) history.shift();
-  }
+  rememberLine(activeDraftKey, t);
   histIdx = -1;
   histDraft = "";
   text.value = "";
   writeDraft(activeDraftKey, "");
-  ac.open = false;
-  reqSeq++;
+  closeAC();
   // Keep typing after a button-send: mousedown.prevent on the Send button
   // stops the focus steal, and this covers any path where focus left anyway
   // (without it the mobile keyboard collapses on every send).
@@ -386,6 +536,33 @@ function focus() {
   inputEl.value?.focus();
 }
 
+// insertNick addresses someone: "nick: " at the front of an empty box,
+// otherwise "nick " at the caret (Shift-click on a nick in the log).
+function insertNick(nick: string) {
+  const el = inputEl.value;
+  if (!text.value.trim()) {
+    setText(nick + ": ");
+  } else {
+    const pos = el?.selectionStart ?? text.value.length;
+    const before = text.value.slice(0, pos);
+    const pad = before && !/\s$/.test(before) ? " " : "";
+    const ins = pad + nick + " ";
+    setText(before + ins + text.value.slice(pos), pos + ins.length);
+  }
+  writeDraft(activeDraftKey, text.value);
+  el?.focus();
+}
+
+// quoteLine puts "> <nick> text" on its own line above whatever is being
+// typed, so the reply that follows reads in context.
+function quoteLine(nick: string, body: string) {
+  const q = `> <${nick}> ${body}`;
+  const rest = text.value.replace(/^\n+/, "");
+  setText(q + "\n" + rest);
+  writeDraft(activeDraftKey, text.value);
+  inputEl.value?.focus();
+}
+
 // typeChar: focus the input and append `ch` to the current text. Used by
 // ChatView's global keydown when the user starts typing somewhere else in
 // the chat (focus on a sidebar button, body, etc). Focusing alone isn't
@@ -401,7 +578,7 @@ function typeChar(ch: string) {
     nextTick(() => {
       const end = text.value.length;
       el.setSelectionRange(end, end);
-      refresh();
+      suggestAsYouType();
       autosize();
     });
   }
@@ -410,16 +587,18 @@ function typeChar(ch: string) {
   }
 }
 
-defineExpose({ inputEl, appendText, focus, typeChar });
+defineExpose({ inputEl, appendText, focus, typeChar, insertNick, quoteLine });
 </script>
 
 <template>
-  <form class="chat-input" @submit.prevent="submit">
+  <form class="chat-input" :class="{ offline: !!offlineText }" @submit.prevent="submit">
     <div class="ac-wrap">
-      <ul v-if="ac.open" class="autocomplete">
+      <ul v-if="ac.open" class="autocomplete" role="listbox">
         <li
           v-for="(label, i) in ac.labels"
           :key="i"
+          role="option"
+          :aria-selected="i === ac.index"
           :class="{ sel: i === ac.index }"
           @mousedown.prevent="accept(i)"
         >
@@ -434,6 +613,7 @@ defineExpose({ inputEl, appendText, focus, typeChar });
         autocomplete="off"
         spellcheck="false"
         :placeholder="placeholder"
+        :aria-label="offlineText || 'Message'"
         @input="onInput"
         @keydown="onKeydown"
         @paste="onPaste"

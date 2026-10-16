@@ -167,6 +167,9 @@ export interface Store {
   active: { network: string; buffer: string } | null;
   view: View;
   mentions: MessageDTO[];
+  // mentionsUnseen counts mentions that arrived since the Mentions pane was
+  // last opened. The badge shows the whole list but only turns red for these.
+  mentionsUnseen: number;
   // Inline expand/collapse context for mention and search rows, keyed by the
   // scoped network/buffer/message reference.
   context: Record<string, MentionContext>;
@@ -192,9 +195,14 @@ export interface Store {
   aliases: Record<string, string>;
   // Muted buffers as bufKey strings (network + U+001F + lowercased buffer).
   // Server-authoritative: seeded from init, toggled via the mute frame, and
-  // shared across the user's devices. A muted buffer shows no badge and fires
-  // no notification.
+  // shared across the user's devices. A muted buffer counts only highlights:
+  // ordinary activity is silent, but a line naming you still flags it.
   muted: string[];
+  // ignored: network id → lowercased nicks the bundled ignore.lua plugin is
+  // dropping. The plugin is the source of truth; this mirror is learned from
+  // its "ignore: …" replies (and kept in localStorage between loads) so the
+  // nick menu can offer Ignore or Unignore, not both.
+  ignored: Record<string, string[]>;
   // missed holds the highlight lines that arrived while the user was away
   // (since each buffer's read marker), oldest-first — the body of the "what you
   // missed" digest. Fetched on connect (fetchMissed → applyMissed); replaced,
@@ -332,6 +340,32 @@ function saveRecent(recent: string[]) {
   }
 }
 
+// The ignore mirror (see Store.ignored) persists between loads so the nick menu
+// is right before the plugin has said anything this session.
+const IGNORED_KEY = "stugan.ignored";
+
+function loadIgnored(): Record<string, string[]> {
+  try {
+    const v = JSON.parse(localStorage.getItem(IGNORED_KEY) || "{}");
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out: Record<string, string[]> = {};
+    for (const [k, list] of Object.entries(v)) {
+      if (Array.isArray(list)) out[k] = list.filter((n) => typeof n === "string");
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveIgnored(ignored: Record<string, string[]>) {
+  try {
+    localStorage.setItem(IGNORED_KEY, JSON.stringify(ignored));
+  } catch {
+    // ignore unavailable storage
+  }
+}
+
 function saveLastActive(active: { network: string; buffer: string } | null) {
   try {
     if (active) localStorage.setItem(LAST_ACTIVE_KEY, JSON.stringify(active));
@@ -365,6 +399,7 @@ export class Connection {
     active: null,
     view: "chat",
     mentions: [],
+    mentionsUnseen: 0,
     context: {},
     search: { query: "", results: [], busy: false },
     netConfigs: {},
@@ -378,6 +413,7 @@ export class Connection {
     highlight: { patterns: [], exceptions: [] },
     aliases: {},
     muted: [],
+    ignored: loadIgnored(),
     missed: [],
     digestOpen: false,
     recent: loadRecent(),
@@ -386,6 +422,7 @@ export class Connection {
 
   private ws: WebSocket | null = null;
   private reconnectTimer: number | null = null;
+  private mentionsReturn: View = "chat";
   // A buffer to land on once it exists, set by navigateTo (notification click /
   // deep link) and consumed by ensureActive.
   private pendingNav: { network: string; buffer: string } | null = null;
@@ -984,12 +1021,12 @@ export class Connection {
         prev.local = false; // the server reports it now
       }
       // Only the init snapshot carries real unread counts; adopt them so
-      // badges survive a reload. A muted buffer never shows a count (it shows
-      // the mute icon instead), matching the live counter's mute skip.
+      // badges survive a reload. A muted buffer counts only its highlights,
+      // matching the live counter's mute rule.
       if (adoptUnread) {
         const muted = this.isMuted(bufKey(net!.id, buf.name));
-        buf.unread = muted ? 0 : c.unread ?? 0;
-        buf.highlight = muted ? 0 : c.highlight ?? 0;
+        buf.highlight = c.highlight ?? 0;
+        buf.unread = muted ? buf.highlight : c.unread ?? 0;
       }
       return buf;
     });
@@ -1066,6 +1103,7 @@ export class Connection {
     // plugin (it drops the message in the engine, so it is never stored,
     // counted, or highlighted). Nothing to filter here.
     const buf = this.ensureBuf(net, m.buffer);
+    if (m.kind === "system") this.learnIgnore(net.id, m.text);
     // Dedupe against the recent tail: during the connect handshake a line
     // can arrive both inside the init snapshot and as a live frame that was
     // queued while the snapshot was being built. Same message, same msgid —
@@ -1089,7 +1127,9 @@ export class Connection {
     const muted = this.isMuted(bufKey(net.id, buf.name));
     const focused = this.store.view === "chat" && isSameBuffer(this.store.active, net.id, buf.name);
 
-    if (!focused && !m.self && CONVERSATIONAL.has(m.kind) && !muted) {
+    // Muting silences ordinary activity, but a line that names you still
+    // counts (WeeChat/irssi behaviour) — that's the one thing worth surfacing.
+    if (!focused && !m.self && CONVERSATIONAL.has(m.kind) && (!muted || m.highlight)) {
       // First unread since last read → anchor the "new messages" divider just
       // above this message (the freshly-pushed live tail element). Hold it
       // there as more unreads pile below; cleared when the user navigates away.
@@ -1103,14 +1143,15 @@ export class Connection {
       // marker (debounced) so it isn't re-counted as unread on the next reload.
       this.markReadSoon(net.id, buf.name);
     }
-    if (m.highlight && !m.self && !muted) {
+    if (m.highlight && !m.self) {
       this.store.mentions.push(m);
       if (this.store.mentions.length > 200) this.store.mentions.shift();
+      if (this.store.view !== "mentions") this.store.mentionsUnseen++;
     }
     // Desktop-notify on highlights and on direct messages (queries). DMs stay
     // out of the mentions view above but are still attention-worthy; this
     // mirrors the server-side push gate in maybePush.
-    if (!m.self && !muted && (m.highlight || (buf.kind === "query" && CONVERSATIONAL.has(m.kind)))) {
+    if (!m.self && (m.highlight || (!muted && buf.kind === "query" && CONVERSATIONAL.has(m.kind)))) {
       this.desktopNotify(m);
     }
     if (!this.store.active) this.store.active = { network: net.id, buffer: buf.name };
@@ -1241,7 +1282,15 @@ export class Connection {
   // pane returns to the chat (store.active is untouched while viewing
   // mentions, so "chat" lands back on the buffer the user came from).
   showMentions() {
-    this.store.view = this.store.view === "mentions" ? "chat" : "mentions";
+    if (this.store.view === "mentions") {
+      this.store.view = this.mentionsReturn;
+      return;
+    }
+    // Remember where we came from, so closing the pane lands back on a search
+    // in progress rather than always on the chat.
+    this.mentionsReturn = this.store.view === "search" ? "search" : "chat";
+    this.store.view = "mentions";
+    this.store.mentionsUnseen = 0;
   }
 
   showSettings() {
@@ -1275,6 +1324,7 @@ export class Connection {
     }
 
     this.store.mentions = [];
+    this.store.mentionsUnseen = 0;
   }
 
   // jumpToMessage navigates to the buffer that contains m and asks the
@@ -1443,8 +1493,36 @@ export class Connection {
     this.sendFrame<BufReorder>(T.BufReorder, { network, buffers });
   }
 
-  // isMuted reports whether a buffer (by bufKey) is muted. Muted buffers show
-  // no unread badge and fire no notification.
+  // isIgnored reports whether ignore.lua is (as far as this client has seen)
+  // dropping nick's messages on network.
+  isIgnored(network: string, nick: string): boolean {
+    return this.store.ignored[network]?.includes(nick.toLowerCase()) ?? false;
+  }
+
+  // learnIgnore mirrors ignore.lua's replies into store.ignored. The plugin
+  // prints "ignore: now ignoring X", "ignore: no longer ignoring X",
+  // "ignore: X was not ignored", "ignore: not ignoring anyone on N", or the
+  // full list "ignore: a, b" — enough to keep the menu honest, including for
+  // commands typed by hand or sent from another device.
+  private learnIgnore(network: string, text: string) {
+    if (!text.startsWith("ignore: ")) return;
+    const rest = text.slice("ignore: ".length).trim();
+    const cur = new Set(this.store.ignored[network] ?? []);
+    let m: RegExpMatchArray | null;
+    if ((m = rest.match(/^now ignoring (\S+)$/))) cur.add(m[1].toLowerCase());
+    else if ((m = rest.match(/^no longer ignoring (\S+)$/))) cur.delete(m[1].toLowerCase());
+    else if ((m = rest.match(/^(\S+) was not ignored$/))) cur.delete(m[1].toLowerCase());
+    else if (rest.startsWith("not ignoring anyone")) cur.clear();
+    else if (!rest.includes(" ") || /^\S+(, \S+)*$/.test(rest)) {
+      cur.clear();
+      for (const n of rest.split(", ")) if (n) cur.add(n.toLowerCase());
+    } else return;
+    this.store.ignored = { ...this.store.ignored, [network]: [...cur] };
+    saveIgnored(this.store.ignored);
+  }
+
+  // isMuted reports whether a buffer (by bufKey) is muted. Muted buffers count
+  // and notify only highlights.
   isMuted(key: string): boolean {
     return this.store.muted.includes(key);
   }
@@ -1701,7 +1779,14 @@ export class Connection {
       // A DM's buffer name is just the sender's nick, so "alice in alice" reads
       // badly — title it with the sender alone.
       const title = isChannel(m.buffer) ? `${m.from} in ${m.buffer}` : m.from;
-      new Notification(title, { body: stripFormatting(m.text), tag: m.network + "/" + m.buffer });
+      const n = new Notification(title, { body: stripFormatting(m.text), tag: m.network + "/" + m.buffer });
+      // Clicking it brings the tab forward on the line that triggered it.
+      n.onclick = () => {
+        window.focus();
+        n.close();
+        if (m.id && m.time) this.jumpToMessage(m);
+        else this.navigateTo(m.network, m.buffer);
+      };
     } catch {
       /* notifications may be unavailable */
     }

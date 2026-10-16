@@ -216,10 +216,10 @@ func (s *Server) maybePush(user string, m core.Message) {
 	if s.visibleClientCount(user) > 0 {
 		return // user is actively viewing a tab; in-app notification is enough
 	}
-	// The user is fully away, so honor their muted buffers here too: the
-	// in-app desktopNotify already skips muted buffers client-side, but push
-	// fires with no client connected, so the check has to live server-side.
-	if t, ok := s.hub.Tenant(user); ok && isMuted(loadMuted(t), m.Network, m.Buffer) {
+	// The user is fully away, so honor their muted buffers here too, the same
+	// way the in-app desktopNotify does: muting silences a buffer's ordinary
+	// traffic, but a line that names you still gets through.
+	if t, ok := s.hub.Tenant(user); ok && !m.Highlight && isMuted(loadMuted(t), m.Network, m.Buffer) {
 		return
 	}
 	title := m.From + " in " + m.Buffer

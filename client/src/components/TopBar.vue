@@ -30,6 +30,10 @@ const mobileMenuOpen = ref(false);
 // Search Autocomplete State
 const showAutocomplete = ref(false);
 const selectedIndex = ref(0);
+// Enter searches for what's typed; it only takes a suggestion once the user
+// has picked one with the arrow keys (Tab always takes the highlighted one).
+// Without this, searching for "link" or "from" got rewritten into a filter.
+const navigated = ref(false);
 
 interface SearchSuggestion {
   text: string;
@@ -195,6 +199,7 @@ function applySuggestion(s: SearchSuggestion) {
 
   q.value = newText;
   showAutocomplete.value = false;
+  navigated.value = false;
 
   nextTick(() => {
     if (searchEl.value) {
@@ -215,9 +220,11 @@ function onSearchKeydown(e: KeyboardEvent) {
   if (e.key === "ArrowDown") {
     e.preventDefault();
     selectedIndex.value = (selectedIndex.value + 1) % suggestions.value.length;
+    navigated.value = true;
   } else if (e.key === "ArrowUp") {
     e.preventDefault();
     selectedIndex.value = (selectedIndex.value - 1 + suggestions.value.length) % suggestions.value.length;
+    navigated.value = true;
   } else if (e.key === "Tab") {
     e.preventDefault();
     if (suggestions.value[selectedIndex.value]) {
@@ -225,11 +232,9 @@ function onSearchKeydown(e: KeyboardEvent) {
     }
   } else if (e.key === "Enter") {
     e.preventDefault();
-    if (suggestions.value[selectedIndex.value]) {
-      applySuggestion(suggestions.value[selectedIndex.value]);
-    } else {
-      doSearch();
-    }
+    const s = suggestions.value[selectedIndex.value];
+    if (navigated.value && s) applySuggestion(s);
+    else doSearch();
   } else if (e.key === "Escape") {
     showAutocomplete.value = false;
   }
@@ -365,8 +370,9 @@ const bufferTitle = computed(() => {
         class="search"
         :class="{ 'mobile-open': searchOpen }"
         placeholder="Search messages…"
+        aria-label="Search messages"
         @focus="showAutocomplete = true"
-        @input="showAutocomplete = true; selectedIndex = 0"
+        @input="showAutocomplete = true; selectedIndex = 0; navigated = false"
         @keydown="onSearchKeydown"
         @blur="onSearchBlur"
       />
@@ -379,7 +385,7 @@ const bufferTitle = computed(() => {
           v-for="(s, idx) in suggestions"
           :key="s.text"
           class="autocomplete-item"
-          :class="{ selected: idx === selectedIndex }"
+          :class="{ selected: idx === selectedIndex, picked: navigated && idx === selectedIndex }"
           role="option"
           :aria-selected="idx === selectedIndex"
           @mouseenter="selectedIndex = idx"
@@ -389,6 +395,7 @@ const bufferTitle = computed(() => {
           <span class="item-text">{{ s.label }}</span>
           <span class="item-desc">{{ s.desc }}</span>
         </div>
+        <div class="autocomplete-foot">Tab inserts a filter · Enter searches</div>
       </div>
     </div>
     <button
@@ -408,7 +415,7 @@ const bufferTitle = computed(() => {
     >
       <Icon name="at" />
       <span class="btn-label">Mentions</span>
-      <span v-if="mentionCount" class="badge" :class="{ highlight: mentionCount > 0 }">{{ mentionCount }}</span>
+      <span v-if="mentionCount" class="badge" :class="{ highlight: store.mentionsUnseen > 0 }">{{ mentionCount }}</span>
     </button>
     <button
       v-if="store.active"
@@ -444,7 +451,7 @@ const bufferTitle = computed(() => {
         @click="mobileMenuOpen = !mobileMenuOpen"
       >
         <Icon name="more" :size="18" class="mobile-actions-icon" />
-        <span v-if="mentionCount" class="badge dot-badge" />
+        <span v-if="store.mentionsUnseen" class="badge dot-badge" />
       </button>
 
       <div
@@ -475,7 +482,7 @@ const bufferTitle = computed(() => {
         >
           <Icon name="at" class="item-icon" />
           <span class="item-label">Mentions</span>
-          <span v-if="mentionCount" class="badge" :class="{ highlight: mentionCount > 0 }">{{ mentionCount }}</span>
+          <span v-if="mentionCount" class="badge" :class="{ highlight: store.mentionsUnseen > 0 }">{{ mentionCount }}</span>
         </button>
         <button
           v-if="store.active"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watchEffect } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from "vue";
 import Sidebar from "./components/Sidebar.vue";
 import ChatView from "./components/ChatView.vue";
 import TopBar from "./components/TopBar.vue";
@@ -10,9 +10,10 @@ import Toast from "./components/Toast.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import Digest from "./components/Digest.vue";
 import ImageViewerModal from "./components/ImageViewerModal.vue";
+import KeyboardShortcuts from "./components/KeyboardShortcuts.vue";
 import { authState, canEnter, needsMagicWord } from "./auth";
-import { ui, closeDrawers, closeImageViewer, useSwipeNav } from "./ui";
-import { connection, foldTarget } from "./connection";
+import { ui, closeDrawers, closeImageViewer, useSwipeNav, isMac, stepBuffer, selectNth, nextUnread } from "./ui";
+import { connection } from "./connection";
 import { settings } from "./settings";
 
 const showPalette = ref(false);
@@ -33,33 +34,46 @@ watchEffect(() => {
   document.documentElement.dataset.msgLayout = l === "auto" ? (ui.isMobile ? "cozy" : "classic") : l;
 });
 
-// Ctrl/Cmd-K toggles the command palette (quick switcher) from anywhere.
-// Alt+↑/↓ steps to the previous/next buffer in sidebar order (irssi/WeeChat
-// muscle memory), wrapping at the ends.
+// Global shortcuts (the full list lives in KeyboardShortcuts.vue):
+//   Ctrl/Cmd-K        command palette (quick switcher)
+//   Ctrl/Cmd-/        shortcut cheat sheet
+//   Alt+↑/↓           previous/next buffer in sidebar order (irssi/WeeChat)
+//   Alt+Shift+↑/↓     previous/next buffer with unread activity (Slack)
+//   Alt+A             next unread (irssi; not on macOS, where Option types text)
+//   Alt+1–9, 0        buffer by sidebar position (Ctrl+digit on macOS)
+// Keys are matched on e.code so they work on any keyboard layout.
 function onGlobalKey(e: KeyboardEvent) {
-  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && !e.altKey && (e.key === "k" || e.key === "K")) {
     e.preventDefault();
     showPalette.value = !showPalette.value;
-  } else if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+    return;
+  }
+  if (mod && !e.altKey && (e.code === "Slash" || e.key === "/")) {
     e.preventDefault();
-    stepBuffer(e.key === "ArrowUp" ? -1 : 1);
+    ui.shortcutsOpen = !ui.shortcutsOpen;
+    return;
+  }
+  const digit = /^Digit(\d)$/.exec(e.code);
+  const numMod = isMac ? e.ctrlKey && !e.altKey && !e.metaKey : e.altKey && !e.ctrlKey && !e.metaKey;
+  if (digit && numMod && !e.shiftKey) {
+    e.preventDefault();
+    const n = Number(digit[1]);
+    selectNth(n === 0 ? 9 : n - 1);
+    return;
+  }
+  if (!e.altKey || e.ctrlKey || e.metaKey) return;
+  if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    e.preventDefault();
+    const dir = e.key === "ArrowUp" ? -1 : 1;
+    if (e.shiftKey) nextUnread(dir);
+    else stepBuffer(dir);
+  } else if (!isMac && !e.shiftKey && e.code === "KeyA") {
+    e.preventDefault();
+    nextUnread(1);
   }
 }
 
-function stepBuffer(dir: 1 | -1) {
-  // Sidebar order: each network's status buffer (its header row), then its
-  // channels and queries.
-  const order = store.networks.flatMap((n) => [
-    ...n.buffers.filter((b) => b.kind === "status"),
-    ...n.buffers.filter((b) => b.kind !== "status"),
-  ].map((b) => ({ network: n.id, buffer: b.name })));
-  if (!order.length) return;
-  const cur = order.findIndex(
-    (o) => o.network === store.active?.network && foldTarget(o.buffer) === foldTarget(store.active?.buffer ?? ""),
-  );
-  const next = order[(cur + dir + order.length) % order.length];
-  connection.select(next.network, next.buffer);
-}
 onMounted(() => window.addEventListener("keydown", onGlobalKey));
 onUnmounted(() => window.removeEventListener("keydown", onGlobalKey));
 
@@ -69,6 +83,80 @@ onUnmounted(() => window.removeEventListener("keydown", onGlobalKey));
 // style.css). The status bar pulls real values from the store so it reads
 // like mIRC's: nick, network, active window, connection state.
 const store = connection.store;
+
+// --- Unread signal outside the tab -------------------------------------------
+// The tab title carries "(N)" for things addressed to you (highlights plus
+// unread DMs) or a "•" when there is only ordinary unread chatter, then the
+// open buffer's name. The favicon gets a red dot while N > 0.
+const attention = computed(() => {
+  let n = 0;
+  for (const net of store.networks) {
+    for (const b of net.buffers) {
+      n += b.kind === "query" ? Math.max(b.unread, b.highlight) : b.highlight;
+    }
+  }
+  return n;
+});
+const anyUnread = computed(() => store.networks.some((n) => n.buffers.some((b) => b.unread > 0)));
+const activeTitle = computed(() => {
+  const a = store.active;
+  if (!a || store.view !== "chat") return "";
+  const buf = connection.activeBuffer();
+  if (!buf) return "";
+  return buf.kind === "status" ? store.networks.find((n) => n.id === a.network)?.name ?? "" : buf.name;
+});
+watchEffect(() => {
+  const prefix = attention.value ? `(${attention.value}) ` : anyUnread.value ? "• " : "";
+  document.title = `${prefix}${activeTitle.value ? activeTitle.value + " — " : ""}stugan`;
+});
+
+// The dotted favicon is drawn once from the PNG icon and cached; the original
+// hrefs are restored when the count drops back to zero.
+const iconLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="icon"]'));
+const iconOriginals = iconLinks.map((l) => l.href);
+let dottedIcon: Promise<string | null> | null = null;
+function drawDottedIcon(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const size = 64;
+        const c = document.createElement("canvas");
+        c.width = c.height = size;
+        const g = c.getContext("2d");
+        if (!g) return resolve(null);
+        g.drawImage(img, 0, 0, size, size);
+        g.beginPath();
+        g.arc(size - 15, 15, 14, 0, Math.PI * 2);
+        g.fillStyle = "#e5484d";
+        g.fill();
+        g.lineWidth = 4;
+        g.strokeStyle = "#ffffff";
+        g.stroke();
+        resolve(c.toDataURL("image/png"));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = "/icons/icon-192.png?v=2";
+  });
+}
+watch(
+  () => attention.value > 0,
+  async (on) => {
+    if (!iconLinks.length) return;
+    if (!on) {
+      iconLinks.forEach((l, i) => (l.href = iconOriginals[i]));
+      return;
+    }
+    dottedIcon ??= drawDottedIcon();
+    const url = await dottedIcon;
+    if (url && attention.value > 0) iconLinks.forEach((l) => (l.href = url));
+  },
+  { immediate: true },
+);
+
 const MIRC_MENUS = ["File", "View", "Favourites", "Tools", "Commands", "Window", "Help"];
 
 const activeNet = computed(() => store.networks.find((n) => n.id === store.active?.network));
@@ -118,6 +206,7 @@ const mircStatus = computed(
         @close="showPalette = false"
         @settings="toggleSettings"
       />
+      <KeyboardShortcuts v-if="ui.shortcutsOpen" @close="ui.shortcutsOpen = false" />
       <ImageViewerModal
         v-if="ui.activeImage"
         :image="ui.activeImage"

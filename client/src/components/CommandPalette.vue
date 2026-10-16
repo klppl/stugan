@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { connection, bufKey } from "../connection";
 import { settings } from "../settings";
-import { ui, toggleMembers } from "../ui";
+import { ui, toggleMembers, bufferOrder, isMac, NUM_MOD } from "../ui";
 
 // CommandPalette is a Ctrl/Cmd-K quick switcher: fuzzy-jump to any buffer on
 // any network, plus a few global actions. Pure client-side over store state.
@@ -22,6 +22,7 @@ interface Item {
   sub: string; // secondary text (network name, or a hint)
   unread: number;
   highlight: number;
+  hint?: string; // keyboard shortcut shown at the right edge
   run: () => void;
 }
 
@@ -29,8 +30,8 @@ interface Item {
 // The buffer-scoped ones (channel browser, details, member list) also stand in
 // for the top bar's buttons when the "Show top bar" setting hides it.
 const actions = computed<Item[]>(() => {
-  const act = (key: string, label: string, sub: string, fn: () => void): Item => ({
-    key, label, sub, unread: 0, highlight: 0, run: () => { fn(); close(); },
+  const act = (key: string, label: string, sub: string, fn: () => void, hint?: string): Item => ({
+    key, label, sub, unread: 0, highlight: 0, hint, run: () => { fn(); close(); },
   });
   const out = [
     act("act:mentions", "Mentions", "View all mentions", () => connection.showMentions()),
@@ -44,6 +45,7 @@ const actions = computed<Item[]>(() => {
   out.push(
     act("act:topbar", settings.showTopBar ? "Hide top bar" : "Show top bar", "Toggle the bar above the chat", () => (settings.showTopBar = !settings.showTopBar)),
     act("act:settings", "Settings", "Open settings", () => emit("settings")),
+    act("act:shortcuts", "Keyboard shortcuts", "Every key binding", () => (ui.shortcutsOpen = true), `${isMac ? "⌘" : "Ctrl"}+/`),
   );
   return out;
 });
@@ -59,17 +61,24 @@ const searchItem = computed<Item | null>(() => {
   };
 });
 
-// Every buffer across every network becomes a jump target.
+// Every buffer across every network becomes a jump target. The first ten in
+// sidebar order also show their Alt/Ctrl+digit shortcut.
 const buffers = computed<Item[]>(() => {
+  const hints = new Map<string, string>();
+  bufferOrder()
+    .slice(0, 10)
+    .forEach((r, i) => hints.set(bufKey(r.network, r.buffer), `${NUM_MOD}+${(i + 1) % 10}`));
   const out: Item[] = [];
   for (const n of store.networks) {
     for (const b of n.buffers) {
+      const key = bufKey(n.id, b.name);
       out.push({
-        key: bufKey(n.id, b.name),
-        label: b.name,
-        sub: n.name,
+        key,
+        label: b.kind === "status" ? n.name : b.name,
+        sub: b.kind === "status" ? "server messages" : n.name,
         unread: b.unread,
         highlight: b.highlight,
+        hint: hints.get(key),
         run: () => { connection.select(n.id, b.name); close(); },
       });
     }
@@ -197,6 +206,7 @@ function onKeydown(e: KeyboardEvent) {
             <span v-if="it.highlight" class="badge hl">{{ it.highlight }}</span>
             <span v-else-if="it.unread" class="badge">{{ it.unread }}</span>
           </span>
+          <kbd v-if="it.hint" class="pi-kbd">{{ it.hint }}</kbd>
         </li>
       </ul>
     </div>
@@ -281,5 +291,15 @@ function onKeydown(e: KeyboardEvent) {
 .badge.hl {
   background: var(--accent);
   color: #fff;
+}
+.pi-kbd {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 0.72em;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+  font-variant-numeric: tabular-nums;
 }
 </style>

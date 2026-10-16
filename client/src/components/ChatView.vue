@@ -42,6 +42,19 @@ const dragging = ref(false);
 
 const buffer = computed(() => connection.activeBuffer());
 
+// The active buffer's network, for the "reconnecting" strip above the log.
+const activeNet = computed(() => store.networks.find((n) => n.id === store.active?.network));
+const netDown = computed(() => {
+  if (store.status !== "open") return { text: "Lost connection to stugan — reconnecting…", canConnect: false };
+  const n = activeNet.value;
+  if (!n || n.state === "registered") return null;
+  if (n.state === "connecting") return { text: `Reconnecting to ${n.name}…`, canConnect: false };
+  return { text: `${n.name} is disconnected. Messages won't send until it's back.`, canConnect: true };
+});
+function connectActiveNet() {
+  if (activeNet.value) connection.setConnected(activeNet.value.id, true);
+}
+
 // The "new messages" divider renders just above this message (identity
 // compared against the row's message). null = no divider for this buffer.
 const markerMsg = computed(() => buffer.value?.unreadMarker ?? null);
@@ -318,10 +331,62 @@ function memberTitle(mem: MemberDTO): string {
 let stick = true;
 let prependHeight = 0;
 let lastScrollTop = 0;
+
+// "New messages below" pill. atBottom mirrors the scroll position reactively;
+// farUp means more than a screenful above the tail (worth a way back even
+// when nothing new arrived); newBelow counts chat lines that landed while
+// the user was reading history. lastTail is the newest message we've
+// accounted for, so the count only grows by genuinely new arrivals.
+const atBottom = ref(true);
+const farUp = ref(false);
+const newBelow = ref(0);
+let lastTail: MessageDTO | null = null;
+const COUNTED_KINDS = new Set(["privmsg", "notice", "action"]);
+
+function trackPosition(el: HTMLElement) {
+  const gap = el.scrollHeight - el.clientHeight - el.scrollTop;
+  atBottom.value = gap <= 40;
+  farUp.value = gap > el.clientHeight;
+  if (atBottom.value) newBelow.value = 0;
+}
+
+// countArrivals runs before each re-render of the log. A message we sent
+// ourselves snaps back to the bottom (you want to see your own line land);
+// anything else while scrolled up just bumps the pill's count.
+function countArrivals() {
+  const msgs = buffer.value?.messages ?? [];
+  const tail = msgs[msgs.length - 1] ?? null;
+  if (tail && lastTail && tail !== lastTail && !stick && prependHeight === 0) {
+    const i = msgs.lastIndexOf(lastTail);
+    if (i >= 0) {
+      const fresh = msgs.slice(i + 1);
+      if (fresh.some((m) => m.self)) stick = true;
+      else newBelow.value += fresh.filter((m) => COUNTED_KINDS.has(m.kind)).length;
+    }
+  }
+  lastTail = tail;
+}
+
+const showNewBelow = computed(
+  () => !atBottom.value && (newBelow.value > 0 || farUp.value || !!buffer.value?.windowed),
+);
+
+function jumpToLatest() {
+  if (buffer.value?.windowed) {
+    backToLatest();
+    return;
+  }
+  stick = true;
+  const el = listEl.value;
+  if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  newBelow.value = 0;
+}
+
 function onScroll() {
   const el = listEl.value;
   if (!el) return;
   const st = el.scrollTop;
+  trackPosition(el);
   if (st + el.clientHeight >= el.scrollHeight - 40) {
     // At (or near) the bottom — follow the tail. Also re-engages when the user
     // scrolls back down to it.
@@ -344,7 +409,11 @@ function onScroll() {
 }
 function scrollToBottom() {
   const el = listEl.value;
-  if (el) el.scrollTop = el.scrollHeight;
+  if (!el) return;
+  el.scrollTop = el.scrollHeight;
+  atBottom.value = true;
+  farUp.value = false;
+  newBelow.value = 0;
 }
 function loadOlder() {
   const buf = buffer.value;
@@ -375,6 +444,7 @@ watch(
   // run this handler to disarm prependHeight.
   () => [buffer.value?.messages, buffer.value?.messages.length, buffer.value?.backlogPending] as const,
   async () => {
+    countArrivals();
     await nextTick();
     const el = listEl.value;
     if (!el) return;
@@ -399,6 +469,9 @@ watch(
   () => [store.view, store.active && `${store.active.network} ${store.active.buffer}`].join(),
   async () => {
     stick = true;
+    newBelow.value = 0;
+    const msgs = buffer.value?.messages ?? [];
+    lastTail = msgs[msgs.length - 1] ?? null;
     await nextTick();
     if (store.jump && jumpMatchesActive()) {
       tryJump();
@@ -500,10 +573,27 @@ function memberForNick(nick: string): MemberDTO {
 // MessageItem can wire them onto sender nicks without inheriting the
 // whole memberCtx state object. Same set of handlers as the user list.
 provide("nickCtx", {
+  // Left-click opens the same menu (TheLounge/Discord habit); Shift-click
+  // addresses the nick in the input instead.
+  onClick: (nick: string, ev: MouseEvent) => {
+    if (memberCtx.shouldSuppressClick()) return; // a long-press already opened it
+    if (ev.shiftKey) {
+      ev.preventDefault();
+      inputRef.value?.insertNick(nick);
+      return;
+    }
+    memberCtx.open(memberForNick(nick), ev.clientX, ev.clientY);
+  },
   onContext: (nick: string, ev: MouseEvent) => memberCtx.onContext(memberForNick(nick), ev),
   onTouchStart: (nick: string, ev: TouchEvent) => memberCtx.onTouchStart(memberForNick(nick), ev),
   onTouchMove: memberCtx.onTouchMove,
   cancelLp: memberCtx.cancelLp,
+});
+
+// The composer actions MessageItem's hover toolbar offers (Reply / Quote).
+provide("composer", {
+  reply: (nick: string) => inputRef.value?.insertNick(nick),
+  quote: (nick: string, body: string) => inputRef.value?.quoteLine(nick, body),
 });
 
 // hasMode returns true if the member carries the named prefix in their
@@ -577,21 +667,40 @@ function ctxMode(flag: "o" | "h" | "v") {
   connection.send(store.active.network, store.active.buffer, `/${cmdName} ${m.nick}`);
   memberCtx.close();
 }
-function ctxKick() {
-  const m = memberCtx.state.value?.payload;
-  if (!m || !activeChannel() || !store.active) return;
-  connection.send(store.active.network, store.active.buffer, `/kick ${m.nick}`);
+// Kick and Kick + Ban don't fire straight from the menu: they open a small
+// confirm popover in its place, with an optional reason. It reuses the
+// context-menu plumbing, so a click outside or Escape cancels it.
+const kickCtx = useContextMenu<{ nick: string; ban: boolean; channel: string }>({ width: 260, height: 170 });
+const kickReason = ref("");
+const kickReasonEl = ref<HTMLInputElement | null>(null);
+function askKick(ban: boolean) {
+  const st = memberCtx.state.value;
+  const chan = activeChannel();
+  if (!st || !chan) return;
   memberCtx.close();
+  kickReason.value = "";
+  kickCtx.open({ nick: st.payload.nick, ban, channel: chan }, st.x, st.y);
+  nextTick(() => kickReasonEl.value?.focus());
+}
+function ctxKick() {
+  askKick(false);
 }
 function ctxKickBan() {
-  const m = memberCtx.state.value?.payload;
-  const chan = activeChannel();
-  if (!m || !chan || !store.active) return;
+  askKick(true);
+}
+function confirmKick() {
+  const p = kickCtx.state.value?.payload;
+  if (!p || !store.active) return;
+  const reason = kickReason.value.trim();
   // Bare-nick ban mask; user can refine with /ban manually for tighter
   // user@host masks. MODE +b before KICK so a rejoin can't race.
-  connection.send(store.active.network, store.active.buffer, `/ban ${m.nick}!*@*`);
-  connection.send(store.active.network, store.active.buffer, `/kick ${m.nick}`);
-  memberCtx.close();
+  if (p.ban) connection.send(store.active.network, p.channel, `/ban ${p.nick}!*@*`);
+  connection.send(store.active.network, p.channel, `/kick ${p.nick}${reason ? " " + reason : ""}`);
+  kickCtx.close();
+}
+function ctxIsIgnored(): boolean {
+  const m = memberCtx.state.value?.payload;
+  return !!m && !!store.active && connection.isIgnored(store.active.network, m.nick);
 }
 
 // Auto-focus the chat input when the user starts typing somewhere else in
@@ -634,6 +743,7 @@ onMounted(() => {
   if ("ResizeObserver" in window) {
     contentRO = new ResizeObserver(() => {
       if (stick && !(store.jump && jumpMatchesActive())) scrollToBottom();
+      else if (listEl.value) trackPosition(listEl.value);
       recomputeRemaining();
     });
     if (contentEl.value) contentRO.observe(contentEl.value);
@@ -718,7 +828,12 @@ function applyFilterHint(prefix: string) {
         @dragleave.prevent="dragging = false"
         @drop.prevent="onDrop"
       >
-        <div ref="listEl" class="messages" @scroll="onScroll">
+        <div class="log-col">
+        <div v-if="netDown" class="net-down-strip" role="status">
+          <span>{{ netDown.text }}</span>
+          <button v-if="netDown.canConnect" type="button" class="ghost" @click="connectActiveNet">Connect</button>
+        </div>
+        <div ref="listEl" class="messages" role="log" aria-live="polite" aria-relevant="additions" @scroll="onScroll">
           <div ref="contentEl" class="messages-content">
             <button v-if="buffer?.more" class="load-older" @click="loadOlder">Load older messages</button>
             <template v-for="(r, i) in rows" :key="r.msg?.id || (r.events && foldKey(r.events)) || i">
@@ -747,6 +862,21 @@ function applyFilterHint(prefix: string) {
             ↑ {{ remaining }} new message{{ remaining === 1 ? "" : "s" }} — jump to first unread
           </button>
           <button type="button" class="unread-jump-x" aria-label="Dismiss" @click="dismissMarker"><Icon name="x" :size="14" /></button>
+        </div>
+        <button
+          v-if="showNewBelow"
+          type="button"
+          class="new-below"
+          :class="{ fresh: newBelow > 0 }"
+          @click="jumpToLatest"
+        >
+          <Icon name="chevron-down" :size="14" />
+          <span v-if="newBelow > 0">{{ newBelow }} new message{{ newBelow === 1 ? "" : "s" }}</span>
+          <span v-else>Jump to latest</span>
+        </button>
+        <!-- Overlays the log's bottom edge (the log reserves room for it), so
+             someone starting or stopping typing never resizes the chat. -->
+        <div v-if="typingText" class="typing-indicator" aria-live="off">{{ typingText }}</div>
         </div>
         <aside v-if="members.length" class="members" :class="{ open: ui.membersOpen }">
           <div class="members-head">{{ members.length.toLocaleString() }} users</div>
@@ -791,8 +921,8 @@ function applyFilterHint(prefix: string) {
         >
           <div class="ctx-header">{{ memberCtx.state.value.payload.nick }}</div>
           <button class="ctx-item" type="button" @click="ctxWhois">WHOIS</button>
-          <button class="ctx-item" type="button" @click="ctxIgnore">Ignore</button>
-          <button class="ctx-item" type="button" @click="ctxUnignore">Unignore</button>
+          <button v-if="ctxIsIgnored()" class="ctx-item" type="button" @click="ctxUnignore">Unignore</button>
+          <button v-else class="ctx-item" type="button" @click="ctxIgnore">Ignore</button>
           <button class="ctx-item" type="button" @click="ctxDM">Open DM</button>
           <button class="ctx-item" type="button" @click="ctxFriend">
             {{ isFriended(memberCtx.state.value.payload.nick) ? "Remove from friends" : "Add to friends" }}
@@ -808,13 +938,39 @@ function applyFilterHint(prefix: string) {
             {{ hasMode(memberCtx.state.value.payload, 'v') ? "−v (devoice)" : "+v (voice)" }}
           </button>
           <div class="ctx-sep"></div>
-          <button class="ctx-item" type="button" :disabled="!activeChannel()" @click="ctxKick">Kick</button>
-          <button class="ctx-item danger" type="button" :disabled="!activeChannel()" @click="ctxKickBan">Kick + Ban</button>
+          <button class="ctx-item" type="button" :disabled="!activeChannel()" @click="ctxKick">Kick…</button>
+          <button class="ctx-item danger" type="button" :disabled="!activeChannel()" @click="ctxKickBan">Kick + Ban…</button>
         </div>
+
+        <form
+          v-if="kickCtx.state.value"
+          class="ctx-menu kick-prompt"
+          :style="{ left: kickCtx.state.value.x + 'px', top: kickCtx.state.value.y + 'px' }"
+          role="dialog"
+          :aria-label="kickCtx.state.value.payload.ban ? 'Kick and ban' : 'Kick'"
+          @submit.prevent="confirmKick"
+        >
+          <div class="ctx-header">
+            {{ kickCtx.state.value.payload.ban ? "Kick + ban" : "Kick" }} {{ kickCtx.state.value.payload.nick }} from {{ kickCtx.state.value.payload.channel }}
+          </div>
+          <p v-if="kickCtx.state.value.payload.ban" class="kick-note">Bans <code>{{ kickCtx.state.value.payload.nick }}!*@*</code></p>
+          <input
+            ref="kickReasonEl"
+            v-model="kickReason"
+            type="text"
+            class="kick-reason"
+            placeholder="Reason (optional)"
+            aria-label="Kick reason"
+            maxlength="300"
+          />
+          <div class="kick-actions">
+            <button type="button" class="ctx-item" @click="kickCtx.close()">Cancel</button>
+            <button type="submit" class="ctx-item danger">{{ kickCtx.state.value.payload.ban ? "Kick + Ban" : "Kick" }}</button>
+          </div>
+        </form>
         <div v-if="dragging" class="dropzone">Drop files to upload</div>
       </div>
 
-      <div v-if="typingText" class="typing-indicator">{{ typingText }}</div>
       <ChatInput
         ref="inputRef"
         :network="store.active?.network ?? ''"

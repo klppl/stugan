@@ -14,6 +14,49 @@ const showAdd = ref(false);
 const settingsFor = ref<string | null>(null);
 const keyDialogFor = ref<{ network: string; buffer: string } | null>(null);
 
+// Per-network IRC link state, shown as a dot before the network name. The
+// footer pill is only the browser↔stugan socket; this is stugan↔IRC.
+const NET_STATE_LABEL: Record<string, string> = {
+  registered: "connected",
+  connecting: "connecting…",
+  disconnected: "disconnected",
+};
+function netStateClass(net: Network): string {
+  if (store.status !== "open") return "unknown";
+  return net.state === "registered" ? "up" : net.state === "connecting" ? "connecting" : "down";
+}
+function netStateLabel(net: Network): string {
+  return NET_STATE_LABEL[net.state] ?? net.state;
+}
+
+// Inline "join a channel" field under a network (the + in its header).
+const joinFor = ref<string | null>(null);
+const joinName = ref("");
+const joinEl = ref<HTMLInputElement[] | HTMLInputElement | null>(null);
+function openJoin(net: Network) {
+  joinFor.value = joinFor.value === net.id ? null : net.id;
+  joinName.value = "";
+  nextTick(() => {
+    const el = Array.isArray(joinEl.value) ? joinEl.value[0] : joinEl.value;
+    el?.focus();
+  });
+}
+function submitJoin(net: Network) {
+  let name = joinName.value.trim();
+  if (!name) {
+    joinFor.value = null;
+    return;
+  }
+  if (!/^[#&+!]/.test(name)) name = "#" + name;
+  const status = statusBuf(net)?.name ?? STATUS;
+  if (connection.send(net.id, status, "/join " + name)) {
+    // Land on the channel as soon as the server confirms the join.
+    connection.navigateTo(net.id, name);
+    joinFor.value = null;
+    if (ui.isMobile) closeDrawers();
+  }
+}
+
 const ctx = useContextMenu<{ network: string; buffer: string; kind: string }>({ height: 180 });
 // Separate menu for friend rows: right-click (or long-press) to DM or remove.
 const friendCtx = useContextMenu<{ network: string; nick: string }>({ height: 80 });
@@ -265,7 +308,14 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
         @dragend="clearDrag"
         title="server status — click to open; drag to reorder; gear for network settings"
       >
-        <span class="net-label">{{ net.name }} <span class="nick">({{ net.nick }})</span></span>
+        <span class="net-label">
+          <span
+            class="net-dot"
+            :class="netStateClass(net)"
+            role="img"
+            :aria-label="netStateLabel(net)"
+            :title="`${net.name}: ${netStateLabel(net)}`"
+          />{{ net.name }} <span class="nick">({{ net.nick }})</span></span>
         <span class="net-right">
           <span
             v-if="statusBuf(net) && statusBuf(net)!.unread > 0 && !isActive(net.id, STATUS)"
@@ -276,6 +326,14 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
           <button
             type="button"
             class="net-gear"
+            :aria-label="`Join a channel on ${net.name}`"
+            title="join a channel"
+            @click.stop="openJoin(net)"
+            @keydown.stop
+          ><Icon name="plus" :size="14" /></button>
+          <button
+            type="button"
+            class="net-gear"
             :aria-label="`${net.name} network settings`"
             title="network settings"
             @click.stop="settingsFor = net.id"
@@ -283,7 +341,21 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
           ><Icon name="settings" :size="14" /></button>
         </span>
       </div>
-      <ul class="buffers">
+      <form v-if="joinFor === net.id" class="join-row" @submit.prevent="submitJoin(net)">
+        <input
+          ref="joinEl"
+          v-model="joinName"
+          type="text"
+          placeholder="#channel"
+          :aria-label="`Channel to join on ${net.name}`"
+          autocomplete="off"
+          spellcheck="false"
+          @keydown.escape.stop="joinFor = null"
+          @blur="!joinName.trim() && (joinFor = null)"
+        />
+        <button type="submit" class="ghost">Join</button>
+      </form>
+      <ul class="buffers" :class="{ 'net-offline': netStateClass(net) === 'down' || netStateClass(net) === 'connecting' }">
         <li
           v-for="buf in channelBuffers(net)"
           :key="buf.name"
@@ -292,6 +364,8 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
             active: isActive(net.id, buf.name),
             [buf.kind]: true,
             muted: connection.isMuted(bufKey(net.id, buf.name)),
+            unread: buf.unread > 0 && !isActive(net.id, buf.name),
+            mentioned: buf.highlight > 0 && !isActive(net.id, buf.name),
             'drop-before': hintFor(bufDropKey(net, buf)) === 'before',
             'drop-after': hintFor(bufDropKey(net, buf)) === 'after',
           }"
@@ -317,7 +391,11 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
         >
           <span v-if="isEncrypted(buf)" class="lock-icon" :title="`encrypted (${buf.state.encrypted})`"><Icon name="lock" :size="13" /></span>
           <span class="buf-name">{{ buf.name }}</span>
-          <span v-if="connection.isMuted(bufKey(net.id, buf.name))" class="mute-icon" title="muted"><Icon name="mute" :size="14" /></span>
+          <span
+            v-if="connection.isMuted(bufKey(net.id, buf.name)) && !(buf.highlight > 0 && !isActive(net.id, buf.name))"
+            class="mute-icon"
+            title="muted"
+          ><Icon name="mute" :size="14" /></span>
           <span
             v-else-if="buf.unread > 0 && !isActive(net.id, buf.name)"
             class="badge"
@@ -353,7 +431,7 @@ function onBufDrop(net: Network, buf: Buffer, e: DragEvent) {
       </ul>
     </div>
 
-    <button class="add-network" @click="showAdd = true">+ Add network</button>
+    <button class="add-network" @click="showAdd = true"><Icon name="plus" :size="13" /> Add network</button>
     <AddNetwork v-if="showAdd" @close="showAdd = false" />
     <NetworkSettings v-if="settingsFor" :network="settingsFor" @close="settingsFor = null" />
     <EncryptionKey

@@ -17,7 +17,7 @@ const QUICK_REACTS = ["👍", "❤️", "😂", "🎉", "😮", "😢"];
 const showReactPicker = ref(false);
 const senderTitle = computed(() => {
   const account = props.msg.account ? `account: ${props.msg.account} · ` : "";
-  return `${account}right-click (or long-press) for nick options`;
+  return `${account}click for nick options · shift-click to address`;
 });
 
 // Reactions for this message (keyed by network, buffer, and msgid). Returns one entry per
@@ -50,6 +50,45 @@ const canReact = computed(
 const canRedact = computed(
   () => interactive.value && props.msg.self && connection.hasNetCap(props.msg.network, "draft/message-redaction"),
 );
+
+// Reply / Quote go through the composer ChatView provides; outside the live
+// chat (digest, mention rows) there is none and the buttons stay hidden.
+interface Composer {
+  reply: (nick: string) => void;
+  quote: (nick: string, body: string) => void;
+}
+const composer = inject<Composer | null>("composer", null);
+const canCompose = computed(
+  () => !!composer && !props.showBuffer && ["privmsg", "notice", "action"].includes(props.msg.kind),
+);
+function doReply() {
+  composer?.reply(props.msg.from);
+}
+function doQuote() {
+  const body = stripFormatting(props.msg.text);
+  composer?.quote(props.msg.from, props.msg.kind === "action" ? `* ${props.msg.from} ${body}` : body);
+}
+
+// Deleting is two clicks: the first arms the button (it turns into a red
+// "Delete?"), the second sends the redaction. It disarms on its own after a
+// few seconds or when the pointer leaves the message.
+const confirmDelete = ref(false);
+let disarmTimer: ReturnType<typeof setTimeout> | undefined;
+function onDeleteClick() {
+  if (!confirmDelete.value) {
+    confirmDelete.value = true;
+    clearTimeout(disarmTimer);
+    disarmTimer = setTimeout(() => (confirmDelete.value = false), 4000);
+    return;
+  }
+  clearTimeout(disarmTimer);
+  confirmDelete.value = false;
+  doRedact();
+}
+function disarmDelete() {
+  clearTimeout(disarmTimer);
+  confirmDelete.value = false;
+}
 
 function toggleReact(emoji: string) {
   showReactPicker.value = false;
@@ -136,12 +175,14 @@ function host(u: string): string {
 // component still renders if used in a context without the provider
 // (e.g. unit tests).
 interface NickCtx {
+  onClick: (nick: string, ev: MouseEvent) => void;
   onContext: (nick: string, ev: MouseEvent) => void;
   onTouchStart: (nick: string, ev: TouchEvent) => void;
   onTouchMove: (ev: TouchEvent) => void;
   cancelLp: () => void;
 }
 const nickCtx = inject<NickCtx>("nickCtx", {
+  onClick: () => {},
   onContext: () => {},
   onTouchStart: () => {},
   onTouchMove: () => {},
@@ -166,6 +207,7 @@ function onLinkClick(url: string, e: MouseEvent) {
     class="message"
     :class="[msg.kind, { highlight: msg.highlight, self: msg.self, cont }]"
     :data-msgid="msg.id || undefined"
+    @mouseleave="disarmDelete"
   >
     <span class="ts">{{ time(msg.time) }}</span>
     <span v-if="showBuffer" class="loc">{{ msg.buffer }}</span>
@@ -180,6 +222,7 @@ function onLinkClick(url: string, e: MouseEvent) {
           :class="{ self: msg.self }"
           :style="{ color: fromColor(msg.from) }"
           :title="senderTitle"
+          @click="nickCtx.onClick(msg.from, $event)"
           @contextmenu="nickCtx.onContext(msg.from, $event)"
           @touchstart.passive="nickCtx.onTouchStart(msg.from, $event)"
           @touchmove.passive="nickCtx.onTouchMove($event)"
@@ -214,6 +257,7 @@ function onLinkClick(url: string, e: MouseEvent) {
         :class="{ self: msg.self }"
         :style="{ color: fromColor(msg.from) }"
         :title="senderTitle"
+        @click="nickCtx.onClick(msg.from, $event)"
         @contextmenu="nickCtx.onContext(msg.from, $event)"
         @touchstart.passive="nickCtx.onTouchStart(msg.from, $event)"
         @touchmove.passive="nickCtx.onTouchMove($event)"
@@ -285,9 +329,19 @@ function onLinkClick(url: string, e: MouseEvent) {
     </div>
 
     <!-- hover toolbar: react / delete -->
-    <span v-if="canReact || canRedact" class="msg-actions">
+    <span v-if="canReact || canRedact || canCompose" class="msg-actions" :class="{ armed: confirmDelete }">
+      <button v-if="canCompose && !msg.self" type="button" class="msg-act msg-act-text" title="Reply (address this nick)" @click="doReply">Reply</button>
+      <button v-if="canCompose" type="button" class="msg-act msg-act-text" title="Quote this line" @click="doQuote">Quote</button>
       <button v-if="canReact" type="button" class="msg-act" title="Add reaction" aria-label="Add reaction" @click="showReactPicker = !showReactPicker"><Icon name="smile-plus" :size="15" /></button>
-      <button v-if="canRedact" type="button" class="msg-act danger" title="Delete message" aria-label="Delete message" @click="doRedact"><Icon name="trash" :size="15" /></button>
+      <button
+        v-if="canRedact"
+        type="button"
+        class="msg-act danger"
+        :class="{ confirm: confirmDelete }"
+        :title="confirmDelete ? 'Click again to delete for everyone' : 'Delete message'"
+        :aria-label="confirmDelete ? 'Confirm delete' : 'Delete message'"
+        @click="onDeleteClick"
+      ><Icon name="trash" :size="15" /><span v-if="confirmDelete" class="msg-act-confirm">Delete?</span></button>
       <span v-if="showReactPicker" class="react-picker">
         <button v-for="e in QUICK_REACTS" :key="e" type="button" @click="toggleReact(e)">{{ e }}</button>
       </span>

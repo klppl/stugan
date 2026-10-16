@@ -4,7 +4,7 @@
 // the protocol/store layer.
 
 import { onMounted, onUnmounted, reactive } from "vue";
-import { connection } from "./connection";
+import { connection, foldTarget } from "./connection";
 import { proxied } from "./links";
 
 export interface ActiveImage {
@@ -31,7 +31,74 @@ export const ui = reactive({
   // hidden by the "Show top bar" setting.
   browseNet: null as string | null,
   inspectorOpen: false,
+  shortcutsOpen: false,
 });
+
+// macOS uses Option (Alt) to type characters — on Swedish/German/French
+// layouts Option+2 is "@" and Option+8/9 are brackets — so the Alt+digit and
+// Alt+A buffer shortcuts would eat real text there. Mac gets Ctrl+digit
+// instead; Alt+Shift+↑/↓ works everywhere.
+export const isMac =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+export const NUM_MOD = isMac ? "Ctrl" : "Alt";
+
+export interface BufRef {
+  network: string;
+  buffer: string;
+}
+
+// bufferOrder is the sidebar order flattened: each network's status buffer
+// (its header row), then its channels and queries. Alt+↑/↓, Alt+1–9 and
+// next-unread all walk this list.
+export function bufferOrder(): BufRef[] {
+  return connection.store.networks.flatMap((n) =>
+    [...n.buffers.filter((b) => b.kind === "status"), ...n.buffers.filter((b) => b.kind !== "status")].map((b) => ({
+      network: n.id,
+      buffer: b.name,
+    })),
+  );
+}
+
+function activeIndex(order: BufRef[]): number {
+  const a = connection.store.active;
+  if (!a) return -1;
+  const f = foldTarget(a.buffer);
+  return order.findIndex((o) => o.network === a.network && foldTarget(o.buffer) === f);
+}
+
+// stepBuffer moves to the previous/next buffer in sidebar order, wrapping.
+export function stepBuffer(dir: 1 | -1) {
+  const order = bufferOrder();
+  if (!order.length) return;
+  const cur = activeIndex(order);
+  const next = order[(cur + dir + order.length) % order.length];
+  connection.select(next.network, next.buffer);
+}
+
+// selectNth opens the nth buffer (0-based) in sidebar order, if there is one.
+export function selectNth(i: number) {
+  const b = bufferOrder()[i];
+  if (b) connection.select(b.network, b.buffer);
+}
+
+// nextUnread jumps to the next buffer (in sidebar order from the current one,
+// wrapping; dir -1 walks backwards) that needs attention — buffers that
+// mention you first, then any with unread activity. Returns false when
+// everything is read.
+export function nextUnread(dir: 1 | -1 = 1): boolean {
+  const order = bufferOrder();
+  const n = order.length;
+  if (!n) return false;
+  const cur = activeIndex(order);
+  const walk: BufRef[] = [];
+  for (let k = 1; k <= n; k++) walk.push(order[(((cur + dir * k) % n) + n) % n]);
+  const bufOf = (r: BufRef) =>
+    connection.store.networks.find((x) => x.id === r.network)?.buffers.find((b) => b.name === r.buffer);
+  const pick = walk.find((r) => (bufOf(r)?.highlight ?? 0) > 0) ?? walk.find((r) => (bufOf(r)?.unread ?? 0) > 0);
+  if (!pick) return false;
+  connection.select(pick.network, pick.buffer);
+  return true;
+}
 
 // Reset drawer/panel state on a viewport-class change so neither side
 // inherits a stale "open" value across breakpoints. Going to mobile closes

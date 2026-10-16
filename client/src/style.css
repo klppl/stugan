@@ -992,6 +992,13 @@ body {
   font-weight: 600;
   flex-shrink: 0;
 }
+.messages-content .message .from {
+  cursor: pointer;
+}
+.messages-content .message .from:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 /* Custom context-menu targets must not also trigger iOS/Android's native copy
    callout. Scope this to the interactive row/nick only so surrounding message
    text remains selectable; pan-y preserves normal vertical scrolling. */
@@ -1119,8 +1126,22 @@ body {
   border-radius: 6px;
   padding: 1px;
 }
-.message:hover .msg-actions {
+.message:hover .msg-actions,
+.msg-actions.armed {
   display: inline-flex;
+}
+.msg-act-text {
+  font-size: 0.78em;
+  padding: 1px 7px;
+}
+.msg-act.danger.confirm {
+  color: #fff;
+  background: var(--hl);
+  gap: 4px;
+}
+.msg-act-confirm {
+  font-size: 0.85em;
+  font-weight: 600;
 }
 .msg-act {
   display: inline-flex;
@@ -1372,12 +1393,25 @@ body {
 }
 
 /* Input + autocomplete */
+/* Typing indicator floats over the bottom edge of the log (which keeps room
+   for it, see .log-col .messages), so it never resizes the chat. */
 .typing-indicator {
-  padding: 2px 16px;
+  position: absolute;
+  left: 8px;
+  bottom: 2px;
+  max-width: calc(100% - 16px);
+  padding: 1px 8px;
+  border-radius: 4px;
   font-size: 12px;
   font-style: italic;
   color: var(--fg-dim);
-  background: var(--bg-alt);
+  background: var(--bg);
+  box-shadow: 0 0 6px 4px var(--bg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 4;
 }
 .chat-input {
   display: flex;
@@ -2245,20 +2279,22 @@ body {
   margin: 4px 0;
 }
 .add-network {
-  display: block;
-  width: calc(100% - 24px);
-  margin: 12px;
-  padding: 10px;
-  border: 1px dashed var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 8px;
+  padding: 4px 8px;
+  border: none;
   border-radius: 4px;
   background: transparent;
   color: var(--fg-dim);
   cursor: pointer;
-  font-size: 14px;
+  font: inherit;
+  font-size: 13px;
 }
 .add-network:hover {
   color: var(--fg);
-  border-color: var(--accent);
+  background: var(--bg-alt);
 }
 .addnet .row input[type="text"],
 .addnet .row input:not([type]),
@@ -2850,5 +2886,194 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Log column: messages plus the overlays pinned to it (jump bars, typing).
+   Wrapping them keeps the overlays off the member list on desktop. */
+.log-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.log-col .messages {
+  min-height: 0;
+  /* Room for the floating typing indicator, reserved always so it appearing
+     never moves anything. */
+  padding-bottom: 22px;
+}
+
+/* "↓ N new messages" — bottom-right of the log while scrolled up. */
+.new-below {
+  position: absolute;
+  right: 16px;
+  bottom: 26px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.85em;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+.new-below:hover {
+  border-color: var(--accent);
+}
+.new-below.fresh {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* Network down / reconnecting, across the top of the log. */
+.net-down-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  font-size: 0.85em;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--hl) 16%, var(--bg-alt));
+  border-bottom: 1px solid color-mix(in srgb, var(--hl) 40%, transparent);
+}
+.net-down-strip span {
+  flex: 1;
+  min-width: 0;
+}
+.net-down-strip button {
+  padding: 2px 10px;
+}
+
+/* Composer while the network or the stugan socket is down. */
+.chat-input.offline textarea {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--bg) 70%, var(--bg-alt));
+}
+.chat-input.offline textarea::placeholder {
+  color: var(--hl);
+  opacity: 0.85;
+}
+.chat-input.offline button[type="submit"] {
+  opacity: 0.5;
+}
+
+.autocomplete-foot {
+  padding: 6px 10px 2px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+/* Kick confirm popover (reuses .ctx-menu chrome). */
+.kick-prompt {
+  min-width: 260px;
+  max-width: 280px;
+  gap: 6px;
+}
+.kick-note {
+  margin: 0 10px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.kick-reason {
+  margin: 0 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-alt);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+.kick-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.kick-actions .ctx-item {
+  text-align: center;
+}
+.kick-actions .ctx-item.danger {
+  font-weight: 600;
+}
+
+/* Sidebar: per-network IRC link state. */
+.net-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  vertical-align: middle;
+  background: var(--fg-dim);
+  opacity: 0.6;
+}
+.net-dot.up {
+  background: var(--self);
+  opacity: 1;
+}
+.net-dot.connecting {
+  background: #f59e0b;
+  opacity: 1;
+  animation: net-pulse 1.2s ease-in-out infinite;
+}
+.net-dot.down {
+  background: var(--hl);
+  opacity: 1;
+}
+@keyframes net-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.buffers.net-offline li:not(.active) {
+  opacity: 0.5;
+}
+/* Unread channels read brighter and bolder; mentions take the highlight
+   colour, so the list can be scanned without reading the badges. */
+.buffers li.unread .buf-name {
+  color: var(--fg);
+  font-weight: 600;
+}
+.buffers li.mentioned .buf-name {
+  color: var(--hl);
+}
+
+/* Inline "join a channel" field under a network header. */
+.join-row {
+  display: flex;
+  gap: 6px;
+  padding: 2px 12px 6px 16px;
+}
+.join-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+.join-row button {
+  padding: 2px 10px;
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .net-dot.connecting {
+    animation: none;
   }
 }
