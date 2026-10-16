@@ -36,7 +36,9 @@ Features built on top:
   reactions on a message by msgid. Inbound toggles a chip; a hover palette
   and chip clicks send them. Ephemeral (session-lived), not persisted.
 - **Message redaction** (`draft/message-redaction`) — a hover ✕ on your own
-  messages sends `REDACT`; inbound `REDACT` removes the message from the view.
+  messages sends `REDACT`; inbound `REDACT` removes the message from the view
+  and deletes it from SQLite history (by msgid), so it stays gone after a
+  reload and from search.
 - **Typing** (`+typing` TAGMSG) — typing indicators.
 - **Friends / MONITOR** (`MONITOR`, numerics 730/731) — a per-network friends
   list (`NetworkParams.Monitor`, persisted) re-armed with `MONITOR +` on each
@@ -54,21 +56,17 @@ Features built on top:
 
 ## Roadmap (must-haves, prioritized)
 
-1. **Redaction persistence.** Today a `REDACT` only removes the live copy;
-   the message still sits in the SQLite history and returns on reload. Delete
-   (or tombstone) by msgid in `internal/store` so redactions survive.
-
-3. **SASL SCRAM** (`SCRAM-SHA-256`). We do PLAIN and EXTERNAL/CertFP; SCRAM
+1. **SASL SCRAM** (`SCRAM-SHA-256`). We do PLAIN and EXTERNAL/CertFP; SCRAM
    avoids sending the password even once. Depends on girc support.
 
-4. **`draft/chathistory` depth** — `CHATHISTORY TARGETS`, proper pagination
+2. **`draft/chathistory` depth** — `CHATHISTORY TARGETS`, proper pagination
    (BEFORE/AFTER/BETWEEN), and unread sync, to lean on server history where
    available instead of only the local SQLite backlog.
 
-5. **Surface `chghost` / `setname`** — we negotiate them but don't reflect
+3. **Surface `chghost` / `setname`** — we negotiate them but don't reflect
    host/realname changes anywhere user-visible.
 
-6. **`soju.im/bouncer-networks`** — manage bouncer-side networks from the UI
+4. **`soju.im/bouncer-networks`** — manage bouncer-side networks from the UI
    when connected through soju.
 
 Lower priority / nice-to-have: `utf8only`, `draft/channel-rename`,

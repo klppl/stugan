@@ -75,6 +75,9 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `aliases:set`   | `AliasTable`   | replace the command aliases table |
 | `settings:set`  | `SettingsPayload` | update user UI preferences (theme, font size, previews, etc.) |
 | `buf:close`     | `BufClose`     | close a query/DM buffer (server drops it and re-broadcasts `net:update`; channels use `/part`) |
+| `buf:reorder`   | `BufReorder`   | set the manual buffer order within a network (status buffer may be omitted) |
+| `monitor:add`   | `MonitorRef`   | add a nick to a network's friends list (`MONITOR +`, persisted) |
+| `monitor:remove`| `MonitorRef`   | remove a nick from a network's friends list |
 | `presence`      | `Presence`     | report whether this browser tab is visible, for push-notification suppression |
 | `ping`          | (none)         | app-level liveness probe; answered with `pong` (see below) |
 
@@ -88,6 +91,7 @@ The actor field is omitted on c2s and filled by the server on s2c.
 | `react`     | `React`   | toggle a reaction | someone reacted (adds `nick`) |
 | `redact`    | `Redact`  | delete a message | a message was redacted (adds `by`) |
 | `net:remove`| `NetRemove` | remove a network | confirm removal |
+| `net:reorder`| `NetReorder` | set the manual network order | the new order, broadcast to the user's tabs |
 | `mute`      | `MuteSet` | set a buffer's muted state | the persisted state, broadcast to the user's tabs |
 
 ## State DTOs

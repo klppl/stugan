@@ -87,7 +87,12 @@ func (e *Engine) loop(ctx context.Context) {
     for {
         select {
         case <-ctx.Done(): return
-        case ev := <-e.events: e.handle(ctx, ev)
+        case ev := <-e.events:
+            e.handle(ctx, ev)
+            if len(e.events) == 0 || time.Since(lastFlush) >= maxNotifyDelay {
+                e.flushDirty()                // one snapshot per changed network
+            }
+        case <-e.kick: e.flushDirty()          // off-loop changes (plugin prints…)
         }
     }
 }
@@ -107,7 +112,17 @@ mutation never races. The pipeline per event is:
    the buffer lines to emit. Highlight matching for inbound messages happens
    here.
 4. **Sink fan-out** — happens *after* the lock is released, so I/O never blocks
-   mutation.
+   mutation. Buffer lines (`Print`) go out immediately; event-driven structural changes only
+   mark the network **dirty**.
+
+**Snapshot coalescing.** `NetworkChanged` is not sent once per event (explicit
+network add/edit/connect calls still notify directly). Changed
+network ids accumulate in a dirty set, and `flushDirty` pushes one fresh
+deep-copied snapshot per dirty network when the event queue drains, or at least
+every `maxNotifyDelay` (250ms) under sustained load. A netsplit or join burst
+therefore costs one deep copy and one `net:update` frame per network, not one
+per QUIT. Changes made off the loop (plugin prints, background goroutines) wake
+an idle loop through `kick`.
 
 ### Concurrency
 
@@ -198,16 +213,23 @@ type Sink interface {
     Print(m Message)                                       // a new buffer line
     NetworkChanged(n *Network)                             // structure changed
     NetworkRemoved(networkID string)                       // network dropped
+    NetworksReordered(networkIDs []string)                 // manual sidebar order
     ChannelList(network string, items []ChannelListItem)   // LIST result
     Typing(network, buffer, nick, state string)            // typing notification
     React(network, buffer, target, nick, reaction string)  // emoji reaction
     Redact(network, buffer, target, nick, reason string)   // message removed
+    ReadMarker(network, buffer string, ts time.Time)       // read marker advanced
 }
 ```
 
 Sinks are called synchronously from the engine loop and **must not block** —
-marshal/enqueue and return. Implemented by `logSink` (terminal), `store.Store`
-(persistence), and `server`'s per-user `userSink`. **Adding a Sink method means
+marshal/enqueue and return. The heavier sinks each sit behind a bounded
+queue: the store's batched writer ([storage.md](storage.md)), each bouncer
+session's outbound line queue (a client that falls 4096 lines behind is
+disconnected), and each SSH session's message queue (killed on overflow; the
+user reconnects to a fresh snapshot). Implemented by `logSink` (terminal),
+`store.Store` (persistence), `server`'s per-user `userSink`, the bouncer
+(`ircserver`), and the SSH UI (`tui`). **Adding a Sink method means
 updating every implementer**, including the test sinks (`captureSink`,
 `noopSink`).
 

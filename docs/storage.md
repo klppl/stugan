@@ -13,7 +13,8 @@ CREATE TABLE messages (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   msgid     TEXT NOT NULL DEFAULT '',   -- IRCv3 msgid
   network   TEXT NOT NULL,
-  buffer    TEXT NOT NULL,              -- channel or query name
+  buffer    TEXT NOT NULL,              -- channel or query name, as displayed
+  buffer_fold TEXT NOT NULL DEFAULT '', -- RFC1459-folded buffer identity (all lookups key on this)
   ts        INTEGER NOT NULL,           -- unix milliseconds (server-time)
   from_nick TEXT NOT NULL DEFAULT '',
   account   TEXT NOT NULL DEFAULT '',
@@ -23,11 +24,15 @@ CREATE TABLE messages (
   highlight INTEGER NOT NULL DEFAULT 0,
   tags      TEXT NOT NULL DEFAULT ''    -- JSON object
 );
-CREATE INDEX idx_messages_buffer ON messages(network, buffer, id);
+-- Indexes (created by the versioned migrations, see below):
+CREATE INDEX idx_messages_buffer_fold ON messages(network, buffer_fold, id);
+CREATE INDEX idx_messages_fold_ts     ON messages(network, buffer_fold, ts);
+CREATE UNIQUE INDEX idx_messages_msgid ON messages(network, buffer_fold, msgid)
+  WHERE msgid <> '';                  -- de-duplicates chathistory/bouncer replays
 
 -- Full-text search over message text, kept in sync by triggers.
 CREATE VIRTUAL TABLE messages_fts USING fts5(
-  text, content='messages', content_rowid='id'
+  text, content='messages', content_rowid='id', tokenize='trigram'
 );
 -- AFTER INSERT / AFTER DELETE triggers mirror rows into messages_fts.
 
@@ -47,18 +52,48 @@ CREATE TABLE read_markers (
   network TEXT NOT NULL,
   buffer  TEXT NOT NULL,
   ts      INTEGER NOT NULL,        -- unix millis; messages newer than this are unread
-  PRIMARY KEY (network, buffer)
+  PRIMARY KEY (network, buffer)     -- buffer is the folded name
+);
+
+CREATE TABLE prefs (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL              -- opaque JSON owned by the server
 );
 ```
 
 Pragmas: `journal_mode=WAL` (concurrent reads alongside the writer),
-`busy_timeout=5000`, `foreign_keys=1`.
+`synchronous=NORMAL` (the recommended WAL setting: a commit no longer waits for
+an fsync, and a power loss can only drop the last few transactions, never
+corrupt the file), `busy_timeout=5000`, `foreign_keys=1`.
+
+**Migrations.** The full-table rewrites (backfilling `buffer_fold`,
+de-duplicating rows by msgid, and swapping the old unfolded-buffer indexes for
+the folded ones) are gated on `PRAGMA user_version` (currently `2`), so they
+run once per database rather than on every start.
+
+## The write path
+
+Writes never run on the engine loop. `Print` and `Redact` enqueue an op onto a
+bounded queue (4096 ops) drained by a single **writer goroutine**, which takes
+everything already waiting (up to 1024 ops) and commits it in **one
+transaction** — group commit, so a join burst or netsplit costs one commit, not
+thousands. If a batch fails, it is retried row by row so one bad row never loses
+the rest. `Print` only blocks when the disk falls 4096 writes behind.
+
+Readers that must see their own just-queued lines (`MissedHighlights`,
+`Prune`, backup) call an internal `flush()` barrier first. `Close` drains the
+queue before closing the database.
 
 ## Message history
 
-- **`Print(m core.Message)`** — the `Sink` write path. Inserts a row, stamping
-  `ts` from `m.Time` (or now) and serializing `m.Tags` to JSON. The FTS index
-  follows via trigger.
+- **`Print(m core.Message)`** — the `Sink` write path. Queues a row (see
+  above), stamping `ts` from `m.Time` (or now), `buffer_fold` from
+  `core.FoldIRC(m.Buffer)`, and serializing `m.Tags` to JSON. `INSERT OR IGNORE`
+  plus the msgid index means a line replayed by chathistory or a bouncer is not
+  stored twice. The FTS index follows via trigger.
+- **`Redact(...)`** — the `Sink` redaction path. Deletes the row by
+  `(network, buffer_fold, msgid)`, queued behind any pending insert of the same
+  line, so a redacted message stays gone after a reload and from search.
 - **`Backlog(ctx, network, buffer, before, limit)`** — newest-first page ending
   before `before` (or the most recent page when zero). Fetches `limit+1` rows
   to compute the `more` flag, then reverses to oldest-first for the client.
@@ -71,8 +106,16 @@ Pragmas: `journal_mode=WAL` (concurrent reads alongside the writer),
   first, optionally scoped to a network/buffer. One- and two-character terms
   use a substring scan because they are shorter than a trigram.
 
-These feed the server's `backlog`, `backlog` (windowed), and `search:result`
-frames (see [protocol.md](protocol.md)).
+- **`MissedHighlights(ctx, limit)`** — highlighted conversational lines newer
+  than each buffer's read marker (newest `limit`, returned in arrival order).
+  Backs the "What you missed" digest (`missed:fetch` → `missed:result`).
+- **`Prune(ctx, before)`** — deletes messages older than `before` in batches of
+  2000 rows with a short pause in between, so live inserts are never stuck
+  behind a retention sweep of millions of rows. Driven hourly by
+  `retention_days` (see [config.md](config.md)).
+
+These feed the server's `backlog`, `context`, `search:result`, and
+`missed:result` frames (see [protocol.md](protocol.md)).
 
 ## Read markers (unread that survives a reload)
 
@@ -144,12 +187,10 @@ stugan provides full database and configuration backup and restore functionality
 - **Database Import & Restore (`Store.Import`)**:
   - **`replace` mode**: Atomically replaces messages, networks, read markers, plugin KV, and preferences with the imported database, and rebuilds the FTS5 search index.
   - **`merge` mode**: Performs a safe merge combining messages (`INSERT OR IGNORE`), networks (`INSERT OR REPLACE`), read markers (updating to `MAX(ts)`), plugin KV, and preferences.
+  - The imported database must pass `PRAGMA quick_check`. Message rows are copied **by column name**, not position, so backups from older builds (which added `highlight`/`buffer_fold` later and in a different column order) import correctly; missing columns get defaults and `buffer_fold` is backfilled.
 
 ## Notes
 
-- Redaction is currently **view-only**: an inbound `REDACT` removes the live
-  copy but the row stays in `messages` and returns on reload. Persisting
-  redactions (tombstone by msgid) is on the [roadmap](ircv3.md).
 - Tests use a temp on-disk database and exercise the backlog/search paths
   table-driven under `-race`.
 </content>

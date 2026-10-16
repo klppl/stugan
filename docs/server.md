@@ -117,6 +117,11 @@ hash for a `[[users]]` `password_hash`).
 - **SSRF guard.** `/api/preview` and `/api/proxy` use a guarded dialer that
   refuses private/loopback/link-local addresses, an 8s timeout, a redirect cap,
   and a response size cap (~10 MB for the proxy).
+- **WebSocket limits.** One inbound frame is capped at 1 MiB. Slow handlers
+  (database queries, plugin downloads, completion hooks) run off the
+  connection's read loop — up to 4 in flight per socket, then inline, which
+  throttles a client flooding slow requests — so a slow query can't starve the
+  pong and get a healthy socket killed.
 - **Upload safety.** Uploaded files get a random name + sanitized extension and
   are served with `X-Content-Type-Options: nosniff` and a `default-src 'none'`
   CSP so they can't execute as pages.

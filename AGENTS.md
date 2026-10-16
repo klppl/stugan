@@ -44,12 +44,12 @@ When implementing new features, modifying architecture, or fixing bugs in `stuga
    - [openwiki/subsystems/internal_server.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/internal_server.md) - HTTP/WebSocket server, multi-tenant Hub, and authentication.
    - [openwiki/subsystems/internal_tui.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/internal_tui.md) - SSH Terminal UI (Wish + Bubble Tea).
    - [openwiki/subsystems/internal_proto_client_proto.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/internal_proto_client_proto.md) - WebSocket wire protocol envelope `{t, id, d}`.
-   - [openwiki/subsystems/client.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/client.md) - Vue 3 frontend, Pinia state stores, and virtualization.
+   - [openwiki/subsystems/client.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/client.md) - Vue 3 frontend, reactive state modules (no Pinia), and virtualization.
 
 2. **Core Architectural Invariants**:
    - **`internal/core` Independence**: Never import concrete libraries (`girc`, `gopher-lua`, `modernc/sqlite`, `coder/websocket`, `wish`, `bubbletea`) into `internal/core`. `core` defines the interfaces; concrete packages implement them.
    - **Wire Protocol Synchronization**: If you add or modify a WebSocket event, you **must** update both the Go struct in `internal/proto/` and the TypeScript interface in `client/src/proto/events.ts`.
-   - **Sink Updates**: If a new method is added to `core.Sink`, all implementers (`store.Store`, `server.userSink`, `tui.Server`, `logSink`, and test sinks) must be updated.
+   - **Sink Updates**: If a new method is added to `core.Sink`, all implementers (`store.Store`, `server.userSink`, `ircserver.ircSink`, the `tui` hub sink, `logSink`, and test sinks) must be updated.
    - **Concurrency Safety**: Mutate domain state *only* on the engine loop goroutine under `e.mu`. Provide concurrent readers with deep copies via `Snapshot()` / `SnapshotNetwork()`.
 
 3. **Validation Routine**:

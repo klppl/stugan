@@ -13,7 +13,8 @@ the IRCv3 discipline of [Halloy](https://github.com/squidowl/halloy) and a
 ## Features
 
 - Persistent connections that survive browser disconnects; SQLite history with
-  backlog replay and full-text search (FTS5).
+  backlog replay, full-text search (FTS5 trigram), and optional retention
+  (`retention_days`).
 - Real-time **multi-device synchronization**: server-side settings, unsent composer drafts,
   and accurate read marker timestamps (`draft/read-marker` / `MARKREAD`) stay in sync across all your browser tabs and IRC clients.
 - Manage networks entirely from the web UI — add, edit, connect/disconnect,
@@ -26,7 +27,15 @@ the IRCv3 discipline of [Halloy](https://github.com/squidowl/halloy) and a
 - Link previews + inline image/video via a local proxy, drag-drop/paste
   uploads (local storage or custom upload hosts like `x0.at`), autocomplete
   (nicks/commands/channels/emoji), command aliases, per-channel mute, a mentions
-  view, configurable highlight rules.
+  view, configurable highlight rules, and a "What you missed" digest when you
+  come back.
+- **Keyboard-first chat**: Cmd/Ctrl-K buffer jumper, irssi-style Tab
+  completion (Enter always sends), per-buffer input history, next-unread and
+  numbered-buffer shortcuts, and a shortcut sheet on Cmd/Ctrl+/. See
+  [docs/frontend.md](docs/frontend.md#keyboard-shortcuts).
+- Classic IRC or Cozy (nick header, stacked lines) message layout, themes, an
+  in-app image viewer with zoom/pan, reply/quote from the message toolbar, and
+  unread/mention counts in the tab title and favicon.
 - A **Lua plugin system** (weechat/irssi style): commands, message
   filters/rewrites, signal hooks, timers, persistent KV, hot-reload.
 - PWA: installable, mobile-responsive, Web Push + desktop notifications.

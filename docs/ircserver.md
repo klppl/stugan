@@ -27,6 +27,7 @@ backlog sync.
   - `sasl` (`PLAIN`)
 - **TLS by Default**: Optional custom certificates or automatic self-signed ECDSA certificate generation with SHA-256 fingerprint logging.
 - **Plugin Integration**: Chat commands and messages sent from downstream IRC clients pass through stugan's Lua plugin hooks and alias system.
+- **Slow-client isolation**: Each attached client gets its own bounded outbound queue (4096 lines) drained by a writer goroutine with a 30s write deadline, so a stalled client can never hold up the engine or other clients. A client that falls further behind is disconnected and can reattach for a fresh replay. Network connect/disconnect notices are sent only on state transitions.
 - **Client Detach**: When an attached IRC client issues `/quit`, only the client's local session disconnects; upstream IRC networks remain connected 24/7 in stugan.
 
 ---
