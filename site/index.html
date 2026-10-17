@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stugan — self-hosted web IRC</title>
+  <meta name="description" content="A self-hosted, always-on web IRC client written in Go, with a Lua plugin system.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <meta property="og:title" content="stugan — self-hosted web IRC">
+  <meta property="og:description" content="An always-on web IRC client written in Go, with a Lua plugin system.">
+  <meta property="og:image" content="img/desktop.png">
+  <style>
+    :root {
+      --bg: #16181d;
+      --panel: #1f222a;
+      --line: #2c3039;
+      --text: #d7dae0;
+      --muted: #8b919c;
+      --accent: #5aa2f0;
+      --red: #b5413a;
+      --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 var(--sans); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    main { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+
+    header { text-align: center; padding: 72px 0 40px; }
+    header img { width: 72px; height: 72px; }
+    h1 { font: 700 clamp(48px, 10vw, 88px)/1 var(--mono); margin: 12px 0 16px; letter-spacing: -0.03em; }
+    .tagline { color: var(--muted); font-size: 19px; max-width: 560px; margin: 0 auto 28px; }
+    .buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn { font: 600 14px var(--mono); text-transform: uppercase; letter-spacing: 0.04em; padding: 10px 18px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #0d1117; }
+    .btn:hover { text-decoration: none; filter: brightness(1.1); }
+
+    .tabs { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; margin: 16px 0; }
+    .tabs button { font: 600 13px var(--mono); text-transform: uppercase; letter-spacing: 0.04em; background: none; color: var(--muted); border: 1px solid transparent; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+    .tabs button[aria-selected="true"] { color: var(--text); border-color: var(--line); background: var(--panel); }
+    .shot { display: none; text-align: center; }
+    .shot.active { display: block; }
+    .shot img { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+    .shot img.phone { max-width: 360px; width: 100%; border-radius: 24px; }
+
+    h2 { font: 700 14px var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 72px 0 20px; }
+    ul.features { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px 32px; }
+    ul.features li { padding-left: 20px; position: relative; }
+    ul.features li::before { content: "›"; position: absolute; left: 0; color: var(--accent); font-family: var(--mono); }
+    ul.features b { color: #fff; font-weight: 600; }
+
+    pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; font: 14px/1.6 var(--mono); margin: 0 0 12px; }
+    .muted { color: var(--muted); }
+
+    footer { border-top: 1px solid var(--line); margin-top: 80px; padding: 24px 0 48px; color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="favicon.svg" alt="">
+    <h1>stugan</h1>
+    <p class="tagline">A self-hosted, always-on web IRC client. Written in Go, extended with Lua.</p>
+    <div class="buttons">
+      <a class="btn primary" href="#get-started">Get started</a>
+      <a class="btn" href="https://github.com/klppl/stugan">Source on GitHub</a>
+    </div>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-shot="desktop">Desktop</button>
+    <button role="tab" aria-selected="false" data-shot="mobile">Phone</button>
+    <button role="tab" aria-selected="false" data-shot="light">Light theme</button>
+    <button role="tab" aria-selected="false" data-shot="jumper">Quick switcher</button>
+    <button role="tab" aria-selected="false" data-shot="plugins">Plugins</button>
+  </div>
+  <div class="shot active" id="desktop"><img src="img/desktop.png" width="1440" height="900" alt="stugan in a desktop browser with the #stugan channel open"></div>
+  <div class="shot" id="mobile"><img class="phone" src="img/mobile.png" width="390" height="844" alt="stugan on a phone" loading="lazy"></div>
+  <div class="shot" id="light"><img src="img/light.png" width="1440" height="900" alt="stugan with the light theme" loading="lazy"></div>
+  <div class="shot" id="jumper"><img src="img/jumper.png" width="1440" height="900" alt="The Cmd/Ctrl-K buffer jumper" loading="lazy"></div>
+  <div class="shot" id="plugins"><img src="img/plugins.png" width="1440" height="900" alt="Settings, Lua plugins" loading="lazy"></div>
+
+  <h2>Features</h2>
+  <ul class="features">
+    <li><b>Always on.</b> Stays connected and keeps history when your browser is closed.</li>
+    <li><b>Syncs everywhere.</b> Read markers, settings and unsent drafts follow you across devices.</li>
+    <li><b>Full-text search.</b> Search all your history, partial words included.</li>
+    <li><b>Modern IRCv3.</b> Reactions, replies, typing indicators, read markers, chathistory and more.</li>
+    <li><b>Keyboard first.</b> Cmd/Ctrl-K jumper, Tab completion, shortcuts for everything.</li>
+    <li><b>Lua plugins.</b> Commands, filters, hooks and timers, with hot reload and a curated library.</li>
+    <li><b>Previews &amp; uploads.</b> Link previews, inline images and video, paste-to-upload.</li>
+    <li><b>Built-in bouncer.</b> Connect WeeChat, HexChat, irssi or any other IRC client too.</li>
+    <li><b>SSH terminal UI.</b> Reach your session from any terminal.</li>
+    <li><b>Installable PWA.</b> Works on phones, with push notifications.</li>
+    <li><b>Multi-user.</b> Separate accounts with isolated networks and history.</li>
+    <li><b>Easy backups.</b> Export and restore everything in one click.</li>
+  </ul>
+
+  <h2 id="get-started">Get started</h2>
+  <p>Run it with Docker (amd64 and arm64):</p>
+  <pre>docker run -d --name stugan -p 8080:8080 -v stugan-data:/data \
+  ghcr.io/klppl/stugan:latest</pre>
+  <p class="muted">Then open <code>http://localhost:8080</code>. See the
+    <a href="https://github.com/klppl/stugan/blob/main/docs/docker.md">Docker guide</a> for reverse proxy and TLS, or
+    <a href="https://github.com/klppl/stugan#quick-start">build from source</a>.</p>
+
+  <footer>
+    <span>stugan is Swedish for “the cabin”.</span>
+    <span><a href="https://github.com/klppl/stugan">GitHub</a> · <a href="https://github.com/klppl/stugan/blob/main/LICENSE">Lagom License</a></span>
+  </footer>
+</main>
+<script>
+  document.querySelectorAll('.tabs button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.tabs button').forEach(function (b) { b.setAttribute('aria-selected', b === btn); });
+      document.querySelectorAll('.shot').forEach(function (s) { s.classList.toggle('active', s.id === btn.dataset.shot); });
+    });
+  });
+</script>
+</body>
+</html>

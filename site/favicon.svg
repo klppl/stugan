@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Swedish cottage at night">
+  <!-- Flat, minimalist cozy-night Swedish 'stuga': Falu-red cabin with white trim,
+       a single warm window and a door, a chimney with smoke, a green yard,
+       two spruces and a crescent moon. No gradients or blurs. -->
+  <defs>
+    <clipPath id="rounded"><rect width="512" height="512" rx="82"/></clipPath>
+  </defs>
+  <g clip-path="url(#rounded)">
+    <!-- night sky -->
+    <rect width="512" height="512" fill="#1c2733"/>
+    <!-- crescent moon + two stars -->
+    <circle cx="110" cy="96" r="26" fill="#ece9e1"/>
+    <circle cx="124" cy="88" r="24" fill="#1c2733"/>
+    <circle cx="182" cy="72" r="2.5" fill="#e8e4dc" opacity="0.7"/>
+    <circle cx="398" cy="92" r="2.5" fill="#e8e4dc" opacity="0.7"/>
+    <!-- green yard -->
+    <path d="M0,408 Q256,388 512,404 L512,512 L0,512 Z" fill="#35603f"/>
+    <!-- two minimal spruces -->
+    <rect x="74" y="394" width="10" height="16" fill="#5c3724"/>
+    <polygon points="79,300 50,394 108,394" fill="#28502f"/>
+    <rect x="437" y="396" width="9" height="14" fill="#5c3724"/>
+    <polygon points="441,330 416,400 466,400" fill="#28502f"/>
+    <!-- roof + wall -->
+    <polygon points="256,148 116,262 396,262" fill="#8f3326"/>
+    <rect x="150" y="250" width="212" height="160" fill="#b24435"/>
+    <!-- white trim: eave + corner boards -->
+    <rect x="140" y="258" width="232" height="13" fill="#f0ece3"/>
+    <rect x="150" y="262" width="15" height="148" fill="#f0ece3"/>
+    <rect x="347" y="262" width="15" height="148" fill="#f0ece3"/>
+    <!-- chimney with stone cap -->
+    <rect x="320" y="170" width="22" height="46" fill="#8f3326"/>
+    <rect x="314" y="165" width="34" height="8" fill="#d9d2c6"/>
+    <!-- smoke -->
+    <circle cx="331" cy="150" r="7" fill="#e8e4dc" opacity="0.5"/>
+    <circle cx="337" cy="132" r="9" fill="#e8e4dc" opacity="0.35"/>
+    <circle cx="329" cy="112" r="11" fill="#e8e4dc" opacity="0.22"/>
+    <!-- window: white frame, warm glass, cross muntin -->
+    <rect x="185" y="316" width="58" height="62" fill="#f0ece3"/>
+    <rect x="192" y="323" width="44" height="48" fill="#f5c451"/>
+    <rect x="211.5" y="323" width="5" height="48" fill="#f0ece3"/>
+    <rect x="192" y="345" width="44" height="5" fill="#f0ece3"/>
+    <!-- door: white frame, wood panel, brass knob -->
+    <rect x="292" y="318" width="54" height="92" fill="#f0ece3"/>
+    <rect x="298" y="324" width="42" height="86" fill="#6e4a32"/>
+    <circle cx="334" cy="366" r="4" fill="#f5c451"/>
+    <!-- two simple shrubs at the doorstep -->
+    <circle cx="284" cy="406" r="11" fill="#28502f"/>
+    <circle cx="297" cy="404" r="9" fill="#356b3f"/>
+  </g>
+</svg>
