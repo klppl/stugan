@@ -1,111 +1,105 @@
-# stugan
+<p align="center">
+  <img src="client/public/favicon.svg" width="88" alt="">
+</p>
 
-A self-hosted, plugin-extensible web IRC client written in Go.
+<h1 align="center">stugan</h1>
 
-stugan is a persistent daemon that holds your IRC connections 24/7 and buffers
-history, plus a Vue 3 browser frontend that talks to it over a typed-JSON
-WebSocket — think [TheLounge](https://thelounge.chat/), rewritten in Go, with
-the IRCv3 discipline of [Halloy](https://github.com/squidowl/halloy) and a
-**weechat/irssi-style Lua plugin system** as the headline feature.
+<p align="center">
+  A self-hosted, always-on web IRC client.<br>
+  Written in Go, extended with Lua.
+</p>
 
-![stugan screenshot](screenshot.png)
+<p align="center">
+  <a href="https://klppl.github.io/stugan/">Website</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="docs/docker.md">Docker</a> ·
+  <a href="plugins/">Plugins</a> ·
+  <a href="#documentation">Docs</a>
+</p>
+
+<p align="center">
+  <img src="site/img/desktop.png" alt="stugan in a desktop browser">
+</p>
+
+stugan is a daemon that holds your IRC connections 24/7 and keeps your history,
+plus a Vue 3 web client that talks to it over WebSocket. Think
+[TheLounge](https://thelounge.chat/) rewritten in Go, with the IRCv3 discipline
+of [Halloy](https://github.com/squidowl/halloy) and a weechat/irssi-style Lua
+plugin system.
 
 ## Features
 
-- Persistent connections that survive browser disconnects; SQLite history with
-  backlog replay, full-text search (FTS5 trigram), and optional retention
-  (`retention_days`).
-- Real-time **multi-device synchronization**: server-side settings, unsent composer drafts,
-  and accurate read marker timestamps (`draft/read-marker` / `MARKREAD`) stay in sync across all your browser tabs and IRC clients.
-- Manage networks entirely from the web UI — add, edit, connect/disconnect,
-  remove. Server password (bouncers like ZNC/soju), per-network "perform"
-  commands, SASL (PLAIN and EXTERNAL/CertFP).
-- IRCv3: server-time, echo-message, away-notify, account-tag, multi-prefix,
-  extended-join, message-tags, typing indicators, standard-replies, emoji
-  reactions, message redaction, draft/read-marker (MARKREAD), a channel browser (LIST), best-effort
-  chathistory. See [docs/ircv3.md](docs/ircv3.md).
-- Link previews + inline image/video via a local proxy, drag-drop/paste
-  uploads (local storage or custom upload hosts like `x0.at`), autocomplete
-  (nicks/commands/channels/emoji), command aliases, per-channel mute, a mentions
-  view, configurable highlight rules, and a "What you missed" digest when you
-  come back.
-- **Keyboard-first chat**: Cmd/Ctrl-K buffer jumper, irssi-style Tab
-  completion (Enter always sends), per-buffer input history, next-unread and
-  numbered-buffer shortcuts, and a shortcut sheet on Cmd/Ctrl+/. See
-  [docs/frontend.md](docs/frontend.md#keyboard-shortcuts).
-- Classic IRC or Cozy (nick header, stacked lines) message layout, themes, an
-  in-app image viewer with zoom/pan, reply/quote from the message toolbar, and
-  unread/mention counts in the tab title and favicon.
-- A **Lua plugin system** (weechat/irssi style): commands, message
-  filters/rewrites, signal hooks, timers, persistent KV, hot-reload.
-- PWA: installable, mobile-responsive, Web Push + desktop notifications.
-- **SSH Terminal UI**: Access your persistent session directly over SSH via a full-screen terminal UI (Bubble Tea/Wish) with mouse support, quick-switcher, and plugin manager.
-- **IRC Bouncer Server**: Connect your favorite native desktop/mobile IRC clients (WeeChat, HexChat, irssi, Textual) directly to stugan with full state replay, backlog sync, and multi-network support (`soju.im/bouncer-networks` for Halloy, Goguma and friends). Each account can switch it on or off and get per-network login details under Settings → IRC Clients.
-- **Data Portability & Backups**: One-click full user backup export and restore (.tar.gz, .zip, or raw SQLite) covering message history, network credentials, Lua plugins, and user preferences.
-- Multi-user with bcrypt auth and full per-user isolation; an optional
-  site-wide password gate.
+- **Always on.** Stays connected and keeps history while your browser is closed.
+- **Syncs everywhere.** Read markers, settings and unsent drafts follow you across devices.
+- **Full-text search.** SQLite FTS5 trigram search over all your history.
+- **Modern IRCv3.** Reactions, replies, typing, read markers, chathistory and [more](docs/ircv3.md).
+- **Keyboard first.** Cmd/Ctrl-K jumper, irssi-style Tab completion, [shortcuts](docs/frontend.md#keyboard-shortcuts) for everything.
+- **Lua plugins.** Commands, filters, hooks and timers, with hot reload and a curated library.
+- **Previews & uploads.** Link previews, inline images and video, paste or drag to upload.
+- **Built-in bouncer.** Connect WeeChat, HexChat, irssi or any other client too.
+- **SSH terminal UI.** Reach your session from any terminal.
+- **Installable PWA.** Mobile friendly, with Web Push and desktop notifications.
+- **Multi-user.** bcrypt logins with fully isolated networks and history.
+- **Easy backups.** Export and restore everything in one click.
+
+<table>
+  <tr>
+    <td width="28%"><img src="site/img/mobile.png" alt="stugan on a phone"></td>
+    <td><img src="site/img/light.png" alt="Light theme"><br><br><img src="site/img/jumper.png" alt="Cmd/Ctrl-K quick switcher"></td>
+  </tr>
+</table>
 
 ## Quick start
 
-```sh
-# Build the client (the daemon serves client/dist at /).
-cd client && npm install && npm run build && cd ..
-
-# Build and run the daemon.
-go build -o stugan ./cmd/stugan
-./stugan                      # uses $STUGAN_HOME, else ~/.config/stugan
-./stugan -home ./dev          # disposable config/data dir
-```
-
-Then open the listen address (default `http://127.0.0.1:8080`).
-
-For live client reload, run the daemon and the Vite dev server side by side
-(Vite on :5173 proxies the WebSocket to the daemon on :8080):
-
-```sh
-./stugan &
-cd client && npm run dev
-```
-
-## Docker
-
-Images are published to GHCR (`ghcr.io/klppl/stugan`) for amd64 and arm64:
+**Docker** (amd64 and arm64):
 
 ```sh
 docker run -d --name stugan -p 8080:8080 -v stugan-data:/data \
   ghcr.io/klppl/stugan:latest
 ```
 
-Config, history, scripts, and uploads live in the `/data` volume. Put a
-`config.toml` there with `listen = "0.0.0.0:8080"`; set `public_url` /
-`origin_patterns` when serving from a non-localhost host. See
-[docs/docker.md](docs/docker.md) for the full run guide (compose, reverse
-proxy + TLS, `trusted_proxies` for login throttling, auth, updates). The image is built and published by
-`.github/workflows/docker.yml`.
+Put a `config.toml` with `listen = "0.0.0.0:8080"` in the `/data` volume, then
+open `http://localhost:8080`. The [Docker guide](docs/docker.md) covers compose,
+reverse proxy + TLS, `trusted_proxies` and updates.
+
+**From source:**
+
+```sh
+cd client && npm install && npm run build && cd ..
+go build -o stugan ./cmd/stugan
+./stugan                 # uses $STUGAN_HOME, else ~/.config/stugan
+./stugan -home ./dev     # disposable config/data dir
+```
+
+For live client reload, run `./stugan` and `cd client && npm run dev` side by
+side (Vite on :5173 proxies the WebSocket to :8080).
 
 ## Configuration
 
-Config, scripts, and data live under one root, resolved in order:
-`$STUGAN_HOME`, then `$XDG_CONFIG_HOME/stugan`, then `~/.config/stugan`. By
-default stugan runs single-user and unauthenticated; add `[[users]]` to require
-login and isolate accounts. See [docs/config.md](docs/config.md) for the full
-reference and [docs/config.example.toml](docs/config.example.toml) for a
-starting point.
+Everything lives under one root: `$STUGAN_HOME`, then
+`$XDG_CONFIG_HOME/stugan`, then `~/.config/stugan`. stugan runs single-user and
+unauthenticated by default; add `[[users]]` to require login. See
+[docs/config.md](docs/config.md) and
+[docs/config.example.toml](docs/config.example.toml).
 
-## Plugins & Script Library
+## Plugins
 
-`stugan` includes an official **Plugin Library** located in [plugins/](plugins/), packed with ready-to-use scripts:
+Install from the [plugin library](plugins/) with `/load <name>` in chat, or
+drop a script into `$STUGAN_HOME/scripts/`. Manage them under
+**Settings → Plugins** or with `/load`, `/unload` and `/reload`.
 
-- **AI Companion & Summarizer** ([`ai.lua`](plugins/ai.lua)): `/ask <prompt>` and `/summarize [N]` using OpenAI, DeepSeek, Claude, Gemini, or Ollama.
-- **Outbound Webhooks** ([`webhooks.lua`](plugins/webhooks.lua)): Forward highlights & mentions to Discord, Slack, Ntfy, or custom HTTP webhooks.
-- **FiSH Encryption** ([`fish.lua`](plugins/fish.lua)): Blowfish CBC/ECB encryption with `/setkey` and sidebar lock indicators.
-- **Utilities & Automation**: Auto-away (`away.lua`), URL title fetchers (`title.lua`), typo sed corrections (`sed.lua`), NickServ auto-identify (`nickserv.lua`), URL tracking (`urls.lua`), nick watcher (`watch.lua`), and fun commands (`fun.lua`).
+| Plugin | What it does |
+|--------|--------------|
+| [`ai`](plugins/ai.lua) | `/ask` and `/summarize` with OpenAI, Claude, Gemini, DeepSeek or Ollama |
+| [`webhooks`](plugins/webhooks.lua) | Forward highlights to Discord, Slack, ntfy or any webhook |
+| [`fish`](plugins/fish.lua) | FiSH Blowfish encryption with `/setkey` |
+| [`title`](plugins/title.lua), [`urls`](plugins/urls.lua), [`sed`](plugins/sed.lua), [`away`](plugins/away.lua), [`nickserv`](plugins/nickserv.lua), [`watch`](plugins/watch.lua), … | Everyday utilities |
 
-Install any plugin directly from within stugan by running `/load <script-name>` in chat (e.g. `/load title`), which downloads it directly from the official repository and loads it live into the runtime. You can also drop any Lua script into `$STUGAN_HOME/scripts/*.lua` for local development.
+Writing your own? See the [Lua API reference](docs/plugins.md).
 
-Manage, configure, reload, or unload plugins directly in the Web UI under **Settings → Plugins** or via `/load`, `/unload`, and `/reload` slash commands.
-
-See [plugins/README.md](plugins/README.md) for the plugin library catalog and [docs/plugins.md](docs/plugins.md) for the Lua API reference.
+<p align="center">
+  <img src="site/img/plugins.png" width="80%" alt="Settings, Lua plugins">
+</p>
 
 ## Documentation
 
@@ -128,7 +122,7 @@ See [plugins/README.md](plugins/README.md) for the plugin library catalog and [d
 
 ## License
 
-stugan is released under the [Lagom License](LICENSE) — not too much, not too
+stugan is released under the [Lagom License](LICENSE): not too much, not too
 little.
-</content>
-</invoke>
+
+<sub>*stugan* is Swedish for “the cabin”.</sub>
