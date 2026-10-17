@@ -104,6 +104,25 @@ func run() error {
 		log.Info("magic-word gate enabled via $STUGAN_WEB_PASSWORD")
 	}
 
+	// Optional IRC bouncer server (exposes IRC protocol access to native
+	// clients). Built before the web server, which reports its listener and
+	// per-account access in Settings.
+	var ircSrv *ircserver.Server
+	var bouncer server.Bouncer
+	if cfg.IRCServer.Listen != "" {
+		ircSrv = ircserver.New(hub, ircserver.Options{
+			Logger:      log,
+			Addr:        cfg.IRCServer.Listen,
+			TLS:         cfg.IRCServerTLSEnabled(),
+			CertFile:    cfg.IRCServer.CertFile,
+			KeyFile:     cfg.IRCServer.KeyFile,
+			DataDir:     cfg.DataDir(),
+			MaxPlayback: cfg.IRCServer.MaxPlayback,
+		})
+		hub.registerIRCSinks(ircSrv)
+		bouncer = ircSrv
+	}
+
 	srv := server.New(hub, server.Options{
 		Logger:         log,
 		ServerName:     "stugan/" + version(),
@@ -114,6 +133,7 @@ func run() error {
 		Uploads:        cfg.Uploads,
 		PushDir:        filepath.Join(cfg.DataDir(), "push"),
 		MagicWordHash:  magicHash,
+		Bouncer:        bouncer,
 	})
 	hub.registerSinks(srv)
 
@@ -133,20 +153,6 @@ func run() error {
 			})
 			hub.registerTUISinks(tuiSrv)
 		}
-	}
-
-	// Optional IRC bouncer server (exposes IRC protocol access to native clients).
-	var ircSrv *ircserver.Server
-	if cfg.IRCServer.Listen != "" {
-		ircSrv = ircserver.New(hub, ircserver.Options{
-			Logger:      log,
-			TLS:         cfg.IRCServerTLSEnabled(),
-			CertFile:    cfg.IRCServer.CertFile,
-			KeyFile:     cfg.IRCServer.KeyFile,
-			DataDir:     cfg.DataDir(),
-			MaxPlayback: cfg.IRCServer.MaxPlayback,
-		})
-		hub.registerIRCSinks(ircSrv)
 	}
 
 	log.Info("daemon ready", "users", len(hub.Users()), "auth", cfg.AuthEnabled())

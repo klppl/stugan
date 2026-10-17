@@ -33,6 +33,7 @@ const (
 	TAliases      = "aliases"       // s2c (current alias table; answers aliases:set)
 	TSettings     = "settings"      // s2c (current UI settings; answers settings:set)
 	TDraft        = "draft"         // s2c (broadcasts draft update to user's other tabs)
+	TBouncer      = "bouncer"       // s2c (IRC bouncer access info; answers bouncer:set)
 	TPong         = "pong"          // s2c (answers c2s ping; app-level liveness)
 	TError        = "error"         // s2c
 
@@ -53,6 +54,7 @@ const (
 	THighlightSet = "highlight:set"  // c2s — replace the highlight ruleset
 	TAliasSet     = "aliases:set"    // c2s — replace the command-alias table
 	TSettingsSet  = "settings:set"   // c2s — set/sync UI preferences across devices
+	TBouncerSet   = "bouncer:set"    // c2s — allow/deny native IRC clients on this account
 	TMonitorAdd   = "monitor:add"    // c2s — add a nick to a network's friends list
 	TMonitorRem   = "monitor:remove" // c2s — remove a nick from a network's friends list
 	TMute         = "mute"           // c2s set intent; s2c absolute state broadcast to the user's tabs
@@ -96,6 +98,34 @@ type InitState struct {
 	Settings    map[string]any   `json:"settings,omitempty"`
 	Drafts      []DraftDTO       `json:"drafts,omitempty"`
 	ReadMarkers map[string]int64 `json:"read_markers,omitempty"`
+	Bouncer     BouncerInfo      `json:"bouncer"`
+}
+
+// BouncerInfo describes the built-in IRC bouncer as it applies to one account:
+// whether the daemon listens for native IRC clients at all, whether this
+// account accepts them, and what a client needs to connect.
+type BouncerInfo struct {
+	// Available reports that the daemon has an [ircserver] listener configured.
+	Available bool `json:"available"`
+	// Enabled reports that this account accepts bouncer logins.
+	Enabled bool `json:"enabled"`
+	// Host is the configured listen host, empty when it binds all interfaces.
+	Host string `json:"host,omitempty"`
+	Port int    `json:"port,omitempty"`
+	TLS  bool   `json:"tls,omitempty"`
+	// Fingerprint is the listener certificate's SHA-256 fingerprint, set for
+	// a self-signed certificate that clients must pin.
+	Fingerprint string `json:"fingerprint,omitempty"`
+	// Username is the login name for this account; AuthRequired is false in
+	// single-user mode, where no password is needed.
+	Username     string `json:"username"`
+	AuthRequired bool   `json:"auth_required"`
+}
+
+// BouncerSet is a client→server request to allow or deny native IRC client
+// logins on the requesting account.
+type BouncerSet struct {
+	Enabled bool `json:"enabled"`
 }
 
 // DraftDTO carries an unsent composer draft for a single buffer.

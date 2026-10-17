@@ -26,6 +26,7 @@ export const T = {
   Aliases: "aliases",
   Settings: "settings",
   Draft: "draft",
+  Bouncer: "bouncer",
   Pong: "pong",
   Error: "error",
   MsgSend: "msg:send",
@@ -45,6 +46,7 @@ export const T = {
   HighlightSet: "highlight:set",
   AliasSet: "aliases:set",
   SettingsSet: "settings:set",
+  BouncerSet: "bouncer:set",
   MonitorAdd: "monitor:add",
   MonitorRemove: "monitor:remove",
   Mute: "mute",
@@ -75,6 +77,27 @@ export interface InitState {
   settings?: Record<string, unknown>;
   drafts?: DraftDTO[];
   read_markers?: Record<string, number>;
+  bouncer: BouncerInfo;
+}
+
+// BouncerInfo describes the built-in IRC bouncer for this account: whether the
+// daemon listens for native IRC clients ([ircserver] configured), whether this
+// account accepts them, and what a client needs to connect. Delivered in init
+// and echoed in a bouncer frame after bouncer:set.
+export interface BouncerInfo {
+  available: boolean;
+  enabled: boolean;
+  host?: string; // empty when the listener binds all interfaces
+  port?: number;
+  tls?: boolean;
+  fingerprint?: string; // SHA-256, set for a self-signed certificate to pin
+  username: string;
+  auth_required: boolean;
+}
+
+// BouncerSet allows or denies native IRC client logins on this account.
+export interface BouncerSet {
+  enabled: boolean;
 }
 
 export interface DraftDTO {

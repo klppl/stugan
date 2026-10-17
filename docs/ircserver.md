@@ -55,6 +55,15 @@ key_file  = ""
 max_playback = 50
 ```
 
+### Per-account access (web UI)
+
+Once the listener is configured, each account controls whether it accepts IRC
+clients under **Settings → IRC Clients**. Access is on by default; turning it
+off refuses new bouncer logins for that account and immediately disconnects any
+attached IRC clients (upstream networks stay connected). The same page shows
+the server address, port, TLS fingerprint, and the exact username to use for
+each network, with ready-made WeeChat and irssi commands.
+
 ---
 
 ## 3. Connecting IRC Clients
@@ -74,7 +83,17 @@ Set SASL username to `<username>/<network>` (or simply `<username>` if only one 
 Provide `<username>/<network>:<password>` in the server password field:
 - **Server Password**: `alice/libera:mypassword`
 
-#### C. Single-User Mode (No `[[users]]` configured)
+#### C. Username field + password
+Most clients also work with the network in the plain username (ident) field and
+just your password as the server password:
+- **Username**: `alice/libera`
+- **Server Password**: `mypassword`
+
+Clients that support `soju.im/bouncer-networks` (Halloy, Goguma, gamja, senpai)
+need only one server entry: log in as `alice` (SASL or `alice:mypassword`)
+without a network and every network appears automatically.
+
+#### D. Single-User Mode (No `[[users]]` configured)
 If running stugan in unauthenticated single-user mode:
 - **SASL Username / Server Password**: `<network>` (or leave blank if only 1 network exists).
 

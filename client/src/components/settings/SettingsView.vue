@@ -8,6 +8,7 @@ import PluginSettings from "./PluginSettings.vue";
 import UploadSettings from "./UploadSettings.vue";
 import BackupSettings from "./BackupSettings.vue";
 import NotificationAccountSettings from "./NotificationAccountSettings.vue";
+import BouncerSettings from "./BouncerSettings.vue";
 import { connection } from "../../connection";
 import Icon, { type IconName } from "../Icon.vue";
 
@@ -20,6 +21,7 @@ export type SettingTabId =
   | "aliases"
   | "plugins"
   | "uploads"
+  | "bouncer"
   | "backup"
   | "account";
 
@@ -85,6 +87,13 @@ const categories: SettingCategory[] = [
     cap: "uploads",
   },
   {
+    id: "bouncer",
+    label: "IRC Clients",
+    icon: "server",
+    desc: "Bouncer access for HexChat, WeeChat…",
+    component: BouncerSettings,
+  },
+  {
     id: "backup",
     label: "Backup & Data",
     icon: "database",
@@ -123,6 +132,8 @@ const settingSearchItems: SettingSearchItem[] = [
   { tab: "plugins", label: "Curated Plugin Library", desc: "Browse and install official plugins", keywords: "extensions scripts" },
   { tab: "plugins", label: "Import Plugin from URL", desc: "Download a Lua script from a remote URL", keywords: "extensions scripts remote" },
   { tab: "uploads", label: "Stored Uploads", desc: "View uploaded files and retention expiry", keywords: "media storage files" },
+  { tab: "bouncer", label: "Allow IRC Clients", desc: "Let native IRC clients connect to this account as a bouncer", keywords: "bouncer znc soju hexchat weechat irssi halloy goguma native client enable disable" },
+  { tab: "bouncer", label: "How to Connect an IRC Client", desc: "Server, port, TLS fingerprint and per-network usernames", keywords: "bouncer login sasl password port tls fingerprint networks multiple" },
   { tab: "backup", label: "Export Backup", desc: "Download portable archive of database and plugins", keywords: "backup export database download tar zip" },
   { tab: "backup", label: "Import / Restore Backup", desc: "Restore database and plugins from archive", keywords: "restore import upload database" },
   { tab: "account", label: "Desktop & Push Notifications", desc: "Receive notifications for mentions and highlights", keywords: "webpush browser alerts" },

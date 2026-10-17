@@ -47,6 +47,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `highlight`     | `HighlightRules` | the normalized highlight ruleset, broadcast to all the user's tabs after a `highlight:set` |
 | `aliases`       | `AliasTable`   | the normalized command alias table, broadcast after `aliases:set` |
 | `settings`      | `SettingsPayload` | user UI preferences broadcast across sessions |
+| `bouncer`       | `BouncerInfo`  | IRC bouncer listener details and this account's access, broadcast after `bouncer:set` (also in `init.bouncer`) |
 | `draft`         | `DraftDTO`     | composer draft updated from another tab/device |
 | `read`          | `ReadMark`     | buffer read marker updated (stamps time and clears unread badges across devices) |
 | `pong`          | (none)         | answers a c2s `ping` (app-level liveness; see below) |
@@ -74,6 +75,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `highlight:set` | `HighlightRules` | replace the highlight ruleset (bad regex → `error`; success → `highlight` broadcast) |
 | `aliases:set`   | `AliasTable`   | replace the command aliases table |
 | `settings:set`  | `SettingsPayload` | update user UI preferences (theme, font size, previews, etc.) |
+| `bouncer:set`   | `BouncerSet`   | allow or deny native IRC clients on this account; denying drops attached clients |
 | `buf:close`     | `BufClose`     | close a query/DM buffer (server drops it and re-broadcasts `net:update`; channels use `/part`) |
 | `buf:reorder`   | `BufReorder`   | set the manual buffer order within a network (status buffer may be omitted) |
 | `monitor:add`   | `MonitorRef`   | add a nick to a network's friends list (`MONITOR +`, persisted) |

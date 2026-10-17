@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -518,4 +519,89 @@ func TestBouncerCapReqAfterRegistrationRace(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 	close(stop)
+}
+
+type mapPrefs struct {
+	mu sync.Mutex
+	m  map[string]string
+}
+
+func (p *mapPrefs) Pref(key string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.m[key], nil
+}
+
+func (p *mapPrefs) SetPref(key, value string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.m[key] = value
+	return nil
+}
+
+// TestBouncerAccessToggle: an account that turned bouncer access off in
+// Settings is refused at registration, and DisconnectUser drops clients that
+// are already attached.
+func TestBouncerAccessToggle(t *testing.T) {
+	srv, _, _, addr, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+	prefs := &mapPrefs{m: map[string]string{"bouncer": "off"}}
+	srv.hub.(*mockHub).tenants["alice"].Prefs = prefs
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	reader := bufio.NewReader(conn)
+	fmt.Fprintf(conn, "PASS alice/libera:password123\r\nNICK alice\r\nUSER alice 0 * :Alice\r\n")
+	refused := false
+	for !refused {
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("expected 464 refusal, got read error: %v", err)
+		}
+		if strings.Contains(line, " 001 ") {
+			t.Fatalf("registered despite bouncer access being off: %q", line)
+		}
+		refused = strings.Contains(line, " 464 ") && strings.Contains(line, "disabled")
+	}
+	_ = conn.Close()
+
+	_ = prefs.SetPref("bouncer", "on")
+	conn, reader = attachAlice(t, addr)
+	defer conn.Close()
+
+	srv.DisconnectUser("alice", "IRC client access disabled in Settings")
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return // socket closed: client was dropped
+		}
+		if strings.HasPrefix(line, "ERROR ") {
+			return
+		}
+	}
+}
+
+func TestListenerInfo(t *testing.T) {
+	cases := []struct {
+		addr string
+		host string
+		port int
+	}{
+		{"0.0.0.0:6697", "", 6697},
+		{":6667", "", 6667},
+		{"[::]:6697", "", 6697},
+		{"irc.example.com:7000", "irc.example.com", 7000},
+		{"192.168.1.5:6697", "192.168.1.5", 6697},
+	}
+	for _, c := range cases {
+		s := New(&mockHub{}, Options{Addr: c.addr, TLS: true})
+		host, port, tlsOn, fp := s.Listener()
+		if host != c.host || port != c.port || !tlsOn || fp != "" {
+			t.Errorf("%s: got (%q, %d, %v, %q), want (%q, %d, true, \"\")", c.addr, host, port, tlsOn, fp, c.host, c.port)
+		}
+	}
 }

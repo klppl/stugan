@@ -117,6 +117,20 @@ type Options struct {
 	// never keeps the plaintext in memory. When empty, the gate is
 	// disabled and all requests fall through to the normal auth flow.
 	MagicWordHash string
+	// Bouncer, when set, is the IRC bouncer listener whose access the web UI
+	// exposes in Settings. Nil when [ircserver] is not configured.
+	Bouncer Bouncer
+}
+
+// Bouncer is the slice of the IRC bouncer server the web UI needs: where it
+// listens, and a way to drop a user's attached clients when they revoke
+// access. Implemented by ircserver.Server.
+type Bouncer interface {
+	// Listener reports the listen host (empty for all interfaces), port, TLS,
+	// and the certificate fingerprint to pin (empty when not self-signed).
+	Listener() (host string, port int, tls bool, fingerprint string)
+	// DisconnectUser closes every attached IRC client of userID.
+	DisconnectUser(userID, reason string)
 }
 
 // Server bridges per-user engines to WebSocket clients.
@@ -140,6 +154,8 @@ type Server struct {
 	// authLimit throttles repeated failures against /api/login and
 	// /api/magicword to slow credential-stuffing bots.
 	authLimit *authRateLimit
+
+	bouncer Bouncer
 
 	mu      sync.Mutex
 	clients map[string]map[*client]struct{} // userID → connected clients
@@ -187,6 +203,7 @@ func New(hub Hub, opts Options) *Server {
 		push:           push,
 		magicHash:      opts.MagicWordHash,
 		authLimit:      newAuthRateLimit(60*time.Second, 8),
+		bouncer:        opts.Bouncer,
 		clients:        map[string]map[*client]struct{}{},
 	}
 	if s.magicHash != "" {
@@ -569,6 +586,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	state.Muted = loadMuted(tenant)
 	state.Settings = loadSettings(tenant)
 	state.Drafts = loadDrafts(tenant)
+	state.Bouncer = s.bouncerInfo(userID, tenant)
 	init, _ := proto.Frame(proto.TInit, state)
 	c.trySend(hello)
 	c.trySend(init)
@@ -797,6 +815,25 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 				}
 			}
 			s.broadcast(c.user, proto.TSettings, d)
+			return nil
+		})
+
+	case proto.TBouncerSet:
+		reqHandle(c, env, "invalid bouncer:set payload", nil, func(d proto.BouncerSet) error {
+			if c.tenant.Prefs == nil {
+				return errors.New("preferences unavailable")
+			}
+			v := "on"
+			if !d.Enabled {
+				v = "off"
+			}
+			if err := c.tenant.Prefs.SetPref(prefBouncer, v); err != nil {
+				return err
+			}
+			if !d.Enabled && s.bouncer != nil {
+				s.bouncer.DisconnectUser(c.user, "IRC client access disabled in Settings")
+			}
+			s.broadcast(c.user, proto.TBouncer, s.bouncerInfo(c.user, c.tenant))
 			return nil
 		})
 
@@ -1237,4 +1274,18 @@ func (u *userSink) ReadMarker(network, buffer string, ts time.Time) {
 		Buffer:    buffer,
 		Timestamp: ts.UTC().Format(time.RFC3339Nano),
 	})
+}
+
+// bouncerInfo builds the Settings view of the IRC bouncer for one account.
+func (s *Server) bouncerInfo(userID string, t *Tenant) proto.BouncerInfo {
+	info := proto.BouncerInfo{
+		Enabled:      BouncerAllowed(t),
+		Username:     userID,
+		AuthRequired: s.hub.AuthEnabled(),
+	}
+	if s.bouncer != nil {
+		info.Available = true
+		info.Host, info.Port, info.TLS, info.Fingerprint = s.bouncer.Listener()
+	}
+	return info
 }

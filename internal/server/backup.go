@@ -282,6 +282,7 @@ func (s *Server) resyncUser(ctx context.Context, userID string, tenant *Tenant) 
 	state.Muted = loadMuted(tenant)
 	state.Settings = loadSettings(tenant)
 	state.Drafts = loadDrafts(tenant)
+	state.Bouncer = s.bouncerInfo(userID, tenant)
 
 	if initFrame, err := proto.Frame(proto.TInit, state); err == nil {
 		for _, c := range clients {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/klippelism/stugan/internal/core"
+	"github.com/klippelism/stugan/internal/server"
 )
 
 const (
@@ -601,6 +602,10 @@ func (s *Session) completeAttach(userID string, networkSel string) {
 	tenant, ok := s.hub.Tenant(userID)
 	if !ok || tenant == nil {
 		s.failRegistration("User account not found")
+		return
+	}
+	if !server.BouncerAllowed(tenant) {
+		s.failRegistration("IRC client access is disabled for this account — enable it in the web UI under Settings")
 		return
 	}
 

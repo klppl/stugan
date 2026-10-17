@@ -16,7 +16,19 @@ const (
 	prefAliases   = "aliases"   // map[string]string (command name → expansion)
 	prefSettings  = "settings"  // map[string]any (UI preferences)
 	prefDrafts    = "drafts"    // []proto.DraftDTO (composer drafts)
+	prefBouncer   = "bouncer"   // "off" when native IRC clients are refused
 )
+
+// BouncerAllowed reports whether a tenant accepts IRC bouncer logins. Access
+// is on by default (the listener itself is opt-in config); only an explicit
+// "off" from Settings refuses it.
+func BouncerAllowed(t *Tenant) bool {
+	if t == nil || t.Prefs == nil {
+		return true
+	}
+	v, err := t.Prefs.Pref(prefBouncer)
+	return err != nil || v != "off"
+}
 
 // loadSettings reads a tenant's UI preferences map, or nil when unset or on error.
 func loadSettings(t *Tenant) map[string]any {

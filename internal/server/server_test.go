@@ -748,3 +748,69 @@ func TestLargeFrameAccepted(t *testing.T) {
 		t.Fatalf("frame = %q, want pong (socket survived the large frame)", env.T)
 	}
 }
+
+type fakeBouncer struct {
+	mu      sync.Mutex
+	dropped []string
+}
+
+func (f *fakeBouncer) Listener() (string, int, bool, string) {
+	return "", 6697, true, "AB:CD"
+}
+
+func (f *fakeBouncer) DisconnectUser(userID, _ string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dropped = append(f.dropped, userID)
+}
+
+// TestBouncerSet: init carries the bouncer listener info, and bouncer:set
+// persists the per-account switch, drops attached IRC clients when turning
+// access off, and echoes the new state.
+func TestBouncerSet(t *testing.T) {
+	eng := core.New(core.Options{Sink: noopSink{}})
+	prefs := &fakePrefs{}
+	fb := &fakeBouncer{}
+	srv := New(SingleUser(&Tenant{Engine: eng, Prefs: prefs}), Options{Bouncer: fb})
+	eng.AddSink(srv.Sink(defaultUser))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = eng.Run(ctx) }()
+
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(hs.URL, "http")+"/ws", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer ws.CloseNow()
+	readFrame(t, ctx, ws) // hello
+	var init proto.InitState
+	if err := decode(readFrame(t, ctx, ws), &init); err != nil {
+		t.Fatal(err)
+	}
+	want := proto.BouncerInfo{Available: true, Enabled: true, Port: 6697, TLS: true, Fingerprint: "AB:CD", Username: defaultUser}
+	if init.Bouncer != want {
+		t.Fatalf("init bouncer = %+v, want %+v", init.Bouncer, want)
+	}
+
+	frame, _ := proto.Frame(proto.TBouncerSet, proto.BouncerSet{Enabled: false})
+	if err := wsjson.Write(ctx, ws, frame); err != nil {
+		t.Fatal(err)
+	}
+	env := readFrame(t, ctx, ws)
+	var got proto.BouncerInfo
+	if env.T != proto.TBouncer || decode(env, &got) != nil || got.Enabled {
+		t.Fatalf("frame = %q %+v, want bouncer with enabled=false", env.T, got)
+	}
+	if v, _ := prefs.Pref(prefBouncer); v != "off" {
+		t.Fatalf("pref = %q, want off", v)
+	}
+	fb.mu.Lock()
+	dropped := fb.dropped
+	fb.mu.Unlock()
+	if len(dropped) != 1 || dropped[0] != defaultUser {
+		t.Fatalf("dropped = %v, want [%s]", dropped, defaultUser)
+	}
+}

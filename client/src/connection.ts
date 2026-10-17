@@ -45,6 +45,8 @@ import {
   type WireError,
   type HighlightRules,
   type AliasTable,
+  type BouncerInfo,
+  type BouncerSet,
   type FriendDTO,
   type MonitorRef,
   type MuteSet,
@@ -215,6 +217,9 @@ export interface Store {
   // per-browser in localStorage alongside lastActive.
   recent: string[];
   readMarkers: Record<string, number>;
+  // Built-in IRC bouncer access for this account, from init and the bouncer
+  // frame; null until the first init.
+  bouncer: BouncerInfo | null;
 }
 
 function emptyBuffer(c: Partial<ChannelDTO> & { name: string }): Buffer {
@@ -418,6 +423,7 @@ export class Connection {
     digestOpen: false,
     recent: loadRecent(),
     readMarkers: {},
+    bouncer: null,
   });
 
   private ws: WebSocket | null = null;
@@ -764,6 +770,9 @@ export class Connection {
       case T.Aliases:
         this.store.aliases = (env.d as AliasTable).aliases ?? {};
         break;
+      case T.Bouncer:
+        this.store.bouncer = env.d as BouncerInfo;
+        break;
       case T.Settings:
         if (env.d && (env.d as SettingsPayload).settings) {
           loadSettingsPayload((env.d as SettingsPayload).settings);
@@ -862,6 +871,7 @@ export class Connection {
     // before applying networks.
     this.store.highlight = init.highlight ?? { patterns: [], exceptions: [] };
     this.store.aliases = init.aliases?.aliases ?? {};
+    this.store.bouncer = init.bouncer ?? null;
     this.store.muted = (init.muted ?? []).map((r) => bufKey(r.network, r.buffer));
     if (init.settings) {
       loadSettingsPayload(init.settings);
@@ -1573,6 +1583,13 @@ export class Connection {
   // frame), which refreshes store.aliases.
   setAliases(aliases: Record<string, string>) {
     this.sendFrame<AliasTable>(T.AliasSet, { aliases });
+  }
+
+  // setBouncerEnabled allows or denies native IRC clients on this account.
+  // Disabling also drops any attached clients; the server echoes a bouncer
+  // frame, which refreshes store.bouncer.
+  setBouncerEnabled(enabled: boolean) {
+    this.sendFrame<BouncerSet>(T.BouncerSet, { enabled });
   }
 
   // migrateLegacyMutes carries forward per-channel mutes that older builds

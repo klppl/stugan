@@ -30,7 +30,10 @@ type Hub interface {
 
 // Options configures the IRC bouncer server.
 type Options struct {
-	Logger      *slog.Logger
+	Logger *slog.Logger
+	// Addr is the listen address, reported to the web UI's Settings so it
+	// can tell users where to point their IRC client.
+	Addr        string
 	TLS         bool
 	CertFile    string
 	KeyFile     string
@@ -70,6 +73,33 @@ func New(hub Hub, opts Options) *Server {
 // Sink returns the core.Sink for a specific user to be registered on the engine.
 func (s *Server) Sink(userID string) core.Sink {
 	return &ircSink{srv: s, user: userID}
+}
+
+// Listener implements server.Bouncer: it reports where the bouncer listens
+// and, for a self-signed certificate, the fingerprint clients must pin. The
+// fingerprint is empty until ListenAndServe has set up TLS.
+func (s *Server) Listener() (host string, port int, tlsOn bool, fingerprint string) {
+	h, p, err := net.SplitHostPort(s.opts.Addr)
+	if err == nil {
+		port, _ = strconv.Atoi(p)
+		if ip := net.ParseIP(h); ip == nil || !ip.IsUnspecified() {
+			host = h
+		}
+	}
+	s.mu.Lock()
+	if r := s.tlsResult; r != nil && r.Source == "self-signed" {
+		fingerprint = r.Fingerprint
+	}
+	s.mu.Unlock()
+	return host, port, s.opts.TLS, fingerprint
+}
+
+// DisconnectUser implements server.Bouncer: it closes every IRC client
+// attached to userID's account, e.g. after they revoke bouncer access.
+func (s *Server) DisconnectUser(userID, reason string) {
+	for _, sess := range s.reg.allForUser(userID) {
+		sess.closeWithError(reason)
+	}
 }
 
 type registry struct {
@@ -184,7 +214,9 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		if err != nil {
 			return fmt.Errorf("ircserver: tls setup failed: %w", err)
 		}
+		s.mu.Lock()
 		s.tlsResult = tlsRes
+		s.mu.Unlock()
 		ln, err = tls.Listen("tcp", addr, tlsRes.Config)
 		if err != nil {
 			return fmt.Errorf("ircserver: tls listen on %s failed: %w", addr, err)
