@@ -103,29 +103,42 @@ func TestInstagramTarget(t *testing.T) {
 	}
 }
 
-func TestParseInstagramEmbed(t *testing.T) {
-	doc := `<div class="Embed"><img class="EmbeddedMediaImage" alt="x" src="https://cdn.example/p.jpg?a=1&amp;b=2">
-	<div class="Likes">&nbsp;<a>x</a>></div><span>>1.2K likes<</span>
-	<div class="Caption"><a class="CaptionUsername" href="/u">some_user</a> Hello<br/>world &amp; more
-	<a>View all 12 comments</a></div></div>`
-	c, err := parseInstagramEmbed(doc, "https://www.instagram.com/p/x/")
+func TestCardFromInstagramOG(t *testing.T) {
+	doc := `<html><head>
+	<meta property="og:title" content="ANTHON HELLMAN | ONLINE COACH on Instagram: &quot;Chiapudding with berries&quot;">
+	<meta property="og:description" content="5,244 likes, 43 comments - anthonhellman on August 24, 2026: &quot;Chiapudding with berries &amp; protein&quot;.">
+	<meta property="og:image" content="https://scontent.cdninstagram.com/v/x.jpg?a=1&amp;b=2">
+	<title>Instagram</title></head><body></body></html>`
+	c, err := cardFromInstagramOG(ParseOpenGraph(strings.NewReader(doc), "p"), "https://www.instagram.com/p/x/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Title != "@some_user" {
+	if c.Title != "ANTHON HELLMAN | ONLINE COACH (@anthonhellman)" {
 		t.Errorf("title = %q", c.Title)
 	}
-	if c.Description != "Hello world & more" {
+	if c.Description != "Chiapudding with berries & protein" {
 		t.Errorf("description = %q", c.Description)
 	}
-	if c.Image != "https://cdn.example/p.jpg?a=1&b=2" {
+	if c.Image != "https://scontent.cdninstagram.com/v/x.jpg?a=1&b=2" {
 		t.Errorf("image = %q", c.Image)
 	}
-	if len(c.Details) != 1 || c.Details[0] != "1200 likes" {
-		t.Errorf("details = %v", c.Details)
+	want := []string{"5,244 likes", "43 comments", "2026-08-24"}
+	if strings.Join(c.Details, "|") != strings.Join(want, "|") {
+		t.Errorf("details = %v, want %v", c.Details, want)
 	}
-	if _, err := parseInstagramEmbed("<html>login</html>", "u"); err == nil {
-		t.Error("expected error for unrecognizable page")
+
+	// Comments only, no likes (hidden counts), and a name equal to the handle.
+	c, err = cardFromInstagramOG(Card{
+		Title:       "someone on Instagram: \"hi\"",
+		Description: "7 comments - someone on May 1, 2025: \"hi\"",
+	}, "u")
+	if err != nil || c.Title != "@someone" || len(c.Details) != 2 || c.Details[0] != "7 comments" {
+		t.Errorf("sparse = %+v, %v", c, err)
+	}
+
+	// A login wall / generic page must not produce a card.
+	if _, err := cardFromInstagramOG(Card{Title: "Instagram"}, "u"); err == nil {
+		t.Error("expected error for page without instagram metadata")
 	}
 }
 

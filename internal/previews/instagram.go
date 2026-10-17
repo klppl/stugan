@@ -4,23 +4,29 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html"
+	"io"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
+	"time"
+
+	"golang.org/x/net/html/charset"
 )
 
-// instagram scrapes the public embed page of a post, reel or IGTV video:
-// no login, token or official API. Instagram can change that markup, rate-
-// limit or block server IPs at any time, so every field is best-effort and a
-// miss falls through to the generic Open Graph provider (usually a login
-// wall, i.e. a plain link).
+// instagram builds a card from the Open Graph tags Instagram serves to link
+// unfurlers (the same ones Facebook and Discord see), so there is no login,
+// token or official API involved. The tags pack the author, like and comment
+// counts, date and caption into og:title / og:description; this unpacks them.
+// Instagram can change that text, rate-limit or block server IPs at any time:
+// a miss falls through to the generic Open Graph provider (a plain card).
 type instagram struct{}
 
 func newInstagram() instagram { return instagram{} }
 
 func (instagram) Name() string { return "instagram" }
+
+// igUA is the crawler identity Instagram serves metadata-rich pages to.
+const igUA = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
 
 var igPath = regexp.MustCompile(`^/(?:[A-Za-z0-9._]+/)?(p|reels?|tv)/([A-Za-z0-9_-]+)`)
 
@@ -44,21 +50,10 @@ func (instagram) Match(u *url.URL) bool {
 	return ok
 }
 
-var (
-	igLikes    = regexp.MustCompile(`(?i)>\s*(\d[\d,.]*)\s*([km])?\s*likes?\s*<`)
-	igUser     = regexp.MustCompile(`(?s)<a[^>]*class="[^"]*CaptionUsername[^"]*"[^>]*>(.*?)</a>`)
-	igUserJSON = regexp.MustCompile(`\\?"username\\?":\s*\\?"([A-Za-z0-9._]+)\\?"`)
-	igCaption  = regexp.MustCompile(`(?s)<div class="Caption"[^>]*>(.*?)</div>`)
-	igImage    = regexp.MustCompile(`(?s)<img[^>]*class="[^"]*EmbeddedMediaImage[^"]*"[^>]*src="([^"]+)"`)
-	igBR       = regexp.MustCompile(`(?i)<br\s*/?>`)
-	igTag      = regexp.MustCompile(`<[^>]+>`)
-	igMoreCmts = regexp.MustCompile(`(?s)View all [\d,.]+ comments.*$`)
-)
-
 func (instagram) Fetch(ctx context.Context, f *Fetcher, u *url.URL) (*Card, error) {
 	kind, code, _ := igTarget(u)
-	embed := fmt.Sprintf("https://www.instagram.com/%s/%s/embed/captioned/", kind, code)
-	resp, err := f.Get(ctx, embed, map[string]string{"Referer": "https://www.instagram.com/"})
+	page := fmt.Sprintf("https://www.instagram.com/%s/%s/", kind, code)
+	resp, err := f.Get(ctx, page, map[string]string{"User-Agent": igUA})
 	if err != nil {
 		return nil, err
 	}
@@ -66,76 +61,68 @@ func (instagram) Fetch(ctx context.Context, f *Fetcher, u *url.URL) (*Card, erro
 	if resp.StatusCode/100 != 2 {
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
-	buf := make([]byte, 0, 64<<10)
-	tmp := make([]byte, 32<<10)
-	for len(buf) < maxHTMLBytes {
-		n, rerr := resp.Body.Read(tmp)
-		buf = append(buf, tmp[:n]...)
-		if rerr != nil {
-			break
-		}
+	body, err := charset.NewReader(io.LimitReader(resp.Body, maxHTMLBytes), resp.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, err
 	}
-	return parseInstagramEmbed(string(buf), u.String())
+	return cardFromInstagramOG(ParseOpenGraph(body, page), u.String())
 }
 
-func parseInstagramEmbed(doc, pageURL string) (*Card, error) {
+var (
+	igLikes    = regexp.MustCompile(`(?i)([\d][\d,.]*[km]?) likes?\b`)
+	igComments = regexp.MustCompile(`(?i)([\d][\d,.]*[km]?) comments?\b`)
+	igAuthor   = regexp.MustCompile(`- ([A-Za-z0-9._]+) on `)
+	igDate     = regexp.MustCompile(`on ([A-Z][a-z]+ \d{1,2}, \d{4})`)
+	igName     = regexp.MustCompile(`^(.*?) on Instagram:`)
+)
+
+// cardFromInstagramOG unpacks Instagram's OG text, e.g.
+//
+//	og:title:       Display Name on Instagram: "caption…"
+//	og:description: 5,244 likes, 43 comments - user on August 24, 2026: "caption…"
+func cardFromInstagramOG(og Card, pageURL string) (*Card, error) {
+	desc := og.Description
+	if !strings.Contains(desc, " - ") && !strings.Contains(og.Title, "on Instagram") {
+		return nil, errors.New("no instagram metadata in page")
+	}
+	// Everything before the first `: "` is the stats header; the rest is the
+	// caption, wrapped in quotes.
+	head, caption := desc, ""
+	if i := strings.Index(desc, `: "`); i >= 0 {
+		head, caption = desc[:i], desc[i+3:]
+		caption = strings.TrimRight(strings.TrimSpace(caption), `."`)
+	}
+
 	var user string
-	if m := igUser.FindStringSubmatch(doc); m != nil {
-		user = cleanHTML(m[1])
-	} else if m := igUserJSON.FindStringSubmatch(doc); m != nil {
+	if m := igAuthor.FindStringSubmatch(head); m != nil {
 		user = m[1]
 	}
-	var caption string
-	if m := igCaption.FindStringSubmatch(doc); m != nil {
-		caption = igMoreCmts.ReplaceAllString(m[1], "")
-		caption = igBR.ReplaceAllString(caption, "\n")
-		caption = cleanHTML(caption)
-		// The caption div starts with the username link; drop the repeat.
-		caption = strings.TrimSpace(strings.TrimPrefix(caption, user))
+	var name string
+	if m := igName.FindStringSubmatch(og.Title); m != nil {
+		name = strings.TrimSpace(m[1])
 	}
-	var image string
-	if m := igImage.FindStringSubmatch(doc); m != nil {
-		image = html.UnescapeString(m[1])
+
+	c := &Card{URL: pageURL, Image: og.Image, Site: "Instagram", Description: shorten(caption, 280)}
+	switch {
+	case name != "" && user != "" && !strings.EqualFold(name, user):
+		c.Title = fmt.Sprintf("%s (@%s)", name, user)
+	case user != "":
+		c.Title = "@" + user
+	case name != "":
+		c.Title = name
+	default:
+		return nil, errors.New("no author in instagram metadata")
 	}
-	if user == "" && caption == "" && image == "" {
-		return nil, errors.New("embed page had no recognizable fields")
+	if m := igLikes.FindStringSubmatch(head); m != nil {
+		c.Details = append(c.Details, m[1]+" likes")
 	}
-	c := &Card{URL: pageURL, Description: shorten(caption, 280), Image: image, Site: "Instagram"}
-	if user != "" {
-		c.Title = "@" + strings.TrimPrefix(user, "@")
-	} else {
-		c.Title = "Instagram post"
+	if m := igComments.FindStringSubmatch(head); m != nil {
+		c.Details = append(c.Details, m[1]+" comments")
 	}
-	if m := igLikes.FindStringSubmatch(doc); m != nil {
-		if n, ok := parseLikes(m[1], m[2]); ok {
-			c.Details = append(c.Details, compactCount(n)+" likes")
+	if m := igDate.FindStringSubmatch(head); m != nil {
+		if t, err := time.Parse("January 2, 2006", m[1]); err == nil {
+			c.Details = append(c.Details, t.Format("2006-01-02"))
 		}
 	}
 	return c, nil
-}
-
-func cleanHTML(s string) string {
-	s = igTag.ReplaceAllString(s, "")
-	s = html.UnescapeString(s)
-	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		lines[i] = strings.Join(strings.Fields(l), " ")
-	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
-}
-
-// parseLikes turns "1,234" or "1.2" with a k/m suffix into a count.
-func parseLikes(num, suffix string) (int64, bool) {
-	num = strings.ReplaceAll(num, ",", "")
-	f, err := strconv.ParseFloat(num, 64)
-	if err != nil {
-		return 0, false
-	}
-	switch strings.ToLower(suffix) {
-	case "k":
-		f *= 1e3
-	case "m":
-		f *= 1e6
-	}
-	return int64(f), true
 }

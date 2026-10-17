@@ -26,6 +26,10 @@ func New() *http.Client {
 		},
 		Transport: &http.Transport{
 			DialContext: guardedDial,
+			// A custom DialContext silently disables HTTP/2. Some sites
+			// (Instagram's link-unfurler path) only serve their metadata
+			// pages over h2 and bounce HTTP/1.1 clients to a login wall.
+			ForceAttemptHTTP2: true,
 			// Keep connections short-lived; this isn't a hot path.
 			MaxIdleConns:        10,
 			IdleConnTimeout:     30 * time.Second,

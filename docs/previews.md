@@ -107,11 +107,13 @@ free quota) the card shows title, description, thumbnail, channel, duration,
 views, likes and date. Without a key it uses YouTube's keyless oEmbed endpoint:
 title, channel and thumbnail only.
 
-**Instagram.** Uses the public embed page of a post (no login, no token) and
-reads the username, caption, like count and image from its HTML. That markup
-is not a stable API: Instagram can change it, rate-limit or block server IPs
-at any time. When that happens the provider fails quietly and the link shows as
-a plain card. Private posts never work.
+**Instagram.** Fetches the post page the way a link unfurler (Facebook,
+Discord) does, with no login, token or official API, and unpacks the author,
+like and comment counts, date, caption and image from its Open Graph tags.
+That text is not a stable API: Instagram can change it, rate-limit or block
+server IPs at any time. When that happens the provider fails quietly and the
+link shows as a plain card (run with `STUGAN_PREVIEWS_LOG_LEVEL=debug` to see
+why). Private posts never work.
 
 ## Adding a provider
 
