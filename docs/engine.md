@@ -76,6 +76,58 @@ compose file publishes no ports, so `:8016` exists only on the compose network.
 Remember the stugan container still needs `listen = "0.0.0.0:8080"` in its
 `config.toml` (see [docker.md](docker.md)).
 
+### Adding the engine to an existing stack
+
+Already running stugan with your own compose file (Dockge, Portainer, plain
+compose)? Add the engine to **the same stack** and keep everything else,
+especially the data volume or bind mount, exactly as it is.
+
+If stugan sits on an external network shared with a reverse proxy or tunnel
+(here `cloudflared_net`), give the two containers a private network of their
+own, and keep the engine off the shared one so nothing else can reach it:
+
+```yaml
+services:
+  stugan:
+    image: ghcr.io/klppl/stugan:latest
+    restart: unless-stopped
+    networks: [cloudflared_net, engine]   # proxy network + private link
+    volumes:
+      - ./data:/data                      # unchanged: your history and config
+    environment:
+      - STUGAN_ENGINE_URL=tcp://stugan-engine:8016
+      - STUGAN_ENGINE_SECRET=${STUGAN_ENGINE_SECRET}
+    depends_on:
+      stugan-engine:
+        condition: service_healthy
+
+  stugan-engine:
+    image: ghcr.io/klppl/stugan:engine-1
+    container_name: stugan-engine
+    restart: unless-stopped
+    networks: [engine]                    # never the shared proxy network
+    environment:
+      - STUGAN_ENGINE_SECRET=${STUGAN_ENGINE_SECRET}
+      - STUGAN_ENGINE_LISTEN=0.0.0.0:8016
+    healthcheck:
+      test: ["CMD", "/app/stugan-engine", "-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+networks:
+  cloudflared_net:
+    external: true
+  engine: {}                              # not `internal: true`: the engine must reach IRC servers
+```
+
+Put `STUGAN_ENGINE_SECRET=…` in the stack's `.env` (Dockge and Portainer have
+an editor for it). From then on, the stack's **Update** pulls both images but
+recreates only `stugan`, because `engine-1` hasn't moved. To check it, restart
+just the `stugan` container: its status buffer should say
+`resumed connection held by stugan-engine…`.
+
 ### Opting in or out
 
 - **Opting in** drops IRC once: the `up -d` that adds the engine restarts

@@ -128,7 +128,9 @@ docker compose -f docker-compose.engine.yml up -d
 
 Upgrades then restart only `stugan`, which re-attaches with no quit/rejoin and
 no missed messages. Keep the engine on its `engine-1` tag, never `latest`. See
-[engine.md](engine.md) for why, and for opting in and out.
+[engine.md](engine.md) for why, and for opting in and out. Already running
+stugan from your own compose file, e.g. behind a tunnel on an external network?
+See [adding the engine to an existing stack](engine.md#adding-the-engine-to-an-existing-stack).
 
 ## Behind a reverse proxy (TLS)
 
