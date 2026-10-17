@@ -52,12 +52,6 @@
 
     code { font: 0.92em var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
     pre code { background: none; border: 0; padding: 0; font: inherit; }
-    .engine { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 24px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
-    .engine p { margin: 0 0 12px; }
-    .engine pre { background: var(--bg); }
-    .flow { font: 13px/1.7 var(--mono); color: var(--muted); white-space: pre; overflow-x: auto; margin: 0; }
-    .flow b { color: var(--text); font-weight: 600; }
-    @media (max-width: 760px) { .engine { grid-template-columns: 1fr; } }
     pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; font: 14px/1.6 var(--mono); margin: 0 0 12px; }
     .muted { color: var(--muted); }
 
@@ -99,43 +93,12 @@
     <li><b>Lua plugins.</b> Commands, filters, hooks and timers, with hot reload and a curated library.</li>
     <li><b>Previews &amp; uploads.</b> Link previews, inline images and video, paste-to-upload.</li>
     <li><b>Built-in bouncer.</b> Connect WeeChat, HexChat, irssi or any other IRC client too.</li>
-    <li><b>Upgrade without dropping IRC.</b> An optional sidecar holds your connections while stugan restarts: no quit/rejoin flood, nothing missed.</li>
+    <li><b>Upgrade without dropping IRC.</b> The optional <a href="https://github.com/klppl/stugan/blob/main/docs/engine.md">stugan-engine</a> holds your connections while stugan restarts. Nobody sees you quit, and nothing is missed.</li>
     <li><b>SSH terminal UI.</b> Reach your session from any terminal.</li>
     <li><b>Installable PWA.</b> Works on phones, with push notifications.</li>
     <li><b>Multi-user.</b> Separate accounts with isolated networks and history.</li>
     <li><b>Easy backups.</b> Export and restore everything in one click.</li>
   </ul>
-
-  <h2 id="engine">Upgrade without the reconnect flood</h2>
-  <div class="engine">
-    <div>
-      <p>Restarting an IRC client normally means every network sees you quit and
-        rejoin, services identify you again, and whatever was said meanwhile is gone.</p>
-      <p>Run the optional <b>stugan-engine</b> next to stugan and it keeps the IRC
-        connections open while stugan restarts. Same nick, same channels, nothing
-        re-registers. Messages that arrived in the gap show up with the time they
-        were actually sent, each stored once.</p>
-      <p class="muted">One extra container, no data of its own. It is turned on with
-        two environment variables, and without them stugan connects to IRC itself
-        as it always has.</p>
-    </div>
-    <div class="flow">browser · TUI · bouncer
-      │
-    <b>stugan</b>         restarts
-      ║ link
- <b>stugan-engine</b>     stays up
-      │
-  IRC servers
-
-<b>$ docker compose up -d</b>
-✓ only stugan is recreated
-✓ re-attaches to held sockets
-✓ backlog delivered,
-  nobody saw you leave</div>
-  </div>
-  <p class="muted" style="margin-top:12px">Set up with
-    <a href="https://github.com/klppl/stugan/blob/main/docker-compose.engine.yml"><code>docker-compose.engine.yml</code></a>;
-    details in the <a href="https://github.com/klppl/stugan/blob/main/docs/engine.md">engine guide</a>.</p>
 
   <h2 id="get-started">Get started</h2>
   <p>Run it with Docker (linux/amd64):</p>
