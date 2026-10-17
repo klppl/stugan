@@ -18,7 +18,7 @@ backlog sync.
 - **Backlog & History Sync**: Replays recent history on attach with `@time=` tags and supports the IRCv3 `draft/chathistory` standard (`LATEST`, `BEFORE`, `AFTER`, `AROUND`, `BETWEEN`, `TARGETS`).
 - **IRCv3 Support**:
   - `server-time`
-  - `message-tags` (cross-client tag delivery, typing indicators, reactions, deletions)
+  - `message-tags` (typing indicators, reactions, and deletions from upstream are delivered as `TAGMSG` with `+typing`, `+draft/react`/`+draft/reply`, and `+draft/delete` — see the note under [Client commands](#7-client-commands))
   - `echo-message` & `znc.in/self-message` (multi-client synchronization)
   - `batch`
   - `draft/chathistory`
@@ -146,3 +146,30 @@ Clients configured to verify certificates can pin this fingerprint directly.
 If a client negotiates the `soju.im/bouncer-networks` capability, it can connect without binding to a specific network:
 - Running `BOUNCER LISTNETWORKS` returns a structured listing of all upstream networks and their real-time connection status.
 - Real-time network state updates are broadcast downstream with `soju.im/bouncer-networks-notify`.
+- A client then opens one connection per network with `BOUNCER BIND <netid>` before registering.
+- `BOUNCER ADDNETWORK`, `CHANGENETWORK`, and `DELNETWORK` are refused with `FAIL BOUNCER UNKNOWN_COMMAND` — networks are managed in the stugan web UI (or the SSH UI).
+
+---
+
+## 7. Client Commands
+
+Commands from an attached client are routed into the same engine path as the
+web composer (`SendInput`), so aliases, plugin `hook_command`, and built-ins
+all apply:
+
+| Client sends | Handled as |
+|--------------|------------|
+| `PRIVMSG` / `NOTICE` | a message to the target (CTCP `ACTION` → `/me`); a line starting `/` runs as a stugan command |
+| `JOIN`, `PART`, `TOPIC`, `NICK`, `AWAY` | the matching built-in command on the bound network |
+| `LIST [mask]` | an upstream `LIST`, via the same path as the web channel browser |
+| `WHOIS`, `WHO`, `MODE`, `KICK`, `INVITE` | passed upstream as `/quote`; replies are relayed back |
+| `CHATHISTORY` | answered from stugan's SQLite history (`LATEST`, `BEFORE`, `AFTER`, `AROUND`, `BETWEEN`, `TARGETS`) |
+| `MARKREAD` | advances the persisted read marker and notifies every client and browser |
+| `BOUNCER` | `LISTNETWORKS` / `BIND` (see above) |
+| `PING` / `PONG` / `QUIT` | handled locally; `QUIT` only detaches this client |
+| anything else | passed upstream as a raw line (`/quote`) |
+
+**Note:** the raw passthrough forwards the command and parameters but not
+client message tags, so a client-sent `TAGMSG` (typing, reactions) or `REDACT`
+does not reach the upstream network with its tags. Use the web UI to react to
+or delete messages.

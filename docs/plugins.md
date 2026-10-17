@@ -154,6 +154,11 @@ stugan.networks()                 -- -> array of {id,name,nick,state}
 stugan.channels(network)          -- -> array of {name,kind,topic}
 stugan.members(network, channel)  -- -> array of {nick,account,modes,away}
 stugan.nick(network)              -- -> current nick string
+
+-- Read stored history (SQLite) for a buffer, oldest -> newest. limit
+-- defaults to 50. Includes lines from before this script was loaded.
+stugan.backlog(network, buffer [, limit])  -- -> array of {from,text,time}
+                                           --    (time = unix seconds)
 ```
 
 `stugan.send` and friends validate the network exists and return
@@ -310,6 +315,25 @@ A default `User-Agent: stugan-plugin/<script>` is sent unless you set your own.
 
 See `docs/examples/title.lua` for a worked plugin that announces the title of
 links posted in a channel.
+
+## 3.6.3 JSON
+
+`stugan.json` converts between JSON strings and Lua values, typically for
+`stugan.http` request and response bodies:
+
+```lua
+local body = stugan.json.encode({ model = "x", messages = { { role = "user", content = "hi" } } })
+local data, err = stugan.json.decode(res.body)   -- nil, "error text" on bad JSON
+if data then stugan.log.info(data.choices[1].message.content) end
+```
+
+Both return `value` on success or `nil, err` on failure. Encoding maps a
+table with only positive integer keys to a JSON array and any other table to
+an object (so an empty table encodes as `{}`); functions and userdata become
+`null`. Decoding maps objects to tables with string keys and arrays to 1-based
+tables. A JSON `null` currently decodes to the string `"<nil>"` rather than
+`nil`, so test fields for the values you expect instead of for `nil`. See `docs/examples/ai.lua` for a full LLM client
+built on `stugan.http` + `stugan.json`.
 
 ## 3.7 Hot reload, isolation, sandboxing
 
@@ -582,9 +606,15 @@ ignore list.
 ## 3.10 Built-in commands
 
 A `/command` that no plugin claims falls back to built-ins: `/me`, `/msg`,
-`/notice`, `/join`, `/part`, `/topic`, `/nick`, `/quit`, `/chathistory`
-(server-side history where supported), `/raw` (alias `/quote`), and plugin
-management commands: `/load <script-name>` (downloads from the official plugin library
-and loads it live), `/unload <script-name>`, and `/reload <script-name>`.
+`/notice`, `/query`, `/join`, `/part`, `/topic`, `/nick`, `/away`, `/back`,
+`/quit`, `/connect`, `/disconnect`, `/chathistory` (server-side history where
+supported), moderation (`/kick`, `/ban`, `/unban`, `/invite`, `/op`, `/voice`,
+`/mode`, …), lookups (`/whois`, `/whowas`, `/who`, `/names`), `/raw` (alias
+`/quote`), and plugin management commands: `/load <script-name>` (downloads
+from the official plugin library and loads it live) or `/load <URL> [name]`
+(imports a script from any URL), `/unload <script-name>`, `/reload
+<script-name>`, and `/update <script-name>` (re-downloads a curated or
+imported script and reloads it). See [core.md](core.md#built-in-commands) for
+the full list.
 Anything else unrecognized passes through as a raw IRC command. A line
 starting with `//` is sent literally (an escaped leading slash).

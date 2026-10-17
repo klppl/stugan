@@ -43,7 +43,9 @@ The baseline girc enables, plus stugan's additions via `SupportedCaps`, cover:
 `server-time`, `message-tags`, `echo-message`, `account-notify`,
 `extended-join`, `account-tag`, `away-notify`, `multi-prefix`,
 `userhost-in-names`, `chghost`, `setname`, `invite-notify`, `labeled-response`,
-`standard-replies`, `draft/chathistory`, `draft/message-redaction`. The
+`standard-replies`, `draft/chathistory` (and the ratified `chathistory`),
+`draft/message-redaction`, `draft/multiline`, and `draft/read-marker` /
+`read-marker`. The
 negotiated set is reported per-network via `Caps()` → `NetworkDTO.Caps`, so the
 client can gate cap-dependent UI.
 
@@ -92,6 +94,11 @@ events stugan does not model). Highlights:
 - **TAGMSG**: `+typing` → `typing`; `+draft/react` + `+draft/reply` → `react`
   (target msgid + emoji).
 - **REDACT** (`draft/message-redaction`) → `redact` (target msgid + reason).
+- **KICK / MODE / INVITE / ACCOUNT** → `kick`, `mode` (membership prefix
+  changes split out from channel-setting flags), `invite`, and `account`.
+- **MONITOR (730/731)** → `monitor` (one event per numeric, listing the nicks).
+- **BATCH `draft/multiline`** → buffered and reassembled into a single
+  `message_in` before translation (see [ircv3.md](ircv3.md)).
 
 Because translation is pure, it is exhaustively table-tested in
 `translate_test.go` without a live server.

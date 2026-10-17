@@ -92,7 +92,7 @@ explicit store library.
 | `ChannelInspectorModal.vue` | Channel details (topic, modes, members) |
 | `Toast.vue` | Transient notices and server errors |
 | `TopBar.vue` | Menu/search/mentions/members toggles, network status, settings (hideable; Cmd-K covers it) |
-| `Settings.vue` + `settings/*` | Appearance, chat behavior, highlights, aliases, notifications/account, uploads, plugins, backup/restore |
+| `Settings.vue` + `settings/*` | Appearance, chat behavior, highlights, aliases, notifications/account, uploads, plugins, IRC clients (`BouncerSettings.vue`: per-account bouncer access, connection details, client setup commands), backup/restore |
 | `NetworkSettings.vue` | Edit a network (host/TLS/nick/SASL/cert/perform/channels), connect/disconnect, channel browser, delete |
 | `AddNetwork.vue` | Add-network form |
 | `ChannelBrowser.vue` | LIST browser: filterable, sortable channel list; click to join |

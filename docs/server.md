@@ -16,6 +16,8 @@ HTTP endpoints (auth, uploads, previews, push). It imports `core`, `proto`, and
 | `/api/me` | GET | reports auth state (enabled, authenticated, user, magic-word grant) |
 | `/api/magicword` | POST | site-wide password gate → sets `stugan_magic` cookie |
 | `/api/magicword/logout` | POST | clears the magic cookie |
+| `/api/export` | GET | download a backup of the user's data; `?format=tar.gz` (default) \| `zip` \| `db` |
+| `/api/import` | POST | restore a backup (multipart `file`, or a raw body); `?mode=replace` (default) \| `merge`; 500 MB cap |
 | `/api/preview` | GET | fetch a URL and return Open Graph metadata |
 | `/api/proxy` | GET | proxy a remote image/video (hides client IP, avoids mixed content) |
 | `/api/upload` | POST | multipart upload → stored file URL + expiry |
@@ -33,15 +35,32 @@ HTTP endpoints (auth, uploads, previews, push). It imports `core`, `proto`, and
 | `t` | engine call |
 |-----|-------------|
 | `msg:send` | `SendInput` (alias → plugin command → built-in → IRC) |
-| `backlog:fetch` | history `Backlog` / `BacklogAround` |
-| `search` | history `Search` (FTS5) |
+| `backlog:fetch` | history `Backlog` / `BacklogAround` (async) |
+| `context:fetch` | history window around one message (async) |
+| `search` | history `Search` (FTS5, async) |
+| `missed:fetch` | history `MissedHighlights` (async) |
+| `read` | `MarkRead` (persists, fans out via `Sink.ReadMarker`) |
+| `complete:req` | `Complete` → plugin `hook_completion` (async) |
 | `net:add` | `AddNetworkLive` |
-| `net:edit` | `UpdateNetwork` |
+| `net:edit` | `UpdateNetwork` (merged over the existing `NetworkConfig`) |
 | `net:remove` | `RemoveNetwork` |
 | `net:connect` | `SetConnected` |
 | `net:info` | replies `net:info` with `NetworkConfig` |
+| `net:reorder` / `buf:reorder` | `ReorderNetworks` / `ReorderBuffers` |
+| `buf:close` | `CloseBuffer` |
+| `monitor:add` / `monitor:remove` | `AddMonitor` / `RemoveMonitor` |
 | `typing` / `react` / `redact` | `SendTyping` / `SendReaction` / `SendRedact` |
 | `list` | `ListChannels` |
+| `plugin:list` | replies `plugin:list` (`Plugins` + `CuratedPlugins`) |
+| `plugin:action` | load/unload/uninstall/reload/import/download/update/check_updates (async) |
+| `plugin:setting` | `SetPluginSetting`, then replies `plugin:list` |
+| `highlight:set` / `aliases:set` | `SetHighlighter` / `SetAliases` + `prefs`, broadcast to the user's tabs |
+| `settings:set` / `draft:set` / `mute` | `prefs` only, broadcast to the user's tabs (`draft` skips the sender) |
+| `bouncer:set` | `prefs` `bouncer`; denying drops attached IRC clients; broadcasts `bouncer` |
+| `presence` | records tab visibility (push suppression) |
+| `ping` | replies `pong` |
+
+"Async" handlers run off the read loop (see WebSocket limits below).
 
 ## s2c fan-out — `userSink`
 
@@ -54,6 +73,8 @@ to every browser attached to that user (`routeToUser`):
 | `Print` | `msg` (`MessageDTO`) |
 | `NetworkChanged` | `net:update` (`NetworkDTO`) |
 | `NetworkRemoved` | `net:remove` |
+| `NetworksReordered` | `net:reorder` |
+| `ReadMarker` | `read` |
 | `Typing` | `typing` (with `nick`) |
 | `React` | `react` (with `nick`) |
 | `Redact` | `redact` (with `by`) |
@@ -69,15 +90,21 @@ The `server.Hub` is the seam between a connection and a user's engine:
 ```go
 type Hub interface {
     AuthEnabled() bool
-    Login(username, password string) (token string, ok bool)
+    Login(username, password string) (userID string, ok bool)
     Session(token string) (userID string, ok bool)
     StartSession(userID string) (token string, maxAgeSec int)
     EndSession(token string)
-    Tenant(userID string) (*Tenant, bool)   // *core.Engine + History
+    Tenant(userID string) (*Tenant, bool)
     Users() []string
 }
 
-type Tenant struct { Engine *core.Engine; History History }
+type Tenant struct {
+    Engine     *core.Engine
+    History    History      // backlog / search / missed / read markers
+    Prefs      Prefs        // the store's prefs table
+    Store      BackupStore  // Backup / Import for /api/export, /api/import
+    ScriptsDir string       // restored into on import
+}
 ```
 
 A `/ws` connection resolves its user from the `stugan_session` cookie, or — when
@@ -114,9 +141,14 @@ hash for a `[[users]]` `password_hash`).
   (incl. Cloudflare Tunnel) so the limiter keys per visitor rather than
   collapsing every request onto the proxy's address. Untrusted peers' forwarded
   headers are ignored, so they can't be spoofed to dodge the limit.
-- **SSRF guard.** `/api/preview` and `/api/proxy` use a guarded dialer that
-  refuses private/loopback/link-local addresses, an 8s timeout, a redirect cap,
-  and a response size cap (~10 MB for the proxy).
+- **SSRF guard.** `/api/preview`, `/api/proxy`, and the Lua `stugan.http`
+  binding all fetch through `internal/safehttp`. Its client resolves the host
+  and dials only globally routable addresses — refusing private, loopback,
+  link-local, unspecified and multicast addresses plus ranges the stdlib
+  predicates miss (`100.64.0.0/10` CGNAT, `192.0.0.0/24`, `198.18.0.0/15`,
+  `240.0.0.0/4`) — with an 8s timeout and at most 5 redirects. The proxy also
+  caps responses at ~10 MB. Because the check happens at dial time, a DNS
+  answer can't swap in an internal address after validation.
 - **WebSocket limits.** One inbound frame is capped at 1 MiB. Slow handlers
   (database queries, plugin downloads, completion hooks) run off the
   connection's read loop — up to 4 in flight per socket, then inline, which
@@ -128,6 +160,13 @@ hash for a `[[users]]` `password_hash`).
 
 ## Auxiliary services
 
+- **Backup & restore (`backup.go`)** — `GET /api/export` snapshots the user's
+  database (`VACUUM INTO`) and packages it with their `scripts/` and a
+  manifest via `internal/backup`. `POST /api/import` accepts the same
+  archive (or a bare `.db`), imports it in `replace` or `merge` mode
+  ([storage.md](storage.md#data-portability-backups--imports)), copies any
+  bundled scripts back into the user's scripts dir, and re-syncs every
+  attached browser with a fresh `init`.
 - **Link previews (`previews.go`)** — fetch a URL, extract `og:title` /
   `og:description` / `og:image` (falling back to `<title>`/meta description),
   return JSON, cache for an hour.

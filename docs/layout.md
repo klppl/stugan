@@ -18,9 +18,12 @@ internal/
   plugin/          PluginHost impl: a Lua host (the only place gopher-lua lives)
   auth/            bcrypt credentials + sessions (multi-user)
   server/          HTTP + WebSocket, typed event router, multi-tenant hub
+  ircserver/       IRC bouncer front end for native IRC clients (ircserver.md)
   tui/             SSH terminal UI (the only place wish + Bubble Tea live)
   proto/           shared wire-protocol structs (TS mirror in client/)
-  scripts/         embedded bundled Lua plugins (fish.lua)
+  backup/          backup archive build/extract (tar.gz / zip / raw .db)
+  safehttp/        SSRF-guarded HTTP client (previews, proxy, stugan.http)
+  scripts/         embedded bundled Lua plugins (fish, ignore, ai, webhooks)
 client/            Vue 3 + TS + Vite frontend
 docs/              this documentation
 ```
@@ -50,10 +53,12 @@ is depended upon.
 | `core`    | `proto` (types), stdlib                 | `server`, `irc`, `store`, `plugin`, girc, Lua, UI |
 | `irc`     | girc, `core`, stdlib                    | `server`, `plugin` |
 | `store`   | `modernc.org/sqlite`, `core`, stdlib    | `server`, `plugin` |
-| `plugin`  | gopher-lua, `core`, stdlib              | `server`, `irc` impl, `store` impl |
-| `server`  | `core`, `proto`, `auth`, coder/websocket | girc, Lua |
+| `plugin`  | gopher-lua, fsnotify, `core`, `safehttp`, stdlib | `server`, `irc` impl, `store` impl |
+| `server`  | `core`, `proto`, `auth`, `backup`, `safehttp`, `config`, `store` (import-mode type only), coder/websocket, webpush | girc, Lua |
+| `ircserver` | `core`, `server` (tenant/hub + bouncer access), stdlib | girc, Lua, `store` impl |
 | `tui`     | `core`, wish, Bubble Tea, Lip Gloss     | girc, Lua, `server`, `store` impl |
-| `proto`   | stdlib only                             | everything else |
+| `auth`    | bcrypt, stdlib                          | everything else |
+| `proto`, `backup`, `safehttp`, `logging` | stdlib only     | everything else |
 | `config`  | go-toml/v2, stdlib                      | everything else |
 
 **The rule that matters:** core imports none of the heavy libraries, and
@@ -81,8 +86,9 @@ one-directional (`irc`/`store`/`plugin` → `core`, never the reverse). See
   terminal logger prints it.
 
 Every transport is just another consumer of this bus. The WebSocket server is
-*one* Sink-driven bridge; an IRC-server front-end (bouncer mode, see
-[ircserver.md](ircserver.md)) would be a second, mirror-image one.
+*one* Sink-driven bridge; the IRC bouncer front end (`ircserver`, see
+[ircserver.md](ircserver.md)) and the SSH terminal UI (`tui`, see
+[ssh.md](ssh.md)) are two more, each registering its own `Sink` per user.
 
 ## Data flow
 
@@ -128,14 +134,17 @@ of truth for networks** — config `[[networks]]` only seed it on first run.
 config.Load → logging.New
   → for each effective user:
        open store (SQLite) at <data>/stugan.db
-       install bundled scripts (fish.lua) into <scripts>/
+       install bundled scripts (fish, ignore, ai, webhooks) into <scripts>/
        build core.Engine{ user, connector, highlighter, aliases }
        register store + plugin host as Sinks
        load networks from store (seed from config on first run)
        dial each network via the Connector, add to the engine
-       wrap in server.Tenant{ Engine, History }
+       wrap in server.Tenant{ Engine, History, Prefs, Store, ScriptsDir }
   → build the Hub over all tenants
-  → server.New(hub) ; ListenAndServe(ctx)
+  → if [ircserver] listen: ircserver.New(hub), register its Sinks
+  → server.New(hub), register the userSinks
+  → if [ssh] enabled:      tui.New(resolver), register its Sinks
+  → start listeners (HTTP, bouncer, SSH) + the hourly retention prune
   → block on ctx (SIGINT/SIGTERM) → graceful Close() of each engine + store
 ```
 

@@ -24,16 +24,20 @@ type Network struct {
     Channels []*Channel     // joined channels + open queries + status buffer
     Caps     []string       // negotiated IRCv3 caps (filled on snapshot)
     Params   NetworkParams  // the persisted connection config
+    MonitorOnline map[string]bool  // friends-list presence (lowercased nick → online), per connection
 }
 
 type Channel struct {
-    Name      string
-    Kind      ChannelKind            // channel | query | status
-    Topic     string
-    Members   map[string]*Member
-    Unread    int
-    Highlight int
-    State     map[string]string      // opaque plugin key/value bag (e.g. encryption)
+    Name        string
+    Kind        ChannelKind          // channel | query | status
+    Topic       string
+    TopicSetter string               // from 333 RPL_TOPICWHOTIME
+    TopicTime   time.Time
+    Mode        string               // channel modes, e.g. "+nt"
+    Members     map[string]*Member
+    Unread      int
+    Highlight   int
+    State       map[string]string    // opaque plugin key/value bag (e.g. encryption)
 }
 
 type Member struct {
@@ -45,6 +49,7 @@ type Member struct {
 
 type Message struct {
     ID        string             // IRCv3 msgid if present, else generated
+    Seq       int64              // store rowid (history paging cursor); 0 for live lines
     Network   string
     Buffer    string             // channel or query name
     Time      time.Time          // server-time if present, else receipt time
@@ -101,8 +106,8 @@ func (e *Engine) loop(ctx context.Context) {
 Every event flows through this one goroutine in arrival order, so state
 mutation never races. The pipeline per event is:
 
-1. **`handle`** — routes by `ev.Type`. Internal events (`set_state`, `print`)
-   bypass plugins. Mutable events (`message_in`, `message_out`, `command`) go
+1. **`handle`** — routes by `ev.Type`. The internal `set_state` event bypasses
+   plugins. Mutable events (`message_in`, `message_out`, `command`) go
    to `PluginHost.Dispatch`, which may drop, rewrite, or (for commands) claim
    them. Everything else is a notify-only dispatch.
 2. **`apply`** — commits the (possibly mutated) event. Specialized paths handle
@@ -150,26 +155,32 @@ type Event struct {
     Time    time.Time
     Message *Message          // message events
 
-    Nick, NewNick string      // join/part/quit/nick/away
-    Channel       string
+    Nick, NewNick string      // join/part/quit/nick/away; invite: inviter/invitee
+    Buffer        string      // the channel or query the event applies to
     Account       string
-    Text          string
+    Text          string      // reason / topic / mode flags / numeric line
     State         ConnState
+    TopicMeta     bool        // topic: 333 setter/time only, not a new topic
     Target        string      // msgid (react / redact)
+    Kicker        string      // kick: who kicked (Nick is the removed member)
 
-    Command string            // command: name without leading slash
-    Args    []string          // command: whitespace-split arguments
-    Members []Member          // names: listed channel members
-    Away    bool              // away: whether Nick is now away
-    Count   int               // list_item: user count; numeric: code
+    Command     string        // command: name without leading slash
+    Args        []string      // command: whitespace-split arguments; monitor: nicks
+    Members     []Member      // names: listed channel members
+    MemberModes []MemberMode  // mode: membership prefix changes (+o bob, …)
+    ChanModes   string        // mode: channel-setting part of the flags
+    Away        bool          // away: whether Nick is now away
+    Online      bool          // monitor: whether the Args nicks are now online
+    Count       int           // list_item: user count; numeric: code
 }
 ```
 
 `EventType` values: `message_in`, `message_out` (mutable/droppable);
-`command` (claimable); `join`, `part`, `quit`, `nick`, `topic`, `connect`,
-`disconnect`, `names`, `away` (notify); `list_item`, `list_end` (channel
-browser); `typing`, `react`, `redact` (ephemeral); `numeric` (WHOIS/WHO/errors);
-`set_state`, `print` (internal, bypass plugins).
+`command` (claimable); `join`, `part`, `kick`, `quit`, `nick`, `topic`,
+`connect`, `disconnect`, `names`, `away`, `account`, `invite`, `mode`
+(notify); `list_item`, `list_end` (channel browser); `typing`, `react`,
+`redact` (ephemeral); `numeric` (WHOIS/WHO/errors); `monitor` (MONITOR
+730/731 presence); `set_state` (internal, bypasses plugins).
 
 ## Interfaces core defines
 
@@ -181,6 +192,7 @@ type IRCConn interface {
     Message(target, text string) error
     Caps() []string
     CurrentNick() string
+    Autojoin()                   // join configured channels; called after Perform
     Close() error
 }
 
@@ -191,6 +203,21 @@ type ConnHandler interface{ HandleEvent(ev Event) }
 type PluginHost interface {
     Dispatch(ctx context.Context, ev Event) (out Event, keep bool)
     Commands() []string
+    Complete(word, network, buffer string) []string   // hook_completion candidates
+
+    // Plugin manager (Settings → Plugins, the TUI overlay, /load etc.)
+    Plugins() []PluginInfo
+    CuratedPlugins() []CuratedPluginInfo
+    LoadPlugin(name string) error
+    UnloadPlugin(name string) error
+    UninstallPlugin(name string) error
+    ReloadPlugin(name string) error
+    DownloadPlugin(ctx context.Context, name string) error        // from the official library
+    ImportPlugin(ctx context.Context, rawURL, name string) error  // from any URL
+    UpdatePlugin(ctx context.Context, name string) error
+    CheckPluginUpdates(ctx context.Context, name string) error    // "" = all
+    SetPluginSetting(script, key, value string) error             // stugan.setting values
+
     Close() error
 }
 
@@ -203,6 +230,12 @@ type Connector interface {
 type NetworkStore interface {
     SaveNetwork(p NetworkParams) error
     DeleteNetwork(id string) error
+}
+
+// Stored history, read back for plugins (stugan.backlog). Implemented by
+// internal/store; beforeSeq is a Message.Seq cursor (0 = latest page).
+type HistoryReader interface {
+    Backlog(ctx context.Context, network, buffer string, beforeSeq int64, limit int) ([]Message, bool, error)
 }
 ```
 
@@ -252,6 +285,9 @@ type API interface {
     Channels(network string) []ChannelInfo
     Members(network, channel string) []MemberInfo
     Nick(network string) string
+    Backlog(network, buffer string, limit int) []MessageInfo   // stored history
+    HoldJoins(network string) error      // defer autojoin until service auth…
+    ReleaseJoins(network string) error   // …completes (or join_hold_timeout fires)
 }
 ```
 
@@ -265,7 +301,8 @@ A `/command` event that no plugin claims falls back to `runBuiltinCommand`
 
 - **Messaging:** `/me`, `/msg`, `/notice`, `/query`.
 - **Membership:** `/join` (preserves keys), `/part`, `/nick`, `/topic`,
-  `/away`, `/back`.
+  `/away`, `/back`, `/quit [reason]` (sends `QUIT`; use `/disconnect` to take
+  the network offline and keep it there).
 - **Moderation:** `/ban`, `/unban`, `/kick`, `/invite`,
   `/op` `/deop` `/voice` `/devoice` `/halfop` `/dehalfop`, `/mode`.
 - **Lookups** (replies route back to the issuing buffer via `numeric` events):
@@ -275,6 +312,10 @@ A `/command` event that no plugin claims falls back to `runBuiltinCommand`
   authentication failure parked it — and `/disconnect` drops it without
   forgetting it. `/connect` with arguments is passed through as the IRC
   operator `CONNECT` command.
+- **Plugins:** `/load <name>` (download a curated script from the official
+  library and load it) or `/load <URL> [name]` (import a script from any URL),
+  `/unload <name>`, `/reload <name>`, `/update <name>` (re-download a
+  curated/imported script and reload it).
 - **Raw:** `/raw` (alias `/quote`). An unrecognized command is sent as a raw
   IRC line; a line beginning `//` is sent literally.
 

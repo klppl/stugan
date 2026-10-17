@@ -66,6 +66,7 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `net:edit`      | `NetConfig`    | apply settings changes to a network |
 | `net:connect`   | `NetConnect`   | connect/disconnect a network |
 | `net:info`      | (ref)          | request a network's full config |
+| `list`          | `ListReq`      | run a channel-browser `LIST` (optional mask in `query`); results arrive as `list:result` |
 | `plugin:list`   | (none)         | request the plugin manager list |
 | `plugin:action` | `PluginAction` | manage, install, or update a plugin |
 | `plugin:setting`| `PluginSettingReq` | set one declared setting of a plugin (replies with `plugin:list`) |
@@ -154,6 +155,7 @@ type NetAdd struct {
     TLS, SASLExternal bool
 }
 type NetConnect struct { Network string; Connect bool }
+type ListReq    struct { Network, Query string }   // Query: optional LIST mask
 type NetRemove  struct { Network string }
 
 type Typing struct { Network, Buffer, Nick, State string }   // State: active|paused|done

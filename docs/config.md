@@ -7,7 +7,10 @@ scripts, and data all live under that root, resolved in order:
 2. `$XDG_CONFIG_HOME/stugan`
 3. `~/.config/stugan`
 
-`-home <path>` overrides the lookup. Under the root: `config.toml`, `scripts/`
+`-home <path>` overrides the lookup. The other command-line flags are
+`-hashpw` (read a password from stdin and print its bcrypt hash; see
+[Multi-user](#multi-user--auth-and-users)) and `-version` (print the version
+and exit). Under the root: `config.toml`, `scripts/`
 (Lua plugins), and `data/` (the SQLite database and uploads); in multi-user
 mode each user gets `users/<name>/data` and `users/<name>/scripts`. All fields
 are optional — a missing config file is fine. A ready-to-edit example lives at
@@ -89,6 +92,7 @@ authoritative.
 | `cert_file` | string | PEM with certificate **and** private key concatenated (for CertFP). |
 | `server_pass` | string | IRC `PASS` — for bouncers (ZNC/soju) or password-gated servers. |
 | `perform` | []string | Command lines run after registration on every (re)connect. Supports the variables listed below. |
+| `join_hold_timeout` | int | Seconds autojoin waits while a plugin holds it with `stugan.hold_joins` (e.g. `qauth.lua` waiting for Q auth) before joining anyway. Default `45`. |
 
 ```toml
 [[networks]]

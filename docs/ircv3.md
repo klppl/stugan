@@ -59,15 +59,20 @@ Features built on top:
 1. **SASL SCRAM** (`SCRAM-SHA-256`). We do PLAIN and EXTERNAL/CertFP; SCRAM
    avoids sending the password even once. Depends on girc support.
 
-2. **`draft/chathistory` depth** — `CHATHISTORY TARGETS`, proper pagination
-   (BEFORE/AFTER/BETWEEN), and unread sync, to lean on server history where
-   available instead of only the local SQLite backlog.
+2. **Upstream `draft/chathistory` depth** — as a *client*, stugan only issues
+   `CHATHISTORY LATEST` via `/chathistory`. Using `TARGETS`, proper pagination
+   (BEFORE/AFTER/BETWEEN), and unread sync against the upstream server would
+   let it lean on server history instead of only the local SQLite backlog.
+   (As a *server*, the bouncer front end already answers all of these to
+   downstream clients — see [ircserver.md](ircserver.md).)
 
 3. **Surface `chghost` / `setname`** — we negotiate them but don't reflect
    host/realname changes anywhere user-visible.
 
-4. **`soju.im/bouncer-networks`** — manage bouncer-side networks from the UI
-   when connected through soju.
+4. **Upstream `soju.im/bouncer-networks`** — when stugan itself connects
+   *through* soju, list and manage soju's networks from the UI instead of
+   configuring one stugan network per upstream. (Downstream, stugan already
+   serves this cap to its own IRC clients.)
 
 Lower priority / nice-to-have: `utf8only`, `draft/channel-rename`,
 `draft/metadata`, `draft/account-registration`, WHOX-driven richer member

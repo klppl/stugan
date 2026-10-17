@@ -145,6 +145,7 @@ The `prefs` table stores opaque JSON key/value preferences per user:
 - `muted` — set of muted buffer identifiers.
 - `settings` — UI settings (theme, font size, link preview expansion, colored nicks, typing indicators).
 - `drafts` — unsent composer drafts per `(network, buffer)`, synced real-time across tabs and devices.
+- `bouncer` — `"off"` when this account refuses native IRC clients (see [ircserver.md](ircserver.md#per-account-access-web-ui)); absent means allowed.
 
 ## Network persistence
 

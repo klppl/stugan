@@ -60,7 +60,7 @@ The TUI supports mouse cell motion in terminal emulators:
 | type text, `Enter` | Send a message; a line starting with `/` is a command (`/join`, `/msg`, `/me`, `/nick`, `/load`, …), exactly as in the web input |
 | `Ctrl-N` / `Ctrl-P` | Next / Previous buffer |
 | `Alt-↑` / `Alt-↓` | Previous / Next network |
-| `PgUp` / `PgDn` | Scroll chat history |
+| `PgUp` / `PgDn` (or `Ctrl-U` / `Ctrl-D`) | Scroll chat history |
 | `Ctrl-K` | Quick switcher (fuzzy search jump to any buffer) |
 | `Ctrl-O` | Networks overlay (connect/disconnect, add, edit, remove) |
 | `Ctrl-L` | Channel list browser (`LIST`) for current network |
