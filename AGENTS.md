@@ -34,17 +34,7 @@ npm run dev                                           # Vite dev server on :5173
 
 When implementing new features, modifying architecture, or fixing bugs in `stugan`:
 
-1. **Consult OpenWiki First**: Reference the relevant documentation in `openwiki/` before planning or making modifications:
-   - [openwiki/index.md](file:///Users/alex/GitHub/stugan/openwiki/index.md) - Master documentation index.
-   - [openwiki/architecture/overview.md](file:///Users/alex/GitHub/stugan/openwiki/architecture/overview.md) & [openwiki/architecture/core.md](file:///Users/alex/GitHub/stugan/openwiki/architecture/core.md) - Module dependency contracts and interface boundaries.
-   - [openwiki/architecture/concurrency_event_model.md](file:///Users/alex/GitHub/stugan/openwiki/architecture/concurrency_event_model.md) - Inbound/outbound event bus, single engine loop goroutine, and Sink fan-out.
-   - [openwiki/subsystems/internal_irc.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/internal_irc.md) - IRC protocol translation and IRCv3 capability negotiation.
-   - [openwiki/subsystems/internal_plugin.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/internal_plugin.md) & [openwiki/subsystems/plugins.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/plugins.md) - Lua plugin runtime, worker goroutine, and `stugan.*` API.
-   - [openwiki/subsystems/internal_store.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/internal_store.md) - SQLite schema, FTS5 search, and per-user database isolation.
-   - [openwiki/subsystems/internal_server.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/internal_server.md) - HTTP/WebSocket server, multi-tenant Hub, and authentication.
-   - [openwiki/subsystems/internal_tui.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/internal_tui.md) - SSH Terminal UI (Wish + Bubble Tea).
-   - [openwiki/subsystems/internal_proto_client_proto.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/internal_proto_client_proto.md) - WebSocket wire protocol envelope `{t, id, d}`.
-   - [openwiki/subsystems/client.md](file:///Users/alex/GitHub/stugan/openwiki/subsystems/client.md) - Vue 3 frontend, reactive state modules (no Pinia), and virtualization.
+1. **Consult the docs first**: Read the relevant page in `docs/` before planning or making modifications (e.g. `docs/core.md`, `docs/protocol.md`, `docs/plugins.md`, `docs/storage.md`, `docs/server.md`, `docs/frontend.md`). Treat source code and tests as authoritative.
 
 2. **Core Architectural Invariants**:
    - **`internal/core` Independence**: Never import concrete libraries (`girc`, `gopher-lua`, `modernc/sqlite`, `coder/websocket`, `wish`, `bubbletea`) into `internal/core`. `core` defines the interfaces; concrete packages implement them.
@@ -56,16 +46,3 @@ When implementing new features, modifying architecture, or fixing bugs in `stuga
    - Run Go test suite: `go test -race ./...`
    - Run Go formatting & vet: `gofmt -l . && go vet ./...`
    - Run Client typecheck: `cd client && npm run typecheck`
-
-<!-- OPENWIKI:START -->
-
-## OpenWiki Maintenance
-
-This repository has a generated `openwiki/` evidence index. It is optional just-in-time context, not required startup reading.
-
-- Treat source code and tests as authoritative. A brief's unknowns and review items are verification gaps, not automatic requirements.
-- Prefer the narrowest quiet validation that proves the changed behavior. Preserve complete failure output.
-
-The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
-
-<!-- OPENWIKI:END -->
