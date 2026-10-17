@@ -112,39 +112,39 @@ end, { priority = 900 })
 
 stugan.hook_command("webhook", function(args, ctx)
   if #args == 0 then
-    stugan.print(ctx.network, ctx.buffer, "Usage: /webhook <test|url|format|status>")
-    stugan.print(ctx.network, ctx.buffer, "  /webhook test                   Send test notification payload")
-    stugan.print(ctx.network, ctx.buffer, "  /webhook url <https://...>     Set webhook endpoint URL")
-    stugan.print(ctx.network, ctx.buffer, "  /webhook format <discord|slack|ntfy|generic>")
+    stugan.print(ctx, "Usage: /webhook <test|url|format|status>")
+    stugan.print(ctx, "  /webhook test                   Send test notification payload")
+    stugan.print(ctx, "  /webhook url <https://...>     Set webhook endpoint URL")
+    stugan.print(ctx, "  /webhook format <discord|slack|ntfy|generic>")
     return
   end
 
   local cmd = args[1]:lower()
   if cmd == "test" then
-    stugan.print(ctx.network, ctx.buffer, "🔔 Sending test webhook notification to format '" .. format .. "'…")
+    stugan.print(ctx, "🔔 Sending test webhook notification to format '" .. format .. "'…")
     send_webhook(ctx.network, ctx.buffer, ctx.nick or "stugan", "Test notification from stugan webhooks plugin!", function(ok, msg)
       if ok then
-        stugan.print(ctx.network, ctx.buffer, "✅ " .. msg)
+        stugan.print(ctx, "✅ " .. msg)
       else
-        stugan.print(ctx.network, ctx.buffer, "❌ " .. msg)
+        stugan.print(ctx, "❌ " .. msg)
       end
     end)
   elseif cmd == "url" and #args >= 2 then
     local new_url = args[2]
     stugan.kv.set("webhook_url", new_url)
-    stugan.print(ctx.network, ctx.buffer, "Webhook target URL updated.")
+    stugan.print(ctx, "Webhook target URL updated.")
   elseif cmd == "format" and #args >= 2 then
     local new_fmt = args[2]:lower()
     if new_fmt == "discord" or new_fmt == "slack" or new_fmt == "ntfy" or new_fmt == "generic" then
       stugan.kv.set("format", new_fmt)
-      stugan.print(ctx.network, ctx.buffer, "Webhook payload format updated to: " .. new_fmt)
+      stugan.print(ctx, "Webhook payload format updated to: " .. new_fmt)
     else
-      stugan.print(ctx.network, ctx.buffer, "Invalid format. Supported: discord, slack, ntfy, generic")
+      stugan.print(ctx, "Invalid format. Supported: discord, slack, ntfy, generic")
     end
   elseif cmd == "status" then
     local configured = trim(webhook_url) ~= "" and "Configured" or "Not configured"
-    stugan.print(ctx.network, ctx.buffer, "Webhook Status: " .. configured .. " | Format: " .. format .. " | Highlights: " .. notify_highlights)
+    stugan.print(ctx, "Webhook Status: " .. configured .. " | Format: " .. format .. " | Highlights: " .. notify_highlights)
   else
-    stugan.print(ctx.network, ctx.buffer, "Unknown subcommand. Usage: /webhook <test|url|format|status>")
+    stugan.print(ctx, "Unknown subcommand. Usage: /webhook <test|url|format|status>")
   end
 end)

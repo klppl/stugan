@@ -636,11 +636,13 @@ end)
 -- /me, /notice, /topic — we have to claim these from the built-ins so the
 -- engine doesn't transmit plaintext. When a key is set we send raw IRC
 -- with the encrypted body; when there's no key we delegate to the same
--- helpers the built-ins use, so behavior is identical to no-plugin.
+-- helpers the built-ins use, so behavior is identical to no-plugin. Usage
+-- errors print in place (explicit network/buffer) rather than in the *fish
+-- reply window, since these stand in for the built-ins.
 stugan.hook_command("me", function(args, ctx)
   local text = table.concat(args, " ")
   if text == "" then
-    stugan.print(ctx, "usage: /me <action>")
+    stugan.print(ctx.network, ctx.buffer, "usage: /me <action>")
     return
   end
   local key, mode = get_key(ctx.network, ctx.buffer)
@@ -658,7 +660,7 @@ end)
 stugan.hook_command("notice", function(args, ctx)
   local target = args[1]
   if not target or #args < 2 then
-    stugan.print(ctx, "usage: /notice <target> <text>")
+    stugan.print(ctx.network, ctx.buffer, "usage: /notice <target> <text>")
     return
   end
   local text = table.concat(args, " ", 2)
@@ -682,7 +684,7 @@ end)
 stugan.hook_command("msg", function(args, ctx)
   local target = args[1]
   if not target or #args < 2 then
-    stugan.print(ctx, "usage: /msg <target> <text>")
+    stugan.print(ctx.network, ctx.buffer, "usage: /msg <target> <text>")
     return
   end
   local text = table.concat(args, " ", 2)

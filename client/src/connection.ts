@@ -260,6 +260,13 @@ export function bufKey(network: string, buffer: string): string {
   return network + "\x1f" + foldTarget(buffer);
 }
 
+// isBouncerNick reports whether a sender/buffer is a plugin's ZNC-style
+// "*name" reply window (the per-network *status buffer excluded). Lines from
+// it are plugin output, never a real user.
+export function isBouncerNick(name: string): boolean {
+  return name.length > 1 && name[0] === "*" && name !== "*status";
+}
+
 // isSameBuffer reports whether a buffer reference matches a network and buffer target case-insensitively.
 export function isSameBuffer(ref: { network: string; buffer: string } | null | undefined, network: string, buffer: string): boolean {
   return !!ref && ref.network === network && foldTarget(ref.buffer) === foldTarget(buffer);
@@ -432,6 +439,10 @@ export class Connection {
   // A buffer to land on once it exists, set by navigateTo (notification click /
   // deep link) and consumed by ensureActive.
   private pendingNav: { network: string; buffer: string } | null = null;
+  // Set briefly after the user sends a /command from the input box: the first
+  // plugin reply (a line from a "*name" window) on that network brings its
+  // window forward, so running /urls opens *urls like a query would.
+  private awaitPluginReply: { network: string; until: number } | null = null;
   // Liveness machinery. The browser never surfaces protocol ping/pong to JS and
   // won't fire onclose on a half-open socket (common when a mobile tab is
   // suspended and the TCP flow dies silently), so we run our own heartbeat:
@@ -1114,6 +1125,11 @@ export class Connection {
     // counted, or highlighted). Nothing to filter here.
     const buf = this.ensureBuf(net, m.buffer);
     if (m.kind === "system") this.learnIgnore(net.id, m.text);
+    const wait = this.awaitPluginReply;
+    if (wait && m.kind === "system" && isBouncerNick(m.from) && wait.network === net.id) {
+      this.awaitPluginReply = null;
+      if (Date.now() < wait.until && !isSameBuffer(this.store.active, net.id, buf.name)) this.select(net.id, buf.name);
+    }
     // Dedupe against the recent tail: during the connect handshake a line
     // can arrive both inside the init snapshot and as a live frame that was
     // queued while the snapshot was being built. Same message, same msgid —
@@ -1441,6 +1457,11 @@ export class Connection {
 
   // send returns false (with a toast) when either the daemon socket or the
   // selected IRC network is down, so the input keeps the draft.
+  // expectPluginReply arms awaitPluginReply for a command typed by the user.
+  expectPluginReply(network: string) {
+    this.awaitPluginReply = { network, until: Date.now() + 3000 };
+  }
+
   send(network: string, buffer: string, text: string): boolean {
     const command = text.startsWith("/") && !text.startsWith("//");
     if (!command && this.net(network)?.state !== "registered") {

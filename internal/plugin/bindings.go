@@ -229,10 +229,15 @@ func (h *Host) buildAPI(s *script) *lua.LTable {
 		return push2(L, h.api.ReleaseJoins(L.CheckString(1)))
 	}))
 	t.RawSetString("print", s.L.NewFunction(func(L *lua.LState) int {
-		// print(network, buffer, text) or print(ctx_or_msg_table, text)
+		// print(network, buffer, text) or print(ctx_or_msg_table, text).
+		// A command ctx carries a reply buffer (the script's "*name" query);
+		// printing to it keeps plugin output out of the channel.
 		if tbl, ok := L.Get(1).(*lua.LTable); ok {
 			network := lvString(tbl.RawGetString("network"))
-			buffer := lvString(tbl.RawGetString("buffer"))
+			buffer := lvString(tbl.RawGetString("reply"))
+			if buffer == "" {
+				buffer = lvString(tbl.RawGetString("buffer"))
+			}
 			h.api.Print(network, buffer, L.CheckString(2))
 			return 0
 		}

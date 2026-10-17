@@ -1020,6 +1020,16 @@ body {
   color: var(--fg-dim);
   font-style: italic;
 }
+/* A plugin's "*name" reply window (ZNC-style): the sender is a bouncer
+   pseudo-nick, drawn as a dim tag so it never reads as a person talking. */
+.messages-content .message .from.bouncer,
+.message .from.bouncer {
+  color: var(--fg-dim);
+  font-weight: 500;
+  font-style: italic;
+  cursor: default;
+  text-decoration: none;
+}
 
 /* Cozy message layout (Message Layout setting; "auto" picks it on phones,
    resolved onto <html data-msg-layout> by App.vue). A nick + time header sits

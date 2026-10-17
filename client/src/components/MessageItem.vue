@@ -5,7 +5,7 @@ import { segments, extractURLs, isImage, isVideo, proxied, stripFormatting } fro
 import { getPreview, fetchPreview, type Preview } from "../previews";
 import { settings } from "../settings";
 import { nickColor } from "../nickColor";
-import { connection, messageRefKey } from "../connection";
+import { connection, messageRefKey, isBouncerNick } from "../connection";
 import { openImageViewer } from "../ui";
 import Icon from "./Icon.vue";
 
@@ -110,8 +110,14 @@ function time(iso: string): string {
 // Membership churn (join/part/quit/nick) and true system notices both render
 // as a dim "— text" line; only privmsg/notice/action carry a sender + body.
 const EVENT_KINDS = ["join", "part", "quit", "nick"];
+// A plugin's command reply, printed into its ZNC-style "*name" window. It
+// renders like a chat line (so links stay clickable) but under a bouncer
+// pseudo-nick that is plainly not a person and carries no nick menu.
+const isBouncerLine = computed(
+  () => props.msg.kind === "system" && isBouncerNick(props.msg.from),
+);
 const isSystemLine = computed(
-  () => props.msg.kind === "system" || EVENT_KINDS.includes(props.msg.kind),
+  () => (props.msg.kind === "system" && !isBouncerLine.value) || EVENT_KINDS.includes(props.msg.kind),
 );
 
 // Our own nick keeps the dedicated "self" color; everyone else is hashed.
@@ -124,7 +130,8 @@ const segs = computed(() => segments(props.msg.text));
 // Raw-text render paths (system lines, /me) strip mIRC formatting codes the
 // same way segments() does for the normal body.
 const cleanText = computed(() => stripFormatting(props.msg.text));
-const urls = computed(() => extractURLs(props.msg.text));
+// Plugin replies (e.g. a /urls listing) get plain links, not embeds/cards.
+const urls = computed(() => (isBouncerLine.value ? [] : extractURLs(props.msg.text)));
 const media = computed(() => urls.value.filter((u) => isImage(u) || isVideo(u)).slice(0, 4));
 const links = computed(() => urls.value.filter((u) => !isImage(u) && !isVideo(u)).slice(0, 2));
 const previewURLs = computed(() => [...media.value, ...links.value]);
@@ -205,7 +212,7 @@ function onLinkClick(url: string, e: MouseEvent) {
 <template>
   <div
     class="message"
-    :class="[msg.kind, { highlight: msg.highlight, self: msg.self, cont }]"
+    :class="[msg.kind, { highlight: msg.highlight, self: msg.self, cont, bouncer: isBouncerLine }]"
     :data-msgid="msg.id || undefined"
     @mouseleave="disarmDelete"
   >
@@ -253,6 +260,12 @@ function onLinkClick(url: string, e: MouseEvent) {
     </template>
     <template v-else>
       <span
+        v-if="isBouncerLine"
+        class="from bouncer"
+        title="stugan plugin window — not a real user; type here to run its command"
+      >{{ msg.from }}</span>
+      <span
+        v-else
         class="from long-press-target"
         :class="{ self: msg.self }"
         :style="{ color: fromColor(msg.from) }"

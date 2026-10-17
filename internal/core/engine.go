@@ -2123,6 +2123,12 @@ func bufferKind(name string) ChannelKind {
 // StatusBuffer is the per-network status/server buffer name.
 const StatusBuffer = "*status"
 
+// IsPluginBuffer reports whether a buffer name has the ZNC-style "*name"
+// shape plugins print their command replies into (*status excluded).
+func IsPluginBuffer(name string) bool {
+	return len(name) > 1 && name[0] == '*' && name != StatusBuffer
+}
+
 // IsQueryBuffer reports whether a buffer name is a private query (a DM): not a
 // channel and not the per-network status buffer. The server uses this to treat
 // incoming DMs as notification-worthy even when they match no highlight rule.

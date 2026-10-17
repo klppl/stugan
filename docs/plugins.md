@@ -115,8 +115,31 @@ ctx = {
   buffer  = "#go-nuts",
   kind    = "channel",   -- "channel"|"query"|"status"
   nick    = "me",         -- our current nick on this network
+  -- hook_command only:
+  reply   = "*urls",      -- the script's reply window (see below)
+  command = "urls",       -- the command name as typed, lowercased
 }
 ```
+
+**Reply windows.** Command output belongs to the plugin, not to the channel
+it was typed in, so `stugan.print(ctx, text)` from a `hook_command` callback
+prints into `ctx.reply`: a per-network query named `*<script>` (`*urls`,
+`*ai`, …), the same convention ZNC uses for `*status` and its module
+windows. Its lines carry that name as the sender, so clients show it as a
+bouncer pseudo-nick rather than a person; IRC clients attached to the
+bouncer receive them as a PRIVMSG from `*<script>`.
+
+Text typed into a loaded script's `*<script>` window runs that script's
+command of the same name (`10` in `*urls` runs `/urls 10`) and is never sent
+to IRC; when the script has no such command, a hint is printed instead. A
+command run from its own reply window gets, as `ctx.buffer`, the buffer the
+script was last invoked from, so `/urls` typed in `*urls` still lists that
+channel's links. Queries named after something other than a loaded script
+(a real ZNC `*module` upstream, say) behave like ordinary queries.
+
+To annotate a specific buffer instead — `title.lua` printing a page title
+under the link, say — use the explicit `stugan.print(network, buffer, text)`
+form, which always prints exactly where it is told.
 
 ## 3.5 Action & state API
 
@@ -139,7 +162,8 @@ stugan.release_joins(network)
 
 -- Inject a line into a buffer's view WITHOUT sending to IRC (local print).
 stugan.print(network, buffer, text)
--- Shorthand using the hook's ctx/msg buffer:
+-- Shorthand using the hook's ctx/msg buffer. A hook_command ctx prints into
+-- its reply window (ctx.reply, "*<script>"), not the channel — see 3.4.
 stugan.print(buffer_table, text)
 
 -- Publish an opaque per-buffer key/value bag. Carried through snapshots
@@ -559,7 +583,7 @@ only re-installed if the script with that exact name doesn't exist.
 
 ### ai.lua — AI chat assistant & conversation summarizer
 
-Queries OpenAI, DeepSeek, Anthropic Claude, Google Gemini, or local Ollama instances via `stugan.http` + `stugan.json`. `/ask <prompt>` prints concise AI responses into the buffer; `/summarize [N]` reads recent buffer history from a sliding memory window and generates a 3-bullet summary of what you missed while away. Form settings: provider, secret API key, model name, and optional custom endpoint. See `docs/examples/ai.lua` and `internal/scripts/ai.lua`.
+Queries OpenAI, DeepSeek, Anthropic Claude, Google Gemini, or local Ollama instances via `stugan.http` + `stugan.json`. `/ask <prompt>` prints concise AI responses into the `*ai` reply window; `/summarize [N]` reads recent buffer history from a sliding memory window and generates a 3-bullet summary of what you missed while away. Form settings: provider, secret API key, model name, and optional custom endpoint. See `docs/examples/ai.lua` and `internal/scripts/ai.lua`.
 
 **Bundled and auto-installed.**
 
@@ -587,7 +611,8 @@ ignore list.
 
 1. Global table name is `stugan`, no alias.
 2. Command hooks use `fn(args, ctx)` with pre-split `args` and a structured
-   `ctx` (network, buffer, kind, nick).
+   `ctx` (network, buffer, kind, nick, reply, command). Their output goes to
+   a ZNC-style `*<script>` reply window, not the channel.
 3. `hook_completion` extends the client's tab-completion (candidates are
    gathered server-side and merged into the menu over the wire). A separate
    weechat-style `hook_modifier` is **not** provided: `hook_message`

@@ -509,9 +509,15 @@ func (a engineAPI) Print(network, buffer, text string) {
 	// parked in the hook). inject takes e.mu briefly and broadcasts, so it is
 	// safe to call re-entrantly. evPrint bypasses hooks anyway (see handle),
 	// so direct injection is behaviourally identical to the queued path.
+	// A "*name" query is a plugin's reply window (ZNC-style); its lines carry
+	// that name as the sender so clients can show it as a bouncer nick.
+	var from string
+	if IsPluginBuffer(buffer) {
+		from = buffer
+	}
 	a.e.inject(Message{
 		Network: network, Buffer: buffer, Time: time.Now(),
-		Kind: MsgSystem, Text: text,
+		From: from, Kind: MsgSystem, Text: text,
 	})
 }
 

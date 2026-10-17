@@ -480,6 +480,8 @@ function submit() {
   // A failed send (socket down mid-reconnect) keeps the draft in the box —
   // clearing it would silently destroy the message.
   if (!connection.send(props.network, props.buffer.name, replaceEmoji(t))) return;
+  // A plugin command answers in its own "*name" window; bring that forward.
+  if (t.startsWith("/") && !t.startsWith("//")) connection.expectPluginReply(props.network);
   connection.sendTyping(props.network, props.buffer.name, "done");
   rememberLine(activeDraftKey, t);
   histIdx = -1;

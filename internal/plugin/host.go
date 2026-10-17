@@ -215,6 +215,7 @@ type Host struct {
 	completionHooks []*hook
 	signalHooks     map[string][]*hook
 	cmdHooks        map[string]*hook
+	replyOrigin     map[string]string // network+"\x00"+script → buffer its last command ran in
 	timers          []*timerHook
 	nextID          int
 	unhookers       map[int]unhooker
@@ -261,7 +262,7 @@ func (h *Host) wants(ev core.Event) bool {
 	case core.EvMessageIn:
 		return p.msg
 	case core.EvMessageOut:
-		return p.input
+		return p.input || (ev.Message != nil && core.IsPluginBuffer(ev.Message.Buffer))
 	case core.EvCommand:
 		return p.cmd
 	case core.EvTopic:
@@ -344,6 +345,7 @@ func New(opts Options) (*Host, error) {
 		updates:     map[string]bool{},
 		signalHooks: map[string][]*hook{},
 		cmdHooks:    map[string]*hook{},
+		replyOrigin: map[string]string{},
 		unhookers:   map[int]unhooker{},
 	}
 	h.ctx, h.cancel = context.WithCancel(context.Background())
@@ -1040,6 +1042,9 @@ func (h *Host) dispatch(ev core.Event) (core.Event, bool) {
 	case core.EvMessageIn:
 		return h.runMessageHooks(ev)
 	case core.EvMessageOut:
+		if out, keep, handled := h.runReplyBufferInput(ev); handled {
+			return out, keep
+		}
 		return h.runInputHooks(ev)
 	case core.EvCommand:
 		return h.runCommand(ev)
@@ -1167,11 +1172,60 @@ func (h *Host) runCommand(ev core.Event) (core.Event, bool) {
 	}
 	args := ev.Args
 	nick := h.api.Nick(ev.Network)
+	// Replies go to the script's own "*name" query (ZNC-style) rather than
+	// the buffer the command was typed in, so plugin output is never mistaken
+	// for a line someone said in the channel. ctx.buffer stays the buffer the
+	// command is about: when the command is run from inside the reply query
+	// itself, it is the buffer the script was last invoked from.
+	reply := replyBuffer(hk.script.name)
+	buffer := ev.Buffer
+	key := ev.Network + "\x00" + hk.script.name
+	if buffer == reply {
+		if o := h.replyOrigin[key]; o != "" {
+			buffer = o
+		}
+	} else {
+		h.replyOrigin[key] = buffer
+	}
+	cmd := strings.ToLower(ev.Command)
 	h.call(hk.script, hk.fn, func(L *lua.LState) {
 		L.Push(stringArray(L, args))
-		L.Push(ctxTable(L, ev.Network, ev.Buffer, nick))
+		t := ctxTable(L, ev.Network, buffer, nick)
+		t.RawSetString("reply", lua.LString(reply))
+		t.RawSetString("command", lua.LString(cmd))
+		L.Push(t)
 	}, 0)
 	return ev, false // consumed
+}
+
+// replyBuffer names the query a script's command replies are printed into.
+func replyBuffer(script string) string { return "*" + script }
+
+// runReplyBufferInput handles plain text typed into a loaded script's "*name"
+// reply query. Like a ZNC module window, the text is run as the script's
+// command of the same name ("10" in *urls runs "/urls 10"); a script without
+// such a command gets a hint instead. Either way the line is consumed — it is
+// never sent to IRC as a PRIVMSG. Queries whose name matches no loaded script
+// (e.g. a real ZNC *module upstream) are left alone.
+func (h *Host) runReplyBufferInput(ev core.Event) (core.Event, bool, bool) {
+	if ev.Message == nil || !core.IsPluginBuffer(ev.Message.Buffer) {
+		return ev, true, false
+	}
+	name := ev.Message.Buffer[1:]
+	s := h.scripts[name]
+	if s == nil {
+		return ev, true, false
+	}
+	m := ev.Message
+	if hk := h.cmdHooks[strings.ToLower(name)]; hk != nil && hk.script == s && !s.disabled {
+		h.runCommand(core.Event{
+			Type: core.EvCommand, Network: m.Network, Buffer: m.Buffer, Time: m.Time,
+			Command: name, Args: strings.Fields(m.Text), Text: m.Text,
+		})
+		return ev, false, true
+	}
+	h.api.Print(m.Network, m.Buffer, "this is the "+name+" plugin's window — run its /commands here; text typed here is not sent to IRC")
+	return ev, false, true
 }
 
 // runCompletionHooks gathers candidates from hook_completion callbacks, in

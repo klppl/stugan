@@ -92,6 +92,14 @@ func (sess *Session) formatSinkMessage(m core.Message) []string {
 	case core.MsgAction:
 		cmd = "PRIVMSG"
 	case core.MsgSystem:
+		if core.IsPluginBuffer(m.Buffer) {
+			// A plugin's reply window: deliver it the way ZNC does its
+			// *module queries, as a PRIVMSG from the "*name" pseudo-nick, so
+			// the downstream client opens a query that can be typed back into.
+			prefix = fmt.Sprintf("%s!stugan@%s", m.Buffer, serverName)
+			target = selfNick
+			break
+		}
 		// Render system lines as notices from server
 		prefix = serverName
 		cmd = "NOTICE"

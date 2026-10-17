@@ -265,6 +265,61 @@ func TestHookCommand(t *testing.T) {
 	}
 }
 
+func TestCommandReplyWindow(t *testing.T) {
+	api := &fakeAPI{nickVal: "me"}
+	h := newHost(t, api, map[string]string{
+		"urls.lua": `
+			stugan.hook_command("urls", function(args, ctx)
+			  stugan.print(ctx, ctx.buffer .. ":" .. table.concat(args, ","))
+			  stugan.print(ctx.network, ctx.buffer, "in place")
+			end)`,
+		"quiet.lua": `stugan.hook_command("q", function() end)`,
+	}, nil)
+	ctx := context.Background()
+	takePrints := func() [][3]string {
+		api.mu.Lock()
+		defer api.mu.Unlock()
+		p := api.prints
+		api.prints = nil
+		return p
+	}
+
+	// print(ctx) from a command goes to the script's *name window; the
+	// explicit network/buffer form still prints where it is told.
+	h.Dispatch(ctx, core.Event{Type: core.EvCommand, Network: "n", Buffer: "#c", Command: "urls", Args: []string{"5"}})
+	got := takePrints()
+	want := [][3]string{{"n", "*urls", "#c:5"}, {"n", "#c", "in place"}}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("command prints = %v, want %v", got, want)
+	}
+
+	// Text typed into *urls runs /urls, with ctx.buffer the origin channel,
+	// and is consumed rather than sent to IRC.
+	typed := core.Event{Type: core.EvMessageOut, Network: "n", Message: &core.Message{Network: "n", Buffer: "*urls", Text: "clear all", Kind: core.MsgPrivmsg, Self: true}}
+	if _, keep := h.Dispatch(ctx, typed); keep {
+		t.Fatal("text typed into *urls was not consumed")
+	}
+	if got := takePrints(); len(got) == 0 || got[0] != [3]string{"n", "*urls", "#c:clear,all"} {
+		t.Fatalf("typed-in-window prints = %v", got)
+	}
+
+	// A script with no command of its own name gets a hint, still consumed.
+	typed.Message = &core.Message{Network: "n", Buffer: "*quiet", Text: "hi"}
+	if _, keep := h.Dispatch(ctx, typed); keep {
+		t.Fatal("text typed into *quiet was not consumed")
+	}
+	if got := takePrints(); len(got) != 1 || got[0][1] != "*quiet" {
+		t.Fatalf("hint prints = %v", got)
+	}
+
+	// A *name query that matches no loaded script (e.g. a real ZNC module)
+	// is an ordinary query.
+	typed.Message = &core.Message{Network: "n", Buffer: "*controlpanel", Text: "help"}
+	if _, keep := h.Dispatch(ctx, typed); !keep {
+		t.Fatal("text to an unrelated *module query was consumed")
+	}
+}
+
 func TestHookSignal(t *testing.T) {
 	api := &fakeAPI{}
 	h := newHost(t, api, map[string]string{
