@@ -10,6 +10,7 @@ the system.
 ```
 cmd/stugan/        main(): flags, config, per-user wiring, graceful shutdown
 cmd/stugan-engine/ the optional IRC-holding sidecar (engine.md)
+cmd/stugan-previews/ the optional link-preview sidecar (previews.md)
 internal/
   config/          TOML config + $STUGAN_HOME resolution
   logging/         structured logging (slog)
@@ -27,6 +28,8 @@ internal/
   scripts/         embedded bundled Lua plugins (fish, ignore, ai, webhooks)
   engine/          stugan-engine: holds IRC sockets, replays, buffers (engine.md)
   engineproto/     stugan ↔ engine wire frames (NDJSON), versioning
+  previews/        stugan-previews: providers (youtube, instagram, opengraph), cache, HTTP
+  previewproto/    stugan ↔ previews wire contract (Card, paths); stdlib only
   enginelink/      stugan's side of the engine link: a net.Conn girc dials through
 client/            Vue 3 + TS + Vite frontend
 docs/              this documentation
@@ -67,6 +70,8 @@ is depended upon.
 | `engine`  | `engineproto`, stdlib                   | everything else — it is shipped and versioned separately |
 | `enginelink` | `engineproto`, stdlib                | everything else |
 | `engineproto` | stdlib only                         | everything else |
+| `previews` | `previewproto`, `safehttp`, x/net, stdlib | everything else (`server` imports its shared helpers) |
+| `previewproto` | stdlib only                    | everything else |
 
 **The rule that matters:** core imports none of the heavy libraries, and
 girc/lua/sqlite/wish never leak past their owning package. That is what makes

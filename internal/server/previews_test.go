@@ -122,3 +122,44 @@ func TestUploadRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestPreviewsSidecarForwarding(t *testing.T) {
+	var gotAuth, gotPath string
+	side := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotPath = r.Header.Get("Authorization"), r.URL.Path
+		switch r.URL.Path {
+		case "/v1/preview":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"url":"u","title":"T","description":"","image":"","details":["x"]}`))
+		default:
+			http.Error(w, "nope", http.StatusUnauthorized)
+		}
+	}))
+	defer side.Close()
+
+	s := &Server{previews: newPreviewRemote(side.URL, "secret-secret-secret")}
+	rec := httptest.NewRecorder()
+	s.handlePreview(rec, httptest.NewRequest("GET", "/api/preview?url=https://example.com", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"details":["x"]`) {
+		t.Fatalf("preview via sidecar: %d %s", rec.Code, rec.Body)
+	}
+	if gotAuth != "Bearer secret-secret-secret" || gotPath != "/v1/preview" {
+		t.Errorf("sidecar saw auth=%q path=%q", gotAuth, gotPath)
+	}
+
+	// A sidecar rejecting our secret (or any odd status) surfaces as 502, and
+	// never falls back to fetching in-process.
+	rec = httptest.NewRecorder()
+	s.handleProxy(rec, httptest.NewRequest("GET", "/api/proxy?url=https://example.com/a.png", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("proxy with sidecar 401 = %d, want 502", rec.Code)
+	}
+
+	// An unreachable sidecar is a 502 too.
+	side.Close()
+	rec = httptest.NewRecorder()
+	s.handlePreview(rec, httptest.NewRequest("GET", "/api/preview?url=https://example.com", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("preview with sidecar down = %d, want 502", rec.Code)
+	}
+}

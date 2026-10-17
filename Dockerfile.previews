@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+
+# stugan-previews: the optional sidecar that fetches link previews and proxies
+# media for stugan, isolated from the process holding your history and IRC
+# credentials. Built alone (no web client, no SQLite) — see docs/previews.md.
+
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/stugan-previews/ ./cmd/stugan-previews/
+COPY internal/previews/ ./internal/previews/
+COPY internal/previewproto/ ./internal/previewproto/
+COPY internal/safehttp/ ./internal/safehttp/
+COPY internal/logging/ ./internal/logging/
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags "-s -w -X main.buildVersion=docker" -o /out/stugan-previews ./cmd/stugan-previews
+
+FROM alpine:3.20
+# CA certificates are required to verify the TLS certificates of the sites it fetches.
+RUN apk add --no-cache ca-certificates && adduser -D -u 10001 stugan
+COPY --from=build /out/stugan-previews /app/stugan-previews
+# No volume: the sidecar holds no data. Set STUGAN_PREVIEWS_SECRET, and
+# STUGAN_PREVIEWS_LISTEN=0.0.0.0:8017 in a container (loopback is unreachable
+# from the stugan container). Optional API keys: STUGAN_PREVIEWS_<PROVIDER>_<NAME>.
+EXPOSE 8017
+USER stugan
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD ["/app/stugan-previews", "-health"]
+ENTRYPOINT ["/app/stugan-previews"]

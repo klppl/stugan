@@ -312,6 +312,28 @@ url    = "tcp://stugan-engine:8016"
 secret = "…"   # or $STUGAN_ENGINE_SECRET
 ```
 
+## `[previews]`
+
+Routes link previews and the media proxy through
+[stugan-previews](previews.md), a sidecar that fetches untrusted URLs away from
+your history and credentials, and adds site-specific cards (YouTube, Instagram).
+Disabled unless `url` is set. `$STUGAN_PREVIEWS_URL` and
+`$STUGAN_PREVIEWS_SECRET` override the file.
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `url` | string | `""` | Sidecar address: `host:port` or `http(s)://host:port`. Empty fetches previews in-process. |
+| `secret` | string | `""` | Shared secret configured on both sides. Required with `url`, at least 16 characters. |
+
+```toml
+[previews]
+url    = "http://stugan-previews:8017"
+secret = "…"   # or $STUGAN_PREVIEWS_SECRET
+```
+
+API keys for individual sites go in the **sidecar's** environment, not here;
+see [previews.md](previews.md#providers).
+
 ## Environment variables
 
 | Var | Meaning |
@@ -320,6 +342,8 @@ secret = "…"   # or $STUGAN_ENGINE_SECRET
 | `STUGAN_WEB_PASSWORD` | Enables the site-wide password gate in front of the whole site (stacks with `[[users]]`). In single-user mode it is also the IRC bouncer password. See [server.md](server.md#security-hardening). |
 | `STUGAN_ENGINE_URL` | Overrides `[engine].url`. |
 | `STUGAN_ENGINE_SECRET` | Overrides `[engine].secret`. |
+| `STUGAN_PREVIEWS_URL` | Overrides `[previews].url`. |
+| `STUGAN_PREVIEWS_SECRET` | Overrides `[previews].secret`. |
 
 The engine binary has its own variables (`STUGAN_ENGINE_LISTEN`, buffer caps,
 orphan timeout); see [engine.md](engine.md#stugan-engine).

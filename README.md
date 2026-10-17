@@ -40,6 +40,7 @@ plugin system.
 - **Previews & uploads.** Link previews, inline images and video, paste or drag to upload.
 - **Built-in bouncer.** Connect WeeChat, HexChat, irssi or any other client too.
 - **Restart without dropping IRC.** The optional [stugan-engine](docs/engine.md) sidecar holds the connections while stugan upgrades: no quit/rejoin flood, nothing missed.
+- **Isolated previews.** The optional [stugan-previews](docs/previews.md) sidecar fetches link previews away from your history and credentials, with richer YouTube and Instagram cards.
 - **SSH terminal UI.** Reach your session from any terminal.
 - **Installable PWA.** Mobile friendly, with Web Push and desktop notifications.
 - **Multi-user.** bcrypt logins with fully isolated networks and history.
@@ -125,6 +126,7 @@ Writing your own? See the [Lua API reference](docs/plugins.md).
 | [ssh](docs/ssh.md) | SSH Terminal UI setup and usage |
 | [bouncer](docs/ircserver.md) | Built-in IRC bouncer server (native client access) |
 | [engine](docs/engine.md) | stugan-engine: keep IRC connected across stugan restarts |
+| [previews](docs/previews.md) | stugan-previews: isolated link previews, site providers and API keys |
 | [config](docs/config.md) | Configuration reference |
 
 ## License

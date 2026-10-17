@@ -120,6 +120,9 @@ type Options struct {
 	// Bouncer, when set, is the IRC bouncer listener whose access the web UI
 	// exposes in Settings. Nil when [ircserver] is not configured.
 	Bouncer Bouncer
+	// Previews, when its URL is set, sends link previews and the media proxy
+	// to a stugan-previews sidecar instead of fetching in-process.
+	Previews config.PreviewsConfig
 }
 
 // Bouncer is the slice of the IRC bouncer server the web UI needs: where it
@@ -156,6 +159,9 @@ type Server struct {
 	authLimit *authRateLimit
 
 	bouncer Bouncer
+
+	// previews is the stugan-previews sidecar client; nil fetches in-process.
+	previews *previewRemote
 
 	mu      sync.Mutex
 	clients map[string]map[*client]struct{} // userID → connected clients
@@ -205,6 +211,9 @@ func New(hub Hub, opts Options) *Server {
 		authLimit:      newAuthRateLimit(60*time.Second, 8),
 		bouncer:        opts.Bouncer,
 		clients:        map[string]map[*client]struct{}{},
+	}
+	if opts.Previews.URL != "" {
+		s.previews = newPreviewRemote(opts.Previews.URL, opts.Previews.Secret)
 	}
 	if s.magicHash != "" {
 		s.magicSessions = auth.NewSessions(magicWordTTL)

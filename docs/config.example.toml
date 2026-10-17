@@ -128,3 +128,8 @@ connect  = true
 # [engine]
 # url    = "tcp://127.0.0.1:8016"               # host:port, tcp://… or unix:///path
 # secret = ""                                   # same value as the engine's STUGAN_ENGINE_SECRET (≥16 chars)
+
+# Optional: fetch link previews in the stugan-previews sidecar (docs/previews.md).
+# [previews]
+# url    = "http://stugan-previews:8017"
+# secret = "…"   # ≥16 chars; or $STUGAN_PREVIEWS_SECRET

@@ -181,3 +181,39 @@ func TestEngineConfig(t *testing.T) {
 		t.Fatalf("env override: %+v %v", cfg.Engine, err)
 	}
 }
+
+func TestPreviewsConfig(t *testing.T) {
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	t.Setenv("STUGAN_PREVIEWS_URL", "")
+	t.Setenv("STUGAN_PREVIEWS_SECRET", "")
+
+	cfg, err := LoadFrom(write(t, ""))
+	if err != nil || cfg.PreviewsEnabled() {
+		t.Fatalf("default: err=%v", err)
+	}
+	cfg, err = LoadFrom(write(t, "[previews]\nurl = \"previews:8017\"\nsecret = \"0123456789abcdef\"\n"))
+	if err != nil || !cfg.PreviewsEnabled() {
+		t.Fatalf("file: %+v %v", cfg, err)
+	}
+	for name, body := range map[string]string{
+		"no secret": "[previews]\nurl = \"previews:8017\"\n",
+		"bad url":   "[previews]\nurl = \"ftp://previews\"\nsecret = \"0123456789abcdef\"\n",
+	} {
+		if _, err := LoadFrom(write(t, body)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	t.Setenv("STUGAN_PREVIEWS_URL", "http://p:8017")
+	t.Setenv("STUGAN_PREVIEWS_SECRET", "env-secret-0123456789")
+	cfg, err = LoadFrom(write(t, ""))
+	if err != nil || cfg.Previews.URL != "http://p:8017" {
+		t.Fatalf("env: %+v %v", cfg, err)
+	}
+}

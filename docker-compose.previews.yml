@@ -1,0 +1,51 @@
+# stugan + stugan-previews: link previews fetched in an isolated container.
+#
+#   cat > .env <<EOF2
+#   STUGAN_PREVIEWS_SECRET=$(openssl rand -hex 32)
+#   STUGAN_PREVIEWS_YOUTUBE_API_KEY=       # optional, see docs/previews.md
+#   EOF2
+#   docker compose -f docker-compose.previews.yml up -d
+#
+# The previews container is stateless, so unlike stugan-engine it is fine to
+# let it update with stugan. If you also want IRC to survive upgrades, merge
+# this file's `stugan-previews` service into docker-compose.engine.yml.
+#
+# Already running stugan? Add the service and the two stugan variables to your
+# existing compose file instead of switching files (volume names depend on the
+# project directory). See docs/previews.md.
+
+services:
+  stugan:
+    image: ghcr.io/klppl/stugan:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - stugan-data:/data
+    environment:
+      # The presence of STUGAN_PREVIEWS_URL IS the feature switch.
+      STUGAN_PREVIEWS_URL: http://stugan-previews:8017
+      STUGAN_PREVIEWS_SECRET: ${STUGAN_PREVIEWS_SECRET:?set STUGAN_PREVIEWS_SECRET in .env (openssl rand -hex 32)}
+    depends_on:
+      stugan-previews:
+        condition: service_healthy
+
+  stugan-previews:
+    image: ${STUGAN_PREVIEWS_IMAGE:-ghcr.io/klppl/stugan:previews}
+    restart: unless-stopped
+    # No volumes, no published ports. Ideally also give it a network with
+    # no route to your LAN; see docs/previews.md.
+    environment:
+      STUGAN_PREVIEWS_SECRET: ${STUGAN_PREVIEWS_SECRET:?set STUGAN_PREVIEWS_SECRET in .env (openssl rand -hex 32)}
+      STUGAN_PREVIEWS_LISTEN: 0.0.0.0:8017
+      # Optional provider keys; empty means "provider uses its keyless mode".
+      STUGAN_PREVIEWS_YOUTUBE_API_KEY: ${STUGAN_PREVIEWS_YOUTUBE_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "/app/stugan-previews", "-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  stugan-data:

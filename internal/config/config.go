@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 
 	"github.com/klippelism/stugan/internal/engineproto"
+	"github.com/klippelism/stugan/internal/previewproto"
 	toml "github.com/pelletier/go-toml/v2"
 )
 
@@ -64,7 +65,26 @@ type Config struct {
 	// stugan restarts. Disabled unless [engine].url (or $STUGAN_ENGINE_URL)
 	// is set.
 	Engine EngineConfig `toml:"engine"`
+
+	// Previews routes link previews and the media proxy through the
+	// stugan-previews sidecar. Disabled unless [previews].url (or
+	// $STUGAN_PREVIEWS_URL) is set.
+	Previews PreviewsConfig `toml:"previews"`
 }
+
+// PreviewsConfig points stugan at a stugan-previews sidecar.
+// $STUGAN_PREVIEWS_URL and $STUGAN_PREVIEWS_SECRET override the file.
+type PreviewsConfig struct {
+	// URL is the sidecar address: host:port or http(s)://host:port. Empty
+	// disables the sidecar: stugan fetches previews in-process.
+	URL string `toml:"url"`
+	// Secret is the shared secret both sides are configured with. Required
+	// when URL is set; at least 16 characters.
+	Secret string `toml:"secret"`
+}
+
+// PreviewsEnabled reports whether previews go through stugan-previews.
+func (c *Config) PreviewsEnabled() bool { return c.Previews.URL != "" }
 
 // EngineConfig points stugan at a stugan-engine sidecar. $STUGAN_ENGINE_URL
 // and $STUGAN_ENGINE_SECRET override the file, so a compose file can carry
@@ -367,6 +387,12 @@ func LoadFrom(home string) (*Config, error) {
 	if v := os.Getenv("STUGAN_ENGINE_SECRET"); v != "" {
 		cfg.Engine.Secret = v
 	}
+	if v := os.Getenv("STUGAN_PREVIEWS_URL"); v != "" {
+		cfg.Previews.URL = v
+	}
+	if v := os.Getenv("STUGAN_PREVIEWS_SECRET"); v != "" {
+		cfg.Previews.Secret = v
+	}
 	cfg.withDefaults()
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -434,6 +460,15 @@ func (c *Config) validate() error {
 		}
 		if len(c.Engine.Secret) < MinEngineSecretLen {
 			return fmt.Errorf("config: engine.secret (or $STUGAN_ENGINE_SECRET) must be at least %d characters when engine.url is set", MinEngineSecretLen)
+		}
+	}
+	if c.Previews.URL != "" {
+		u, err := url.Parse(previewproto.NormalizeURL(c.Previews.URL))
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("config: invalid previews.url %q (want host:port or an http(s) URL)", c.Previews.URL)
+		}
+		if len(c.Previews.Secret) < previewproto.MinSecretLen {
+			return fmt.Errorf("config: previews.secret (or $STUGAN_PREVIEWS_SECRET) must be at least %d characters when previews.url is set", previewproto.MinSecretLen)
 		}
 	}
 	seenUser := make(map[string]bool, len(c.Users))

@@ -19,6 +19,7 @@ Tags produced by the workflow:
 | `main` | same builds, branch-named |
 | `v1.2.3`, `1.2` | a run on a `v*` git tag (semver) |
 | `sha-<short>` | every build, immutable — pin to this for reproducible deploys |
+| `previews` | the [stugan-previews](previews.md) image, from the separate *Docker (previews)* workflow |
 | `engine-1` | the [stugan-engine](engine.md) image, from the separate *Docker (engine)* workflow — moved only when the engine changes |
 
 To cut a versioned release, tag a commit, push it, and run the workflow on the

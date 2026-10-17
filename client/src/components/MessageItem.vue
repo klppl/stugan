@@ -319,8 +319,9 @@ function onLinkClick(url: string, e: MouseEvent) {
         <a v-if="preview(u) && previewExpanded(u)" :href="u" target="_blank" rel="noopener noreferrer" class="preview-card">
           <img v-if="preview(u)!.image" :src="proxied(preview(u)!.image)" class="preview-img" loading="lazy" alt="" />
           <span class="preview-text">
-            <span v-if="host(u)" class="preview-host">{{ host(u) }}</span>
+            <span v-if="preview(u)!.site || host(u)" class="preview-host">{{ preview(u)!.site || host(u) }}</span>
             <span class="preview-title">{{ preview(u)!.title }}</span>
+            <span v-if="preview(u)!.details?.length" class="preview-details">{{ preview(u)!.details!.join(" · ") }}</span>
             <span v-if="preview(u)!.description" class="preview-desc">{{ preview(u)!.description }}</span>
           </span>
         </a>

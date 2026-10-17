@@ -140,7 +140,11 @@ func run() error {
 		PushDir:        filepath.Join(cfg.DataDir(), "push"),
 		MagicWordHash:  magicHash,
 		Bouncer:        bouncer,
+		Previews:       cfg.Previews,
 	})
+	if cfg.PreviewsEnabled() {
+		log.Info("link previews go through stugan-previews", "url", cfg.Previews.URL)
+	}
 	hub.registerSinks(srv)
 
 	// Optional SSH terminal UI. Built before the engines run so its per-user

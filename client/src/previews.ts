@@ -5,6 +5,9 @@ export interface Preview {
   title: string;
   description: string;
   image: string;
+  // Set by site-specific providers on the stugan-previews sidecar.
+  site?: string; // display name, shown instead of the host
+  details?: string[]; // short facts on one line: channel, duration, views…
 }
 
 type Entry = Preview | "loading" | "error";
