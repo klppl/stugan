@@ -40,6 +40,9 @@ services:
       STUGAN_PREVIEWS_LISTEN: 0.0.0.0:8017
       # Optional provider keys; empty means "provider uses its keyless mode".
       STUGAN_PREVIEWS_YOUTUBE_API_KEY: ${STUGAN_PREVIEWS_YOUTUBE_API_KEY:-}
+      STUGAN_PREVIEWS_REDDIT_CLIENT_ID: ${STUGAN_PREVIEWS_REDDIT_CLIENT_ID:-}
+      STUGAN_PREVIEWS_REDDIT_CLIENT_SECRET: ${STUGAN_PREVIEWS_REDDIT_CLIENT_SECRET:-}
+      STUGAN_PREVIEWS_REDDIT_USER_AGENT: ${STUGAN_PREVIEWS_REDDIT_USER_AGENT:-}
     healthcheck:
       test: ["CMD", "/app/stugan-previews", "-health"]
       interval: 10s

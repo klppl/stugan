@@ -2,6 +2,7 @@ package previews
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,7 +35,12 @@ func NewFetcher() *Fetcher { return &Fetcher{Client: safehttp.New()} }
 // Get issues a GET with the given headers (a browser User-Agent is the
 // default). The caller closes the body.
 func (f *Fetcher) Get(ctx context.Context, rawURL string, header map[string]string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	return f.Do(ctx, http.MethodGet, rawURL, nil, header)
+}
+
+// Do is Get with a method and body, for APIs that need a token exchange.
+func (f *Fetcher) Do(ctx context.Context, method, rawURL string, body io.Reader, header map[string]string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, err
 	}
@@ -76,4 +82,11 @@ func ValidTarget(raw string) (string, bool) {
 func hostIs(host, domain string) bool {
 	host = strings.ToLower(host)
 	return host == domain || strings.HasSuffix(host, "."+domain)
+}
+
+// limitBody caps an API response body.
+func limitBody(r io.Reader) io.Reader { return io.LimitReader(r, maxJSONBytes) }
+
+func basicAuth(user, pass string) string {
+	return base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
 }

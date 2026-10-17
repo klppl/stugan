@@ -41,6 +41,7 @@ func Providers(env Env) []Provider {
 	return []Provider{
 		newYouTube(env),
 		newInstagram(),
+		newReddit(env),
 		openGraph{},
 	}
 }

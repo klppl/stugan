@@ -100,6 +100,7 @@ plain link) you'd get without the sidecar.
 |----------|---------|----------|
 | `youtube` | videos, Shorts, live, playlists on `youtube.com` / `youtu.be` | `STUGAN_PREVIEWS_YOUTUBE_API_KEY` (optional) |
 | `instagram` | public posts, reels and IGTV on `instagram.com` | none |
+| `reddit` | post links on `reddit.com` (any subdomain) and `redd.it` | `STUGAN_PREVIEWS_REDDIT_CLIENT_ID`, `_CLIENT_SECRET`, `_USER_AGENT` (all optional) |
 | `opengraph` | everything else (`og:*`, `<title>`, charset-aware) | none |
 
 **YouTube.** With an API key ([YouTube Data API v3](https://developers.google.com/youtube/v3/getting-started),
@@ -114,6 +115,20 @@ That text is not a stable API: Instagram can change it, rate-limit or block
 server IPs at any time. When that happens the provider fails quietly and the
 link shows as a plain card (run with `STUGAN_PREVIEWS_LOG_LEVEL=debug` to see
 why). Private posts never work.
+
+**Reddit.** Anonymous `.json` access is blocked by Reddit, so without
+credentials the card comes from Reddit's keyless oEmbed endpoint: title and
+subreddit only. For score, upvote ratio, comment count, author, date, a text
+snippet and the thumbnail, register your **own** Reddit app at
+<https://www.reddit.com/prefs/apps> (type *script*, or *installed app* which
+has no secret) and set its client id (and secret, for a script app) in the
+sidecar. It uses an app-only token, cached until it expires. Use credentials
+you registered yourself, not another client's; borrowed keys violate Reddit's
+terms and get revoked. Reddit's API access rules change, so check they still
+allow your use. NSFW and spoiler posts get no text or image. If the credentials
+are wrong or rate-limited, the card falls back to the keyless one. Set
+`STUGAN_PREVIEWS_REDDIT_USER_AGENT` to something like
+`linux:stugan-previews:1.0 (by /u/yourname)`, as Reddit asks.
 
 ## Adding a provider
 
