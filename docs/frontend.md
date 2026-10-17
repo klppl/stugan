@@ -85,7 +85,7 @@ explicit store library.
 | `ChatInput.vue` | Composer (see below) |
 | `CommandPalette.vue` | Cmd/Ctrl-K: recent-first buffer jump, commands, shortcut hints |
 | `KeyboardShortcuts.vue` | The shortcut sheet (Cmd/Ctrl+/) |
-| `Digest.vue` | "What you missed": highlights since the read markers, shown on return |
+| `Digest.vue` | "What you missed": highlights since the read markers, shown on return after the "Away after" setting (default 60 min) out of view |
 | `MentionRow.vue` | One mention/search hit, expandable to its surrounding context |
 | `ImageViewerModal.vue` | In-app image lightbox with pinch/trackpad zoom and pan (`+`/`-`/`0`) |
 | `UploadPreviewModal.vue` | Preview + optional comment before an upload is sent |
@@ -107,8 +107,11 @@ explicit store library.
 - **Tab completion** is irssi-style: Tab completes a nick, `#channel`,
   `/command` or `:emoji` and cycles through matches, Shift+Tab goes back, Esc
   restores what you typed. Plugin `hook_completion` candidates are merged in.
-- The as-you-type menu only appears for `/commands` and `:emoji`, and only
-  takes Enter after you arrow into it — so Enter never completes by surprise.
+- The as-you-type menu only appears for `/commands`, `:emoji` and `@nick`, and
+  only takes Enter after you arrow into it — so Enter never completes by
+  surprise. `@nick` is the touch-friendly path (phones have no Tab): `@` lists
+  channel members, recent speakers first, matching by prefix then substring;
+  picking one inserts the bare nick (`nick: ` at the start of the line).
 - **Input history**: ↑/↓ (at the first/last line) recall lines sent in this
   buffer, per buffer, up to 100. Plain lines are kept in sessionStorage across
   reloads; `/commands` stay in memory only.

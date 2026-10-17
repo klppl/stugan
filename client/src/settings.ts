@@ -128,6 +128,7 @@ interface Settings {
   showTyping: boolean; // display other people's typing notifications
   showTopBar: boolean; // desktop: show the top bar (channel name, search, buttons); Cmd-K covers it when off
   digestOnReturn: boolean; // open "What you missed" when coming back after a while away
+  awayMinutes: number; // how long out of view counts as "away" for digestOnReturn
   messageLayout: MessageLayout; // classic one-line IRC, cozy (nick header + body, Discord-style), or auto by screen size
 }
 
@@ -143,6 +144,14 @@ function isLayout(v: unknown): v is MessageLayout {
 // Early builds called "cozy" "grouped"; read the old value as the new one.
 function migrateLayout(v: unknown): unknown {
   return v === "grouped" ? "cozy" : v;
+}
+
+// awayMinutes: how long stugan must be out of view before coming back opens
+// "What you missed". A whole number of minutes, 1 minute to 1 week.
+export const DEFAULT_AWAY_MINUTES = 60;
+export const MAX_AWAY_MINUTES = 7 * 24 * 60;
+export function isAwayMinutes(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= MAX_AWAY_MINUTES;
 }
 
 const KEY = "stugan.settings";
@@ -173,6 +182,7 @@ function load(): Settings {
       showTyping: typeof s.showTyping === "boolean" ? s.showTyping : true,
       showTopBar: typeof s.showTopBar === "boolean" ? s.showTopBar : true,
       digestOnReturn: typeof s.digestOnReturn === "boolean" ? s.digestOnReturn : true,
+      awayMinutes: isAwayMinutes(s.awayMinutes) ? s.awayMinutes : DEFAULT_AWAY_MINUTES,
       messageLayout: isLayout(migrateLayout(s.messageLayout)) ? (migrateLayout(s.messageLayout) as MessageLayout) : "auto",
     };
   } catch {
@@ -188,6 +198,7 @@ function load(): Settings {
       showTyping: true,
       showTopBar: true,
       digestOnReturn: true,
+      awayMinutes: DEFAULT_AWAY_MINUTES,
       messageLayout: "auto",
     };
   }
@@ -233,6 +244,7 @@ export function loadSettingsPayload(s: Record<string, unknown>) {
     if (typeof s.showTyping === "boolean") settings.showTyping = s.showTyping;
     if (typeof s.showTopBar === "boolean") settings.showTopBar = s.showTopBar;
     if (typeof s.digestOnReturn === "boolean") settings.digestOnReturn = s.digestOnReturn;
+    if (isAwayMinutes(s.awayMinutes)) settings.awayMinutes = s.awayMinutes;
     const layout = migrateLayout(s.messageLayout);
     if (isLayout(layout)) settings.messageLayout = layout;
   } finally {

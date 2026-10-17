@@ -47,7 +47,7 @@ const offlineText = computed(() => {
 });
 const placeholder = computed(() => {
   if (offlineText.value) return offlineText.value;
-  return ui.isMobile ? "Message" : "Enter to send · Shift+Enter for a new line · Tab completes nicks";
+  return ui.isMobile ? "Message · @ to mention" : "Enter to send · Shift+Enter for a new line · Tab or @ completes nicks";
 });
 
 // Auto-grow the textarea up to a few lines, then scroll. Called after every
@@ -165,8 +165,9 @@ function historyNext() {
 }
 
 // Completion runs in two modes:
-//  - "type": a menu that follows the caret as you type, only for /commands
-//    and :emoji (prefixes that can't be ordinary prose). Enter still sends
+//  - "type": a menu that follows the caret as you type, only for /commands,
+//    :emoji and @nick (prefixes that can't be ordinary prose). @nick is the
+//    touch-friendly way to address someone: there's no Tab key on a phone. Enter still sends
 //    unless you picked a row with the arrow keys; Tab takes the top row.
 //  - "tab": irssi/WeeChat-style Tab completion for everything (nicks,
 //    #channels, commands, emoji). The first Tab inserts the first match in
@@ -296,10 +297,24 @@ function emojiItems(word: string) {
   return { items: m.map((e) => e.char + " "), labels: m.map((e) => `${e.char} :${e.code}:`) };
 }
 
+// mentionItems: channel members for an @nick token, recent speakers first.
+// Prefix matches lead, then nicks merely containing the text, so a phone
+// user can find "xXalexXx" from "@alex". The @ is dropped on accept — IRC
+// highlights on the bare nick — and a leading mention gets the "nick: " form.
+function mentionItems(word: string, start: number) {
+  const q = word.slice(1).toLowerCase();
+  const nicks = recentNicks.value;
+  const pre = nicks.filter((n) => n.toLowerCase().startsWith(q));
+  const sub = q ? nicks.filter((n) => !n.toLowerCase().startsWith(q) && n.toLowerCase().includes(q)) : [];
+  const m = [...pre, ...sub].slice(0, 8);
+  return { items: m.map((n) => (start === 0 ? n + ": " : n + " ")), labels: m.map((n) => "@" + n) };
+}
+
 // tabCandidates: everything Tab can complete for the word under the caret.
 function tabCandidates(word: string, start: number): { items: string[]; labels: string[] } {
   if (word.startsWith("/") && start === 0) return commandItems(word);
   if (word.startsWith(":") && word.length > 1) return emojiItems(word);
+  if (word.startsWith("@") && word.length > 1) return mentionItems(word, start);
   if (word.startsWith("#")) {
     const m = allChannels.value.filter((c) => c.toLowerCase().startsWith(word.toLowerCase()));
     return { items: m.map((c) => c + " "), labels: m };
@@ -331,13 +346,14 @@ function requestExtras(word: string, onExtra: (items: string[], labels: string[]
 }
 
 // suggestAsYouType runs on every edit. It only ever opens the menu for a
-// leading /command or an :emoji code — never for nicks or #channels, which
-// look like ordinary words and would otherwise hijack Enter.
+// leading /command, an :emoji code or an @nick — never for bare nicks or
+// #channels, which look like ordinary words and would otherwise hijack Enter.
 function suggestAsYouType() {
   const { word, start, end } = token();
   let found = { items: [] as string[], labels: [] as string[] };
   if (word.startsWith("/") && start === 0 && !word.startsWith("//")) found = commandItems(word);
   else if (word.startsWith(":") && word.length > 2) found = emojiItems(word);
+  else if (word.startsWith("@")) found = mentionItems(word, start);
   else {
     closeAC();
     return;

@@ -313,8 +313,10 @@ function loadLastActive(): { network: string; buffer: string } | null {
 // lastSeen is when this browser last had stugan in view, so a fresh page load
 // can tell "back after a while" (open What you missed) from a quick reload.
 const LAST_SEEN_KEY = "stugan.lastSeen";
-// AWAY_MS is how long out of view counts as "away" for the digest.
-const AWAY_MS = 10 * 60 * 1000;
+// awayMs is how long out of view counts as "away" for the digest (a setting).
+function awayMs(): number {
+  return settings.awayMinutes * 60 * 1000;
+}
 
 function loadLastSeen(): number {
   try {
@@ -465,10 +467,13 @@ export class Connection {
   // session: a reconnect re-fetches the digest (counts may have changed) but
   // won't re-pop the overlay if the user already saw/dismissed it.
   private digestAutoShown = false;
-  // Away tracking for the digest-on-return: awayOnLoad is fixed at startup
-  // from the persisted lastSeen; hiddenAt marks when the tab was last hidden;
-  // digestReturnPending asks the next applyMissed to open the digest.
-  private awayOnLoad = Date.now() - loadLastSeen() >= AWAY_MS;
+  // Away tracking for the digest-on-return: loadedAt/lastSeenOnLoad are fixed
+  // at startup from the persisted lastSeen (judged against the away setting
+  // when the first digest arrives, so a synced setting is honoured); hiddenAt
+  // marks when the tab was last hidden; digestReturnPending asks the next
+  // applyMissed to open the digest.
+  private loadedAt = Date.now();
+  private lastSeenOnLoad = loadLastSeen();
   private hiddenAt = 0;
   private digestReturnPending = false;
   private loadChecked = false; // awayOnLoad applies to the first digest fetch only
@@ -556,7 +561,7 @@ export class Connection {
           this.ackActiveBuffer();
           // Back after a while: refresh the digest and let applyMissed open
           // it if anything happened.
-          if (this.hiddenAt && Date.now() - this.hiddenAt >= AWAY_MS && settings.digestOnReturn) {
+          if (this.hiddenAt && Date.now() - this.hiddenAt >= awayMs() && settings.digestOnReturn) {
             this.digestReturnPending = true;
             this.fetchMissed();
           }
@@ -954,11 +959,12 @@ export class Connection {
   // the first time it's non-empty in a page session (reconnects refresh the
   // data but don't re-nag — see digestAutoShown).
   // With "What you missed on return" on, it also opens when you come back
-  // after AWAY_MS out of view (a page load, or the tab shown again) and
+  // after awayMs() out of view (a page load, or the tab shown again) and
   // anything is unread — not only when there are missed mentions.
   private applyMissed(d: MissedResp) {
     this.store.missed = (d.messages ?? []).map(markRaw);
-    const returning = this.digestReturnPending || (!this.loadChecked && this.awayOnLoad);
+    const awayOnLoad = this.loadedAt - this.lastSeenOnLoad >= awayMs();
+    const returning = this.digestReturnPending || (!this.loadChecked && awayOnLoad);
     this.digestReturnPending = false;
     this.loadChecked = true;
     if (!settings.digestOnReturn || this.store.digestOpen) return;
