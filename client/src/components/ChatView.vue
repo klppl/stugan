@@ -267,14 +267,29 @@ function eventSummary(events: MessageDTO[]): string {
   if (isServerNotice(events[0])) {
     return `${events.length} server notices from ${events[0].from || "the server"}`;
   }
-  const counts: Record<string, number> = { join: 0, part: 0, quit: 0, nick: 0 };
-  for (const e of events) counts[e.kind] = (counts[e.kind] ?? 0) + 1;
-  const parts: string[] = [];
-  if (counts.join) parts.push(`${counts.join} joined`);
-  if (counts.part) parts.push(`${counts.part} left`);
-  if (counts.quit) parts.push(`${counts.quit} quit`);
-  if (counts.nick) parts.push(`${counts.nick} ${counts.nick === 1 ? "nick change" : "nick changes"}`);
-  return parts.join(" · ");
+  // Name the nicks (deduped, in order of appearance) so a quiet fold still says
+  // who came and went; past NAME_LIMIT the rest collapse into "+N more".
+  const NAME_LIMIT = 4;
+  const names: Record<string, string[]> = { join: [], part: [], quit: [], nick: [] };
+  for (const e of events) {
+    let label = e.from;
+    if (e.kind === "nick") {
+      const to = / is now known as (\S+)$/.exec(e.text)?.[1];
+      label = to ? `${e.from} → ${to}` : e.from;
+    }
+    const list = names[e.kind];
+    if (list && label && !list.includes(label)) list.push(label);
+  }
+  const list = (kind: string, verb: string) => {
+    const ns = names[kind];
+    if (!ns?.length) return "";
+    const shown = ns.slice(0, NAME_LIMIT).join(", ");
+    const more = ns.length > NAME_LIMIT ? ` +${ns.length - NAME_LIMIT} more` : "";
+    return `${shown}${more} ${verb}`;
+  };
+  return [list("join", "joined"), list("part", "left"), list("quit", "quit"), list("nick", "changed nick")]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 const members = computed(() => {
