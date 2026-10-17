@@ -44,47 +44,93 @@ still drops IRC.
 
 ## Docker (recommended)
 
-The repository ships [`docker-compose.engine.yml`](../docker-compose.engine.yml):
+You add **one service** (`stugan-engine`) and **two environment variables** on
+`stugan` to the stack you already have. Pick the case that matches you:
+
+| You run stugan today with… | Do this |
+|----------------------------|---------|
+| Nothing yet (new install) | [Use `docker-compose.engine.yml`](#new-install) |
+| The compose file from [docker.md](docker.md) | [Add the engine to it](#existing-compose-file) |
+| Your own compose behind a tunnel/proxy network (Dockge, Portainer, …) | [Same, with a private network](#behind-a-reverse-proxy-or-tunnel-network) |
+| `docker run` | [Move to compose, keeping your volume](#coming-from-docker-run) |
+
+All cases share two rules:
+
+- **Keep your data where it is.** Leave the `/data` volume or bind mount line
+  exactly as it is today. See [Keep your data](#keep-your-data) before you
+  switch files or directories.
+- **Generate a secret** and put it in the stack's `.env` (Dockge and Portainer
+  have an editor for it): `STUGAN_ENGINE_SECRET=` followed by the output of
+  `openssl rand -hex 32`.
+
+### New install
+
+The repository ships [`docker-compose.engine.yml`](../docker-compose.engine.yml),
+a complete two-container stack:
 
 ```sh
 echo "STUGAN_ENGINE_SECRET=$(openssl rand -hex 32)" > .env
 docker compose -f docker-compose.engine.yml up -d
 ```
 
-It runs two containers:
-
 | Container | Image | Holds |
 |-----------|-------|-------|
 | `stugan` | `ghcr.io/klppl/stugan:latest` | web UI, history (`/data`), plugins |
 | `stugan-engine` | `ghcr.io/klppl/stugan:engine-1` | the IRC sockets (no volume) |
 
-Upgrading is the usual `docker compose -f docker-compose.engine.yml pull &&
-docker compose -f docker-compose.engine.yml up -d`. Compose recreates only
-containers whose image changed, so **only `stugan` restarts** and re-attaches.
+stugan still needs a `config.toml` with `listen = "0.0.0.0:8080"` in its data
+volume (see [docker.md](docker.md#you-must-set-listen--00008080)).
 
-> **Why `engine-1` and not `latest`?** Compose recreates every service whose
-> image changed. On `latest`, each stugan release would restart the engine too
-> and drop IRC, which is the thing it exists to prevent. The `engine-1` tag
-> moves only when the engine itself changes (the changelog says so). The `1`
-> is the protocol major version: a stugan that needs `engine-2` will say so,
-> and refuses to talk to an `engine-1` rather than guess.
+### Existing compose file
 
-In a container the engine must listen on `0.0.0.0` (the compose file sets
-`STUGAN_ENGINE_LISTEN=0.0.0.0:8016`): containers don't share loopback. The
-compose file publishes no ports, so `:8016` exists only on the compose network.
+If you started from the compose in [docker.md](docker.md), **edit that file**
+rather than switching to a new one. The lines marked `# new` are all that
+changes:
 
-Remember the stugan container still needs `listen = "0.0.0.0:8080"` in its
-`config.toml` (see [docker.md](docker.md)).
+```yaml
+services:
+  stugan:
+    image: ghcr.io/klppl/stugan:latest
+    container_name: stugan
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - stugan-data:/data                               # unchanged
+    environment:
+      STUGAN_ENGINE_URL: tcp://stugan-engine:8016        # new
+      STUGAN_ENGINE_SECRET: ${STUGAN_ENGINE_SECRET}      # new
+    depends_on:                                          # new
+      stugan-engine:                                     # new
+        condition: service_healthy                       # new
 
-### Adding the engine to an existing stack
+  stugan-engine:                                         # new: the whole service
+    image: ghcr.io/klppl/stugan:engine-1
+    container_name: stugan-engine
+    restart: unless-stopped
+    environment:
+      STUGAN_ENGINE_SECRET: ${STUGAN_ENGINE_SECRET}
+      STUGAN_ENGINE_LISTEN: 0.0.0.0:8016
+    healthcheck:
+      test: ["CMD", "/app/stugan-engine", "-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
-Already running stugan with your own compose file (Dockge, Portainer, plain
-compose)? Add the engine to **the same stack** and keep everything else,
-especially the data volume or bind mount, exactly as it is.
+volumes:
+  stugan-data:
+```
 
-If stugan sits on an external network shared with a reverse proxy or tunnel
+Both services sit on the stack's default network, so stugan reaches the engine
+as `stugan-engine`. Don't add `ports:` to the engine: it must never be
+reachable from outside.
+
+### Behind a reverse proxy or tunnel network
+
+If stugan joins an external network shared with a reverse proxy or tunnel
 (here `cloudflared_net`), give the two containers a private network of their
-own, and keep the engine off the shared one so nothing else can reach it:
+own and keep the engine off the shared one, so nothing else can reach it:
 
 ```yaml
 services:
@@ -122,11 +168,70 @@ networks:
   engine: {}                              # not `internal: true`: the engine must reach IRC servers
 ```
 
-Put `STUGAN_ENGINE_SECRET=…` in the stack's `.env` (Dockge and Portainer have
-an editor for it). From then on, the stack's **Update** pulls both images but
-recreates only `stugan`, because `engine-1` hasn't moved. To check it, restart
-just the `stugan` container: its status buffer should say
-`resumed connection held by stugan-engine…`.
+Keep any other settings you already have on `stugan`, such as
+`STUGAN_WEB_PASSWORD`, `security_opt` or a healthcheck.
+
+### Coming from `docker run`
+
+A volume created by `docker run -v stugan-data:/data` is called exactly
+`stugan-data`. Compose would otherwise prefix it with the project name and
+start you on an empty one, so declare it as external:
+
+```yaml
+volumes:
+  stugan-data:
+    external: true      # the volume your docker run used
+```
+
+Use that with the [existing compose file](#existing-compose-file) example, then
+switch over:
+
+```sh
+docker rm -f stugan                 # the old docker-run container (the volume stays)
+docker compose up -d
+```
+
+### Keep your data
+
+- **Bind mounts** (`./data:/data`) are relative to the compose file. Keep the
+  file in the same directory, or use an absolute path.
+- **Named volumes** are namespaced by the compose project, which is the
+  directory name unless `name:` or `-p` says otherwise. Keep using the same
+  file in the same directory, or point at the volume by its real name with
+  `external: true`. `docker volume ls` shows the real names (e.g.
+  `stugan_stugan-data`).
+- If stugan comes up with no networks and an empty history, it's looking at a
+  new volume. Your old one is untouched: stop the stack and fix the volume
+  line.
+
+### Deploy and check
+
+1. `docker compose pull` (or **Update** in Dockge/Portainer) and
+   `docker compose up -d`. This first deploy drops IRC once, while the
+   connections move into the engine.
+2. stugan's log should say `IRC connections go through stugan-engine` and
+   `connected to stugan-engine`.
+3. Restart only the `stugan` container. Its status buffer should then say
+   `resumed connection held by stugan-engine (detached …)`, and nobody in your
+   channels sees you quit.
+
+From then on, the usual `pull` + `up -d` (or **Update**) recreates only
+`stugan`. The engine's image hasn't changed, so it keeps running.
+
+> **Why `engine-1` and not `latest`?** Compose recreates every service whose
+> image changed. On `latest`, each stugan release would restart the engine too
+> and drop IRC, which is the thing it exists to prevent. The `engine-1` tag
+> moves only when the engine itself changes (the changelog says so). The `1`
+> is the protocol major version: a stugan that needs `engine-2` will say so,
+> and refuses to talk to an `engine-1` rather than guess.
+
+In a container the engine must listen on `0.0.0.0`
+(`STUGAN_ENGINE_LISTEN=0.0.0.0:8016`): containers don't share loopback. With
+no published port, `:8016` exists only on the stack's network.
+
+If a pull fails with `unauthorized`, the GHCR package is private: make it
+public or `docker login ghcr.io` on the host (see
+[docker.md](docker.md#make-the-package-pullable)).
 
 ### Opting in or out
 

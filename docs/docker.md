@@ -117,20 +117,17 @@ docker compose logs -f          # watch it connect
 ### Keeping IRC connected across upgrades
 
 Run stugan together with [stugan-engine](engine.md), a sidecar that holds the
-IRC sockets while the `stugan` container is recreated. The repository's
-[`docker-compose.engine.yml`](../docker-compose.engine.yml) is a complete
-two-container setup:
+IRC sockets while the `stugan` container is recreated. Upgrades then restart
+only `stugan`, which re-attaches with no quit/rejoin and no missed messages.
 
-```sh
-echo "STUGAN_ENGINE_SECRET=$(openssl rand -hex 32)" > .env
-docker compose -f docker-compose.engine.yml up -d
-```
-
-Upgrades then restart only `stugan`, which re-attaches with no quit/rejoin and
-no missed messages. Keep the engine on its `engine-1` tag, never `latest`. See
-[engine.md](engine.md) for why, and for opting in and out. Already running
-stugan from your own compose file, e.g. behind a tunnel on an external network?
-See [adding the engine to an existing stack](engine.md#adding-the-engine-to-an-existing-stack).
+Using the compose file above? Add one service and two environment variables to
+it, and keep your volume line as it is. The engine guide has
+[the edited file](engine.md#existing-compose-file), a variant for
+[tunnel/proxy networks](engine.md#behind-a-reverse-proxy-or-tunnel-network),
+and the steps for [`docker run` users](engine.md#coming-from-docker-run). For a
+fresh install, [`docker-compose.engine.yml`](../docker-compose.engine.yml) is a
+complete two-container stack. Keep the engine on its `engine-1` tag, never
+`latest`.
 
 ## Behind a reverse proxy (TLS)
 

@@ -15,6 +15,11 @@
 # so), and the `1` is the protocol major: a stugan that needs `engine-2` will
 # say so and refuses to talk to an `engine-1`.
 #
+# Already running stugan? Don't switch to this file from another directory:
+# compose names volumes after the project directory, so you'd start on an
+# empty one. Add the engine to your existing compose file instead; see
+# "Docker" in docs/engine.md for the exact lines.
+#
 # See docs/engine.md for details, opting in/out, and bare-metal setups.
 
 services:
