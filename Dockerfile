@@ -22,7 +22,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -ldflags "-s -w -X main.buildVersion=docker" -o /out/stugan ./cmd/stugan
+    go build -ldflags "-s -w -X main.buildVersion=docker" -o /out/stugan ./cmd/stugan && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags "-s -w -X main.buildVersion=docker" -o /out/stugan-engine ./cmd/stugan-engine
 
 # --- Stage 3: minimal runtime ----------------------------------------------
 FROM alpine:3.20
@@ -31,6 +33,9 @@ RUN apk add --no-cache ca-certificates && adduser -D -u 10001 stugan \
     && mkdir -p /data && chown stugan:stugan /data
 WORKDIR /app
 COPY --from=build /out/stugan /app/stugan
+# The IRC engine sidecar ships in this image too (entrypoint
+# /app/stugan-engine); the slimmer Dockerfile.engine builds it alone.
+COPY --from=build /out/stugan-engine /app/stugan-engine
 COPY --from=client /client/dist /app/client/dist
 
 # Config, history, scripts, and uploads live here — mount a volume.

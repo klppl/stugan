@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/klippelism/stugan/internal/core"
+	"github.com/klippelism/stugan/internal/enginelink"
 	"github.com/lrstanley/girc"
 )
 
@@ -57,6 +58,12 @@ type Options struct {
 	// registration on every (re)connect.
 	Monitor []string
 	Logger  *slog.Logger
+
+	// Relay, when set, routes the connection through stugan-engine instead of
+	// dialing the server: the engine holds the socket across stugan restarts.
+	// RelayID names the connection within this stugan instance.
+	Relay   *enginelink.Link
+	RelayID string
 }
 
 // Conn is a girc-backed implementation of core.IRCConn.
@@ -91,9 +98,43 @@ type Conn struct {
 	// girc applies flood control synchronously, so calling Cmd methods directly
 	// from core can otherwise stall all networks for the duration of its delay.
 	outbound *outboundWriter
+
+	// Relay (stugan-engine) state; unused when dialing directly.
+	//
+	// fingerprint digests the registration settings; the engine re-attaches a
+	// held socket only when it matches. sess is the latest relay session (kept
+	// after it ends so Close can still tell the engine to end the socket).
+	fingerprint string
+	sess        atomic.Pointer[enginelink.Session]
+	// restoring is set while an attached session replays the registration
+	// burst: the client's writes are swallowed then, so outbound waits.
+	restoring atomic.Bool
+	// resume is the pending re-attach, consumed when the client answers the
+	// restore marker PING.
+	resume atomic.Pointer[resumeState]
+	// skipConnected suppresses the EvConnect of a replayed RPL_WELCOME: the
+	// re-attach announces itself (as a resumed connect) instead.
+	skipConnected atomic.Bool
+	// lastSeq is the engine seq of the latest line whose handlers started;
+	// processed the latest whose handlers have all finished.
+	lastSeq   atomic.Uint64
+	processed atomic.Uint64
+	// closing is set by Close so a relay connect still in flight is ended.
+	closing atomic.Bool
 }
 
-const outboundQueueSize = 256
+// resumeState is a pending re-attach to a socket the engine kept open.
+type resumeState struct {
+	info   enginelink.Info
+	marker string
+}
+
+const (
+	outboundQueueSize = 256
+	// backgroundQueueSize bounds low-priority lines (the post-re-attach
+	// NAMES/TOPIC refresh); their producer blocks rather than drop.
+	backgroundQueueSize = 64
+)
 
 var errOutboundQueueFull = errors.New("IRC outbound queue is full")
 
@@ -107,6 +148,7 @@ type outboundRequest struct {
 // only goroutine that enters girc's synchronous flood-control path.
 type outboundWriter struct {
 	queue    chan outboundRequest
+	bg       chan outboundRequest // low priority: sent only when queue is empty
 	done     chan struct{}
 	dispatch func(outboundRequest)
 	mu       sync.RWMutex
@@ -115,8 +157,9 @@ type outboundWriter struct {
 
 func newOutboundWriter(dispatch func(outboundRequest)) *outboundWriter {
 	w := &outboundWriter{
-		queue: make(chan outboundRequest, outboundQueueSize), done: make(chan struct{}),
-		dispatch: dispatch,
+		queue: make(chan outboundRequest, outboundQueueSize),
+		bg:    make(chan outboundRequest, backgroundQueueSize),
+		done:  make(chan struct{}), dispatch: dispatch,
 	}
 	go w.run()
 	return w
@@ -136,12 +179,41 @@ func (w *outboundWriter) enqueue(req outboundRequest) error {
 	}
 }
 
+// enqueueBackground queues a low-priority line, waiting for room rather than
+// dropping it. It must not be called from the engine loop.
+func (w *outboundWriter) enqueueBackground(req outboundRequest) error {
+	w.mu.RLock()
+	closed := w.closed
+	w.mu.RUnlock()
+	if closed {
+		return girc.ErrNotConnected
+	}
+	select {
+	case w.bg <- req:
+		return nil
+	case <-w.done:
+		return girc.ErrNotConnected
+	}
+}
+
 func (w *outboundWriter) run() {
 	for {
+		// Normal lines first: a background refresh never delays what the
+		// user typed by more than the one line already in girc's flood wait.
 		select {
 		case <-w.done:
 			return
 		case req := <-w.queue:
+			w.dispatch(req)
+			continue
+		default:
+		}
+		select {
+		case <-w.done:
+			return
+		case req := <-w.queue:
+			w.dispatch(req)
+		case req := <-w.bg:
 			w.dispatch(req)
 		}
 	}
@@ -218,11 +290,26 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 			"read-marker":       nil,
 		},
 	}
+	if opts.Relay != nil {
+		if opts.RelayID == "" {
+			return nil, errors.New("irc: relay connection needs a RelayID")
+		}
+		// The engine owns the socket and its TLS; girc talks plain lines to
+		// the relay session. STS is off: girc would try to upgrade a
+		// connection it believes is plaintext by dialing TLS itself.
+		gcfg.SSL = false
+		gcfg.DisableSTS = true
+		if opts.CertPEM != "" {
+			if _, err := tls.X509KeyPair([]byte(opts.CertPEM), []byte(opts.CertPEM)); err != nil {
+				return nil, fmt.Errorf("parse client certificate: %w", err)
+			}
+		}
+	}
 	// A client certificate (CertFP / SASL EXTERNAL) or skipping verification
 	// (self-signed servers) both need our own TLSConfig. girc uses it verbatim
 	// when set, so we must supply ServerName ourselves (girc only fills it in
 	// for its own default config).
-	if opts.CertPEM != "" || opts.Insecure {
+	if opts.Relay == nil && (opts.CertPEM != "" || opts.Insecure) {
 		tcfg := &tls.Config{
 			ServerName:         host,
 			MinVersion:         tls.VersionTLS12,
@@ -265,6 +352,9 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		mech:    mech,
 	}
 	c.outbound = newOutboundWriter(c.dispatchOutbound)
+	if opts.Relay != nil {
+		c.fingerprint = registrationFingerprint(opts, addrs)
+	}
 	if mech != nil {
 		mech.client = c.client
 	}
@@ -277,11 +367,11 @@ func (c *Conn) registerHandlers() {
 	h := c.client.Handlers
 
 	h.Add(girc.CONNECTED, func(gc *girc.Client, _ girc.Event) {
-		// Drop any draft/multiline batch left half-open by a previous
-		// connection that dropped mid-batch (no closing BATCH -ref arrived),
-		// so it can't linger across reconnects. Runs on girc's single handler
-		// goroutine, same as absorbMultiline/handleBatch, so no lock is needed.
-		clear(c.batches)
+		// (Half-open draft/multiline batches from a previous connection are
+		// dropped in Connect, before girc starts: CONNECTED runs on girc's
+		// welcome goroutine, ~2s after 001, concurrently with the message
+		// handlers that use c.batches.)
+		//
 		// Registration is complete (this fires ~2s after RPL_WELCOME, well
 		// after the SASL exchange), so clear the SASL mech: girc otherwise
 		// re-sends AUTHENTICATE on any later CAP ACK while sasl is enabled and
@@ -297,8 +387,36 @@ func (c *Conn) registerHandlers() {
 		if c.mech != nil {
 			gc.Config.SASL = nil
 		}
+		// A replayed welcome (re-attach through stugan-engine) is not a new
+		// registration: the restore marker announces it as a resumed connect.
+		if c.skipConnected.Swap(false) {
+			return
+		}
 		c.emit(core.Event{Type: core.EvConnect, Network: c.opts.Network, Nick: gc.GetNick()})
 		c.armMonitor()
+	})
+
+	// Relay bookkeeping. ALL_EVENTS handlers run before an event's command
+	// handlers, and girc finishes every handler of one event before starting
+	// the next — so when line N arrives, line N-1 is fully handled and its
+	// core events are queued. That is the seq acked (after a core barrier).
+	h.Add(girc.ALL_EVENTS, func(_ *girc.Client, e girc.Event) {
+		if seq, ok := relayTag(&e, enginelink.TagAck); ok {
+			// An ack probe: everything through seq is handled.
+			c.markProcessed(seq)
+			return
+		}
+		if seq, ok := relayTag(&e, enginelink.TagSeq); ok {
+			if prev := c.lastSeq.Swap(seq); prev > 0 {
+				c.markProcessed(prev)
+			}
+		}
+	})
+	// The restore marker: the client has processed the whole replay.
+	h.Add(girc.PING, func(_ *girc.Client, e girc.Event) {
+		if r := c.resume.Load(); r != nil && e.Last() == r.marker && c.resume.CompareAndSwap(r, nil) {
+			c.finishResume(r)
+		}
 	})
 
 	// MONITOR status replies: 730 = the listed nicks are online, 731 = offline.
@@ -326,6 +444,10 @@ func (c *Conn) registerHandlers() {
 	cmds = append(cmds, numericReplies...)
 	for _, cmd := range cmds {
 		h.Add(cmd, func(gc *girc.Client, e girc.Event) {
+			// Replayed registration lines are state for girc, not news.
+			if isReplay(&e) {
+				return
+			}
 			// A message inside an open draft/multiline batch is buffered, not
 			// emitted on its own — it surfaces as one message at BATCH close.
 			if c.absorbMultiline(&e) {
@@ -341,6 +463,9 @@ func (c *Conn) registerHandlers() {
 	// membership prefixes are split off nicks; like MODE below, that lives
 	// in a dedicated handler with access to the server options.
 	h.Add(girc.RPL_NAMREPLY, func(gc *girc.Client, e girc.Event) {
+		if isReplay(&e) {
+			return
+		}
 		prefix, ok := gc.GetServerOption("PREFIX")
 		if !ok {
 			prefix = girc.DefaultPrefixes
@@ -354,13 +479,20 @@ func (c *Conn) registerHandlers() {
 	// that the drop was an auth failure so Connect can report it as such
 	// (the engine then parks the network instead of retrying bad creds).
 	for _, num := range []string{girc.ERR_SASLFAIL, girc.ERR_SASLTOOLONG, girc.ERR_SASLABORTED, girc.RPL_NICKLOCKED} {
-		h.Add(num, func(_ *girc.Client, _ girc.Event) { c.authFailed.Store(true) })
+		h.Add(num, func(_ *girc.Client, e girc.Event) {
+			if !isReplay(&e) {
+				c.authFailed.Store(true)
+			}
+		})
 	}
 
 	// Channel MODE needs the server's PREFIX/CHANMODES to map mode letters to
 	// membership prefixes and consume arguments, so it gets a dedicated handler
 	// (the generic toEvent path above has no access to those server options).
 	h.Add(girc.MODE, func(gc *girc.Client, e girc.Event) {
+		if isReplay(&e) {
+			return
+		}
 		prefix, ok := gc.GetServerOption("PREFIX")
 		if !ok {
 			prefix = girc.DefaultPrefixes
@@ -378,7 +510,7 @@ func (c *Conn) registerHandlers() {
 	// girc (only to ALLEVENTS), so handle our own echoed PRIVMSG/NOTICE here.
 	// Gating on e.Echo avoids double-processing the normal events above.
 	h.Add(girc.ALL_EVENTS, func(gc *girc.Client, e girc.Event) {
-		if e.Echo {
+		if e.Echo && !isReplay(&e) {
 			// An echoed draft/multiline message arrives as a BATCH whose member
 			// lines carry e.Echo; like the command path, absorb them so the
 			// reassembled message surfaces once at BATCH close rather than as
@@ -509,6 +641,14 @@ func (c *Conn) emit(ev core.Event) {
 const stableConn = 30 * time.Second
 
 func (c *Conn) Connect(ctx context.Context) error {
+	// Drop any draft/multiline batch left half-open by a previous connection
+	// that dropped mid-batch (no closing BATCH -ref arrived), so it can't
+	// linger across reconnects. girc's handler goroutines, the only other
+	// users of the map, are not running between connections.
+	clear(c.batches)
+	if c.opts.Relay != nil {
+		return c.connectRelay(ctx)
+	}
 	// Point girc at the current address. A bad address is skipped by advancing
 	// past it so the next retry tries another server rather than wedging here.
 	if err := c.useAddr(c.addrs[c.addrIdx]); err != nil {
@@ -613,7 +753,9 @@ func (c *Conn) Message(target, text string) error {
 // was accepted immediately before a transient disconnect waits for the same
 // Conn's reconnect rather than being silently discarded by girc.
 func (c *Conn) dispatchOutbound(req outboundRequest) {
-	for !c.client.IsConnected() {
+	// While a re-attach replays the registration burst the client's writes
+	// are swallowed, so hold everything until it has been restored.
+	for !c.client.IsConnected() || c.restoring.Load() {
 		select {
 		case <-c.outbound.done:
 			return
@@ -760,12 +902,31 @@ func (c *Conn) Caps() []string {
 // CurrentNick returns our current nick on this network.
 func (c *Conn) CurrentNick() string { return c.client.GetNick() }
 
-// Close terminates the connection.
+// Close terminates the connection. Through stugan-engine this also tells the
+// engine to end the IRC socket; see Detach for keeping it.
 func (c *Conn) Close() error {
+	c.closing.Store(true)
+	c.outbound.close()
+	if s := c.sess.Load(); s != nil {
+		s.Terminate()
+	}
+	c.client.Close()
+	return nil
+}
+
+// Detach stops this client without ending the IRC connection: through
+// stugan-engine the socket stays registered for the next stugan process.
+// Without a relay it is the same as Close. The engine calls it on shutdown.
+func (c *Conn) Detach() error {
+	if c.opts.Relay == nil {
+		return c.Close()
+	}
 	c.outbound.close()
 	c.client.Close()
 	return nil
 }
+
+var _ core.Detacher = (*Conn)(nil)
 
 // splitAddr parses "host:port" into a host and port, defaulting the port to
 // the standard IRC TLS/plaintext port when absent.

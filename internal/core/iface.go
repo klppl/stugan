@@ -34,6 +34,15 @@ type IRCConn interface {
 	Close() error
 }
 
+// Detacher is an optional IRCConn extension for connections that can outlive
+// the process: Detach stops using the connection without ending it (the
+// stugan-engine relay keeps the IRC socket registered for the next process).
+// The engine detaches instead of closing on shutdown; Close still means "end
+// the connection" (remove, disconnect, edit).
+type Detacher interface {
+	Detach() error
+}
+
 // ConnHandler receives normalized inbound events from a connection. The
 // Engine implements it; a connection calls HandleEvent from its read loop.
 type ConnHandler interface {

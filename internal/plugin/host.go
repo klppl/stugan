@@ -268,7 +268,7 @@ func (h *Host) wants(ev core.Event) bool {
 	case core.EvTopic:
 		return p.topic || p.signals["topic"]
 	}
-	name, ok := signalName(ev.Type)
+	name, ok := signalName(ev)
 	return ok && p.signals[name]
 }
 
@@ -1053,13 +1053,13 @@ func (h *Host) dispatch(ev core.Event) (core.Event, bool) {
 		// notified with the (possibly rewritten) topic.
 		out, keep := h.runTopicHooks(ev)
 		if keep {
-			if name, ok := signalName(out.Type); ok {
+			if name, ok := signalName(out); ok {
 				h.runSignalHooks(name, out)
 			}
 		}
 		return out, keep
 	default:
-		if name, ok := signalName(ev.Type); ok {
+		if name, ok := signalName(ev); ok {
 			h.runSignalHooks(name, ev)
 		}
 		return ev, true

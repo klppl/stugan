@@ -9,6 +9,7 @@ the system.
 
 ```
 cmd/stugan/        main(): flags, config, per-user wiring, graceful shutdown
+cmd/stugan-engine/ the optional IRC-holding sidecar (engine.md)
 internal/
   config/          TOML config + $STUGAN_HOME resolution
   logging/         structured logging (slog)
@@ -24,6 +25,9 @@ internal/
   backup/          backup archive build/extract (tar.gz / zip / raw .db)
   safehttp/        SSRF-guarded HTTP client (previews, proxy, stugan.http)
   scripts/         embedded bundled Lua plugins (fish, ignore, ai, webhooks)
+  engine/          stugan-engine: holds IRC sockets, replays, buffers (engine.md)
+  engineproto/     stugan ↔ engine wire frames (NDJSON), versioning
+  enginelink/      stugan's side of the engine link: a net.Conn girc dials through
 client/            Vue 3 + TS + Vite frontend
 docs/              this documentation
 ```
@@ -51,7 +55,7 @@ is depended upon.
 | Package   | May import                              | Must NOT import |
 |-----------|-----------------------------------------|-----------------|
 | `core`    | `proto` (types), stdlib                 | `server`, `irc`, `store`, `plugin`, girc, Lua, UI |
-| `irc`     | girc, `core`, stdlib                    | `server`, `plugin` |
+| `irc`     | girc, `core`, `enginelink`, stdlib      | `server`, `plugin` |
 | `store`   | `modernc.org/sqlite`, `core`, stdlib    | `server`, `plugin` |
 | `plugin`  | gopher-lua, fsnotify, `core`, `safehttp`, stdlib | `server`, `irc` impl, `store` impl |
 | `server`  | `core`, `proto`, `auth`, `backup`, `safehttp`, `config`, `store` (import-mode type only), coder/websocket, webpush | girc, Lua |
@@ -59,7 +63,10 @@ is depended upon.
 | `tui`     | `core`, wish, Bubble Tea, Lip Gloss     | girc, Lua, `server`, `store` impl |
 | `auth`    | bcrypt, stdlib                          | everything else |
 | `proto`, `backup`, `safehttp`, `logging` | stdlib only     | everything else |
-| `config`  | go-toml/v2, stdlib                      | everything else |
+| `config`  | go-toml/v2, `engineproto` (address parsing), stdlib | everything else |
+| `engine`  | `engineproto`, stdlib                   | everything else — it is shipped and versioned separately |
+| `enginelink` | `engineproto`, stdlib                | everything else |
+| `engineproto` | stdlib only                         | everything else |
 
 **The rule that matters:** core imports none of the heavy libraries, and
 girc/lua/sqlite/wish never leak past their owning package. That is what makes
@@ -135,6 +142,8 @@ config.Load → logging.New
   → for each effective user:
        open store (SQLite) at <data>/stugan.db
        install bundled scripts (fish, ignore, ai, webhooks) into <scripts>/
+       (if [engine] url: one enginelink.Link for the whole process, shared
+        by every user's connector; ids are "<user>\x00<network>")
        build core.Engine{ user, connector, highlighter, aliases }
        register store + plugin host as Sinks
        load networks from store (seed from config on first run)
@@ -145,7 +154,9 @@ config.Load → logging.New
   → server.New(hub), register the userSinks
   → if [ssh] enabled:      tui.New(resolver), register its Sinks
   → start listeners (HTTP, bouncer, SSH) + the hourly retention prune
-  → block on ctx (SIGINT/SIGTERM) → graceful Close() of each engine + store
+  → block on ctx (SIGINT/SIGTERM) → each engine detaches/closes its
+    connections and drains its loop → close the engine link (flushing acks)
+    → close the stores
 ```
 
 All share the root `context.Context`; cancellation cascades a clean shutdown.

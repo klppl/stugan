@@ -1,9 +1,9 @@
 # Running with Docker
 
-The `.github/workflows/docker.yml` GitHub Action builds a multi-arch image
-(`linux/amd64` + `linux/arm64`) and publishes it to the GitHub Container
-Registry on every push to `main` and every `v*` tag. This guide covers pulling
-that image onto a server and running it.
+The `.github/workflows/docker.yml` GitHub Action builds a `linux/amd64` image
+and publishes it to the GitHub Container Registry. It runs on demand (Actions →
+Docker → *Run workflow*), not on every push. This guide covers pulling that
+image onto a server and running it.
 
 ## The image
 
@@ -15,12 +15,14 @@ Tags produced by the workflow:
 
 | Tag | When |
 |-----|------|
-| `latest` | every push to the default branch (`main`) |
+| `latest` | a run on the default branch (`main`) |
 | `main` | same builds, branch-named |
-| `v1.2.3`, `1.2` | when you push a `v*` git tag (semver) |
+| `v1.2.3`, `1.2` | a run on a `v*` git tag (semver) |
 | `sha-<short>` | every build, immutable — pin to this for reproducible deploys |
+| `engine-1` | the [stugan-engine](engine.md) image, from the separate *Docker (engine)* workflow — moved only when the engine changes |
 
-To cut a versioned release, tag a commit and push it:
+To cut a versioned release, tag a commit, push it, and run the workflow on the
+tag:
 
 ```sh
 git tag v0.1.0 && git push origin v0.1.0
@@ -112,6 +114,22 @@ docker compose up -d
 docker compose logs -f          # watch it connect
 ```
 
+### Keeping IRC connected across upgrades
+
+Run stugan together with [stugan-engine](engine.md), a sidecar that holds the
+IRC sockets while the `stugan` container is recreated. The repository's
+[`docker-compose.engine.yml`](../docker-compose.engine.yml) is a complete
+two-container setup:
+
+```sh
+echo "STUGAN_ENGINE_SECRET=$(openssl rand -hex 32)" > .env
+docker compose -f docker-compose.engine.yml up -d
+```
+
+Upgrades then restart only `stugan`, which re-attaches with no quit/rejoin and
+no missed messages. Keep the engine on its `engine-1` tag, never `latest`. See
+[engine.md](engine.md) for why, and for opting in and out.
+
 ## Behind a reverse proxy (TLS)
 
 Terminate TLS at a proxy and forward to the container. The app uses a
@@ -199,7 +217,8 @@ docker rm -f stugan
 
 Your `/data` volume — history, networks, scripts, config — survives across
 upgrades. For predictable deploys, pin a `sha-<short>` or `v*` tag instead of
-`latest`.
+`latest`. Without [stugan-engine](engine.md) an upgrade reconnects every
+network. With it, IRC stays up.
 
 ## Building locally
 
@@ -209,5 +228,12 @@ static, CGO-free Go binary in multi-stage):
 ```sh
 docker build -t stugan .
 docker run -d -p 8080:8080 -v stugan-data:/data stugan
+```
+
+The image also contains `/app/stugan-engine`. `Dockerfile.engine` builds a
+slim engine-only image:
+
+```sh
+docker build -f Dockerfile.engine -t stugan-engine .
 ```
 </content>

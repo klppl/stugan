@@ -140,3 +140,44 @@ url = "ftp://example.com"
 		})
 	}
 }
+
+func TestEngineConfig(t *testing.T) {
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	t.Setenv("STUGAN_ENGINE_URL", "")
+	t.Setenv("STUGAN_ENGINE_SECRET", "")
+
+	cfg, err := LoadFrom(write(t, ""))
+	if err != nil || cfg.EngineEnabled() {
+		t.Fatalf("default: enabled=%v err=%v", cfg != nil && cfg.EngineEnabled(), err)
+	}
+
+	cfg, err = LoadFrom(write(t, "[engine]\nurl = \"tcp://engine:8016\"\nsecret = \"0123456789abcdef\"\n"))
+	if err != nil || !cfg.EngineEnabled() || cfg.Engine.URL != "tcp://engine:8016" {
+		t.Fatalf("file: %+v %v", cfg, err)
+	}
+
+	for name, body := range map[string]string{
+		"no secret":    "[engine]\nurl = \"engine:8016\"\n",
+		"short secret": "[engine]\nurl = \"engine:8016\"\nsecret = \"short\"\n",
+		"bad url":      "[engine]\nurl = \"http://engine\"\nsecret = \"0123456789abcdef\"\n",
+	} {
+		if _, err := LoadFrom(write(t, body)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+
+	// The environment overrides the file.
+	t.Setenv("STUGAN_ENGINE_URL", "unix:///run/engine.sock")
+	t.Setenv("STUGAN_ENGINE_SECRET", "env-secret-0123456789")
+	cfg, err = LoadFrom(write(t, "[engine]\nurl = \"engine:8016\"\nsecret = \"file-secret-0123456\"\n"))
+	if err != nil || cfg.Engine.URL != "unix:///run/engine.sock" || cfg.Engine.Secret != "env-secret-0123456789" {
+		t.Fatalf("env override: %+v %v", cfg.Engine, err)
+	}
+}

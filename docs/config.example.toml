@@ -120,3 +120,11 @@ connect  = true
 # key_file     = ""                             # optional custom PEM key path
 # max_playback = 50                             # backlog lines to replay on attach (default 50)
 
+# ---------------------------------------------------------------------------
+# stugan-engine (optional). Holds the IRC connections while stugan restarts,
+# so upgrades don't drop IRC. $STUGAN_ENGINE_URL / $STUGAN_ENGINE_SECRET
+# override these. See docs/engine.md.
+# ---------------------------------------------------------------------------
+# [engine]
+# url    = "tcp://127.0.0.1:8016"               # host:port, tcp://… or unix:///path
+# secret = ""                                   # same value as the engine's STUGAN_ENGINE_SECRET (≥16 chars)

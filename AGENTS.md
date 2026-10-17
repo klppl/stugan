@@ -12,6 +12,7 @@ This file provides overarching guidance for all AI coding agents (Antigravity, C
 ```sh
 go build ./...                                        # build all packages
 go build -o stugan ./cmd/stugan                       # build the daemon binary
+go build -o stugan-engine ./cmd/stugan-engine         # optional IRC-holding sidecar (docs/engine.md)
 go vet ./...                                          # static analysis
 gofmt -l .                                            # must print nothing (CI fails on unformatted files)
 go test -race ./...                                   # full test suite
@@ -41,6 +42,7 @@ When implementing new features, modifying architecture, or fixing bugs in `stuga
    - **Wire Protocol Synchronization**: If you add or modify a WebSocket event, you **must** update both the Go struct in `internal/proto/` and the TypeScript interface in `client/src/proto/events.ts`.
    - **Sink Updates**: If a new method is added to `core.Sink`, all implementers (`store.Store`, `server.userSink`, `ircserver.ircSink`, the `tui` hub sink, `logSink`, and test sinks) must be updated.
    - **Concurrency Safety**: Mutate domain state *only* on the engine loop goroutine under `e.mu`. Provide concurrent readers with deep copies via `Snapshot()` / `SnapshotNetwork()`.
+   - **stugan-engine stays dumb and compatible**: `internal/engine` imports only `internal/engineproto` + stdlib and understands as little IRC as possible — every change to it restarts users' engines, which drops IRC. Wire changes go in `internal/engineproto`: adding an optional field/op is a `ProtocolMinor` bump (and stugan must check the engine's minor before relying on it); renaming or re-meaning one is a `ProtocolMajor` bump (also update `ENGINE_MAJOR` in `.github/workflows/docker-engine.yml`).
 
 3. **Validation Routine**:
    - Run Go test suite: `go test -race ./...`

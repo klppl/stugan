@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/klippelism/stugan/internal/engineproto"
 	toml "github.com/pelletier/go-toml/v2"
 )
 
@@ -58,7 +59,31 @@ type Config struct {
 	// IRCServer exposes the IRC bouncer server for native IRC clients.
 	// Disabled unless [ircserver].listen is set.
 	IRCServer IRCServerConfig `toml:"ircserver"`
+
+	// Engine routes IRC connections through stugan-engine so they survive
+	// stugan restarts. Disabled unless [engine].url (or $STUGAN_ENGINE_URL)
+	// is set.
+	Engine EngineConfig `toml:"engine"`
 }
+
+// EngineConfig points stugan at a stugan-engine sidecar. $STUGAN_ENGINE_URL
+// and $STUGAN_ENGINE_SECRET override the file, so a compose file can carry
+// the whole switch.
+type EngineConfig struct {
+	// URL is the engine address: host:port, tcp://host:port or
+	// unix:///path/to/socket. Empty disables the engine: stugan dials IRC
+	// itself.
+	URL string `toml:"url"`
+	// Secret is the shared secret both sides are configured with. Required
+	// when URL is set; at least 16 characters.
+	Secret string `toml:"secret"`
+}
+
+// MinEngineSecretLen is the shortest accepted engine secret.
+const MinEngineSecretLen = 16
+
+// EngineEnabled reports whether IRC goes through stugan-engine.
+func (c *Config) EngineEnabled() bool { return c.Engine.URL != "" }
 
 // SSHConfig configures the SSH-served terminal UI. Authentication is by
 // public key only: a session's key must appear in the target user's
@@ -336,6 +361,12 @@ func LoadFrom(home string) (*Config, error) {
 	}
 
 	cfg.home = home
+	if v := os.Getenv("STUGAN_ENGINE_URL"); v != "" {
+		cfg.Engine.URL = v
+	}
+	if v := os.Getenv("STUGAN_ENGINE_SECRET"); v != "" {
+		cfg.Engine.Secret = v
+	}
 	cfg.withDefaults()
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -396,6 +427,14 @@ func (c *Config) validate() error {
 	}
 	if err := validateNetworks(c.Networks, "networks"); err != nil {
 		return err
+	}
+	if c.Engine.URL != "" {
+		if _, _, err := engineproto.ParseAddr(c.Engine.URL); err != nil {
+			return fmt.Errorf("config: engine.url: %w", err)
+		}
+		if len(c.Engine.Secret) < MinEngineSecretLen {
+			return fmt.Errorf("config: engine.secret (or $STUGAN_ENGINE_SECRET) must be at least %d characters when engine.url is set", MinEngineSecretLen)
+		}
 	}
 	seenUser := make(map[string]bool, len(c.Users))
 	for i, u := range c.Users {

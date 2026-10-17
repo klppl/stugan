@@ -14,6 +14,7 @@
 
 # Build outputs (rebuilt inside the image)
 /stugan
+/stugan-engine
 /client/stugan
 /dist/
 client/dist/

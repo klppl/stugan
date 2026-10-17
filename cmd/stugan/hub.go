@@ -14,6 +14,7 @@ import (
 	"github.com/klippelism/stugan/internal/auth"
 	"github.com/klippelism/stugan/internal/config"
 	"github.com/klippelism/stugan/internal/core"
+	"github.com/klippelism/stugan/internal/enginelink"
 	"github.com/klippelism/stugan/internal/irc"
 	"github.com/klippelism/stugan/internal/ircserver"
 	"github.com/klippelism/stugan/internal/plugin"
@@ -69,6 +70,7 @@ type hub struct {
 	engines map[string]*core.Engine
 	stores  []*store.Store
 	tenants map[string]*server.Tenant
+	relay   *enginelink.Link // nil unless stugan-engine is configured
 }
 
 func (h *hub) AuthEnabled() bool { return h.authEnabled }
@@ -141,6 +143,25 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 	// single-user can opt out with `sandbox = false` (see PluginSandbox).
 	sandbox := cfg.PluginSandbox()
 
+	// Optional stugan-engine relay: one link for the whole process, shared by
+	// every user's connections.
+	var relay *enginelink.Link
+	if cfg.EngineEnabled() {
+		instance, err := enginelink.LoadInstanceID(cfg.DataDir())
+		if err != nil {
+			return nil, nil, err
+		}
+		relay, err = enginelink.New(enginelink.Config{
+			URL: cfg.Engine.URL, Secret: cfg.Engine.Secret, Instance: instance,
+			Version: version(), Logger: log.With("component", "engine-link"),
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("engine: %w", err)
+		}
+		h.relay = relay
+		log.Info("IRC connections go through stugan-engine", "url", cfg.Engine.URL)
+	}
+
 	for _, u := range cfg.EffectiveUsers() {
 		dataDir, scriptsDir := userDirs(cfg, u.Name)
 		for _, d := range []string{dataDir, scriptsDir} {
@@ -162,7 +183,7 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 		highlighter := userHighlighter(db, cfg, log.With("user", u.Name))
 		aliases := userAliases(db, cfg, log.With("user", u.Name))
 
-		connector := ircConnector{log: log.With("user", u.Name)}
+		connector := ircConnector{log: log.With("user", u.Name), relay: relay, user: u.Name}
 		eng := core.New(core.Options{
 			Logger:    log.With("user", u.Name),
 			Highlight: highlighter,
@@ -235,6 +256,11 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 	}
 
 	cleanup := func() {
+		// The link goes first: closing it detaches every connection still on
+		// it, so the engine keeps those sockets for the next process.
+		if h.relay != nil {
+			h.relay.Close()
+		}
 		for _, db := range h.stores {
 			db.Close()
 		}
@@ -313,11 +339,21 @@ func (h *hub) registerIRCSinks(srv *ircserver.Server) {
 }
 
 // ircConnector builds core connections from params, wrapping internal/irc so
-// core can dial at runtime without importing the IRC library.
-type ircConnector struct{ log *slog.Logger }
+// core can dial at runtime without importing the IRC library. With a relay,
+// connections go through stugan-engine under an id unique to (user, network).
+type ircConnector struct {
+	log   *slog.Logger
+	relay *enginelink.Link
+	user  string
+}
 
 func (c ircConnector) Dial(p core.NetworkParams, h core.ConnHandler) (core.IRCConn, error) {
+	var relayID string
+	if c.relay != nil {
+		relayID = c.user + "\x00" + p.ID
+	}
 	return irc.New(irc.Options{
+		Relay: c.relay, RelayID: relayID,
 		Network: p.ID, Addr: p.Addr, Fallbacks: p.Fallbacks,
 		TLS: p.TLS, Insecure: p.Insecure,
 		Nick: p.Nick, User: p.User, Realname: p.Realname,

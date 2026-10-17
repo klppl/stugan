@@ -158,7 +158,11 @@ type Engine struct {
 
 	running bool
 	runCtx  context.Context
-	runWG   sync.WaitGroup
+	runWG   sync.WaitGroup // connection goroutines
+	loopWG  sync.WaitGroup // the loop goroutine
+	// stopping is set on shutdown before any connection is told to stop, so
+	// everything a connection does on its way out happens after it.
+	stopping atomic.Bool
 
 	events chan Event
 	done   chan struct{}
@@ -947,17 +951,26 @@ func (e *Engine) HandleEvent(ev Event) {
 // until ctx is cancelled, after which it closes connections and drains.
 // Networks added at runtime (AddNetwork) start their own goroutines.
 func (e *Engine) Run(ctx context.Context) error {
+	// The loop outlives ctx: on shutdown the connections stop first, and the
+	// loop then commits whatever they queued on their way out (the last lines
+	// read, a stugan-engine ack barrier) before it exits.
+	loopCtx, stopLoop := context.WithCancel(context.Background())
+	// Connections get their own context, cancelled only once stopping is
+	// set, so their shutdown is ordered after it (see handle).
+	connsCtx, stopConns := context.WithCancel(context.Background())
+	defer stopConns()
 	e.mu.Lock()
 	e.running = true
-	e.runCtx = ctx
-	e.runWG.Go(func() { e.loop(ctx) })
+	e.runCtx = connsCtx
+	e.loopWG.Go(func() { e.loop(loopCtx) })
 	for id, conn := range e.conns {
 		e.startConnLocked(id, conn)
 	}
 	e.mu.Unlock()
 
 	<-ctx.Done()
-	e.closeo.Do(func() { close(e.done) })
+	e.stopping.Store(true)
+	stopConns()
 
 	e.mu.Lock()
 	e.running = false
@@ -973,10 +986,20 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	e.mu.Unlock()
 	for _, conn := range conns {
-		_ = conn.Close()
+		// Shutdown is not a disconnect: a connection that can outlive us
+		// (stugan-engine) is detached so it stays up for the next process.
+		if d, ok := conn.(Detacher); ok {
+			_ = d.Detach()
+		} else {
+			_ = conn.Close()
+		}
 	}
 
+	// Connection goroutines return once their (ctx-cancelled) Connect does.
 	e.runWG.Wait()
+	stopLoop()
+	e.loopWG.Wait()
+	e.closeo.Do(func() { close(e.done) })
 	if err := e.host.Close(); err != nil {
 		e.log.Warn("closing plugin host", "err", err)
 	}
@@ -1082,13 +1105,22 @@ func (e *Engine) releaseConn(id string, conn IRCConn) {
 }
 
 // loop is the single goroutine that mutates state. Every event passes
-// through here in arrival order.
+// through here in arrival order. When ctx ends it commits what is already
+// queued, then returns.
 func (e *Engine) loop(ctx context.Context) {
 	lastFlush := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			for {
+				select {
+				case ev := <-e.events:
+					e.handle(context.Background(), ev)
+				default:
+					e.flushDirty()
+					return
+				}
+			}
 		case ev := <-e.events:
 			e.handle(ctx, ev)
 			if len(e.events) == 0 || time.Since(lastFlush) >= maxNotifyDelay {
@@ -1155,7 +1187,18 @@ func (e *Engine) wakeFlush() {
 //
 // Internal events (state, print) bypass the host entirely.
 func (e *Engine) handle(ctx context.Context, ev Event) {
+	// Our own shutdown is not a disconnect worth recording: the next start
+	// connects (or, through stugan-engine, resumes) again. Dropping it keeps
+	// shutdown as quiet as when queued events were simply discarded.
+	if ev.Type == EvDisconnect && e.stopping.Load() {
+		return
+	}
 	switch ev.Type {
+	case evSync:
+		if ev.syncFn != nil {
+			ev.syncFn()
+		}
+
 	case evSetState:
 		e.commit(ev)
 
@@ -1179,9 +1222,31 @@ func (e *Engine) handle(ctx context.Context, ev Event) {
 		e.host.Dispatch(ctx, ev) // notify-only
 		e.commit(ev)
 		if ev.Type == EvConnect {
-			e.runPerform(ev.Network)
+			if ev.Resumed {
+				e.resumeStartup(ev.Network)
+			} else {
+				e.runPerform(ev.Network)
+			}
 		}
 	}
+}
+
+// Sync runs fn on the engine loop once every event handed to HandleEvent
+// before this call has been committed (dispatched to plugins and fanned out to
+// the sinks). fn must be quick and must not block. If the engine is shutting
+// down fn may never run. Safe from any goroutine.
+func (e *Engine) Sync(fn func()) {
+	e.HandleEvent(Event{Type: evSync, syncFn: fn})
+}
+
+// resumeStartup handles the startup bookkeeping of a resumed connection: it
+// is already registered and in its channels, so there is no perform or
+// autojoin to run — but a Perform sequence still pending from an earlier
+// registration on this connection must not carry on into this one.
+func (e *Engine) resumeStartup(network string) {
+	e.mu.Lock()
+	e.startupSeq[network]++
+	e.mu.Unlock()
 }
 
 const performCommandDelay = time.Second
@@ -1797,7 +1862,22 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		if ev.Nick != "" {
 			n.Nick = ev.Nick
 		}
-		sys(StatusBuffer, fmt.Sprintf("connected to %s as %s", n.Name, n.Nick))
+		if ev.Resumed {
+			// The connection never left its channels; recreate their buffers
+			// (a fresh process has none) without join lines. Members and
+			// topics follow from the NAMES/TOPIC refresh.
+			for _, ch := range ev.Args {
+				if ch == "" {
+					continue
+				}
+				if c, created := n.getOrCreate(ch, KindChannel); created {
+					e.applyPendingStateLocked(ev.Network, c)
+				}
+			}
+			sys(StatusBuffer, fmt.Sprintf("resumed %s as %s", n.Name, n.Nick))
+		} else {
+			sys(StatusBuffer, fmt.Sprintf("connected to %s as %s", n.Name, n.Nick))
+		}
 		netChanged = true
 
 	case EvDisconnect:

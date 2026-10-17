@@ -66,6 +66,39 @@ and auto-join sequencing are driven by the Engine, which re-dials through the
 second after the last line so service auth/modes settle first. IRC connections
 are independent of browser sessions — they persist while no client is attached.
 
+## stugan-engine relay
+
+With `[engine]` configured (see [engine.md](engine.md)), `Options.Relay` routes
+the connection through stugan-engine (`relay.go`). girc still runs normally,
+but it dials a `*enginelink.Session` (a `net.Conn` backed by the engine link)
+via `DialerConnect`, with `SSL` and STS off, because the engine owns the
+socket and its TLS. Translation and every handler stay unchanged.
+
+- **Fresh connect:** the engine dials and lines flow live. Each relayed line
+  carries `@stugan/seq=N` and, if the server sent none, a `time` tag with the
+  engine's receive time.
+- **Attach:** the engine already holds a registered socket. The session feeds
+  girc the recorded burst (CAP/SASL/001–005, with 001 addressed to the live
+  nick), tagged `@stugan/replay`, then a marker `PING`. Until girc answers the
+  marker, everything it writes (its own `CAP LS`/`NICK`/`USER`…) is swallowed,
+  and the outbound queue holds core's writes. The marker handler emits one
+  `EvConnect{Resumed: true, Args: channels}` ahead of any backlog line, re-arms
+  MONITOR, and queues `NAMES`/`TOPIC` per channel at background priority. The
+  replayed welcome's `CONNECTED` is skipped, so perform and autojoin don't
+  re-run. If registration finished while no stugan was attached
+  ("unattended"), the `CONNECTED` runs them as usual.
+- **Acks:** handlers for one girc event finish before the next starts, so when
+  line N reaches the `ALL_EVENTS` handler, line N-1 is fully handled. When girc
+  has read everything, the session hands it an ack probe (`STUGANACK`). Acks go
+  out through the engine's `Sync` barrier, i.e. only after core has committed
+  the events. Replay and relay tags never reach `Message.Tags`.
+- **Close vs Detach:** `Close` tells the engine to end the socket (remove,
+  disconnect, edit). `Detach`, called by core on shutdown, and girc closing
+  its "socket" both only detach. Rejected SASL credentials end the socket too.
+- **Fingerprint:** a digest of the settings core reconnects for (address,
+  fallbacks, TLS, skip-verify, user, realname, SASL, server password, cert).
+  The engine re-attaches only on a match. The nick is deliberately excluded.
+
 ## Event translation (`translate.go`)
 
 `toEvent(network string, e *girc.Event, self string) (core.Event, bool)` is a

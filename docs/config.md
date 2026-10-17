@@ -295,12 +295,34 @@ tls          = true
 max_playback = 50
 ```
 
+## `[engine]`
+
+Routes every IRC connection through [stugan-engine](engine.md), a sidecar that
+keeps the connections up while stugan restarts. Disabled unless `url` is set.
+`$STUGAN_ENGINE_URL` and `$STUGAN_ENGINE_SECRET` override the file.
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `url` | string | `""` | Engine address: `host:port`, `tcp://host:port` or `unix:///path/to/socket`. Empty disables the engine. |
+| `secret` | string | `""` | Shared secret configured on both sides. Required with `url`, at least 16 characters. |
+
+```toml
+[engine]
+url    = "tcp://stugan-engine:8016"
+secret = "…"   # or $STUGAN_ENGINE_SECRET
+```
+
 ## Environment variables
 
 | Var | Meaning |
 |-----|---------|
 | `STUGAN_HOME` | Config/data/scripts root (highest-priority lookup). |
 | `STUGAN_WEB_PASSWORD` | Enables the site-wide password gate in front of the whole site (stacks with `[[users]]`). In single-user mode it is also the IRC bouncer password. See [server.md](server.md#security-hardening). |
+| `STUGAN_ENGINE_URL` | Overrides `[engine].url`. |
+| `STUGAN_ENGINE_SECRET` | Overrides `[engine].secret`. |
+
+The engine binary has its own variables (`STUGAN_ENGINE_LISTEN`, buffer caps,
+orphan timeout); see [engine.md](engine.md#stugan-engine).
 
 There is no built-in `.env` parser; `set -a; source .env; set +a; ./stugan`
 loads one from a POSIX shell, or docker-compose's `env_file:` does it for

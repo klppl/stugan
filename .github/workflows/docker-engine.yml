@@ -1,0 +1,62 @@
+name: Docker (engine)
+
+# Publishes the stugan-engine image. Run it ONLY when the engine itself
+# changed (internal/engine, internal/engineproto, cmd/stugan-engine,
+# internal/logging, Dockerfile.engine): users run the engine on the
+# `engine-<major>` tag, and every time that tag moves, `docker compose up -d`
+# restarts their engine — which drops IRC, the one thing it exists to prevent.
+
+on:
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  # Must match engineproto.ProtocolMajor.
+  ENGINE_MAJOR: "1"
+
+jobs:
+  image:
+    name: Build & publish engine image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check protocol major
+        run: |
+          grep -q "ProtocolMajor = ${ENGINE_MAJOR}\$" internal/engineproto/proto.go || {
+            echo "ENGINE_MAJOR (${ENGINE_MAJOR}) does not match engineproto.ProtocolMajor" >&2
+            exit 1
+          }
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=engine-${{ env.ENGINE_MAJOR }}
+            type=sha,prefix=engine-sha-
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.engine
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=engine
+          cache-to: type=gha,mode=max,scope=engine

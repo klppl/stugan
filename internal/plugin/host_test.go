@@ -1096,3 +1096,24 @@ func TestDispatchSkipsUnhookedEvents(t *testing.T) {
 		t.Error("join still wanted after unloading the only join hook")
 	}
 }
+
+func TestResumedConnectIsResumeSignal(t *testing.T) {
+	api := &fakeAPI{}
+	h := newHost(t, api, map[string]string{
+		"sig.lua": `
+			stugan.hook_signal("connect", function(s)
+			  stugan.print(s.network, "", "connect")
+			end)
+			stugan.hook_signal("resume", function(s)
+			  stugan.print(s.network, "", "resume " .. s.nick)
+			end)`,
+	}, nil)
+
+	h.Dispatch(context.Background(), core.Event{Type: core.EvConnect, Network: "n", Nick: "me", Resumed: true})
+	h.Dispatch(context.Background(), core.Event{Type: core.EvConnect, Network: "n", Nick: "me"})
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.prints) != 2 || api.prints[0][2] != "resume me" || api.prints[1][2] != "connect" {
+		t.Fatalf("prints = %v; a resumed connect must reach only resume hooks", api.prints)
+	}
+}

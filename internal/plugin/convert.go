@@ -100,9 +100,12 @@ func bufferKind(name string) string {
 	}
 }
 
-// signalName maps an event type to the hook_signal name scripts subscribe to.
-func signalName(t core.EventType) (string, bool) {
-	switch t {
+// signalName maps an event to the hook_signal name scripts subscribe to. A
+// resumed connect (stugan re-attached to a connection stugan-engine kept up)
+// is "resume", not "connect": scripts that identify or join on connect must
+// not repeat that on a connection that never dropped.
+func signalName(ev core.Event) (string, bool) {
+	switch ev.Type {
 	case core.EvJoin:
 		return "join", true
 	case core.EvPart:
@@ -116,6 +119,9 @@ func signalName(t core.EventType) (string, bool) {
 	case core.EvTopic:
 		return "topic", true
 	case core.EvConnect:
+		if ev.Resumed {
+			return "resume", true
+		}
 		return "connect", true
 	case core.EvDisconnect:
 		return "disconnect", true

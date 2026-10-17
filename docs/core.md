@@ -91,7 +91,7 @@ func (e *Engine) HandleEvent(ev Event)   // enqueue from any goroutine (256-deep
 func (e *Engine) loop(ctx context.Context) {
     for {
         select {
-        case <-ctx.Done(): return
+        case <-ctx.Done(): drain(); return   // commit what is queued, then exit
         case ev := <-e.events:
             e.handle(ctx, ev)
             if len(e.events) == 0 || time.Since(lastFlush) >= maxNotifyDelay {
@@ -104,10 +104,26 @@ func (e *Engine) loop(ctx context.Context) {
 ```
 
 Every event flows through this one goroutine in arrival order, so state
-mutation never races. The pipeline per event is:
+mutation never races.
 
-1. **`handle`** — routes by `ev.Type`. The internal `set_state` event bypasses
-   plugins. Mutable events (`message_in`, `message_out`, `command`) go
+`Sync(fn)` queues a barrier: the loop runs `fn` once every event handed to
+`HandleEvent` before it has been committed. The stugan-engine relay uses it to
+acknowledge a line only after its events are committed (see
+[engine.md](engine.md)).
+
+**Shutdown order.** When `Run`'s context ends, the engine sets `stopping`, then
+cancels the connections' own context and **detaches** each connection that
+implements `Detacher`, or closes the ones that don't. It waits for the
+connection goroutines to return, and only then stops the loop, which first
+commits whatever is still queued: the last lines read, a relay's ack barrier.
+`disconnect` events seen while stopping are dropped, so a shutdown doesn't
+record a disconnect in history. The next start connects again, or resumes
+through the engine.
+
+The pipeline per event is:
+
+1. **`handle`** — routes by `ev.Type`. The internal `set_state` and `sync`
+   events bypass plugins. Mutable events (`message_in`, `message_out`, `command`) go
    to `PluginHost.Dispatch`, which may drop, rewrite, or (for commands) claim
    them. Everything else is a notify-only dispatch.
 2. **`apply`** — commits the (possibly mutated) event. Specialized paths handle
@@ -172,15 +188,22 @@ type Event struct {
     Away        bool          // away: whether Nick is now away
     Online      bool          // monitor: whether the Args nicks are now online
     Count       int           // list_item: user count; numeric: code
+    Resumed     bool          // connect: re-attached via stugan-engine; Args = channels
 }
 ```
+
+A **resumed** `connect` reports a connection stugan-engine kept registered
+while stugan was down. Core recreates its channel buffers from `Args` without
+join lines, prints `resumed <network> as <nick>`, and does **not** run perform
+or autojoin. It does cancel any perform sequence still pending from an earlier
+registration. Plugins see it as the `resume` signal, not `connect`.
 
 `EventType` values: `message_in`, `message_out` (mutable/droppable);
 `command` (claimable); `join`, `part`, `kick`, `quit`, `nick`, `topic`,
 `connect`, `disconnect`, `names`, `away`, `account`, `invite`, `mode`
 (notify); `list_item`, `list_end` (channel browser); `typing`, `react`,
 `redact` (ephemeral); `numeric` (WHOIS/WHO/errors); `monitor` (MONITOR
-730/731 presence); `set_state` (internal, bypasses plugins).
+730/731 presence); `set_state` and `sync` (internal, bypass plugins).
 
 ## Interfaces core defines
 
@@ -196,7 +219,13 @@ type IRCConn interface {
     Close() error
 }
 
-// Receiver of normalized inbound events (the Engine implements it).
+// Optional IRCConn extension for connections that can outlive the process
+// (the stugan-engine relay): Detach stops using it without ending it. Run
+// detaches instead of closing on shutdown; Close still means "end it".
+type Detacher interface{ Detach() error }
+
+// Receiver of normalized inbound events (the Engine implements it). The
+// Engine also offers Sync(fn), which irc.Conn discovers by type assertion.
 type ConnHandler interface{ HandleEvent(ev Event) }
 
 // The plugin runtime. Implemented in internal/plugin.

@@ -68,6 +68,9 @@ const (
 	// change (e.g. Connecting) onto the engine loop so all state mutation
 	// stays single-threaded. Not dispatched to plugins.
 	evSetState EventType = "set_state"
+	// evSync is internal: a barrier carrying a callback the loop runs once
+	// every event queued before it has been committed (see Engine.Sync).
+	evSync EventType = "sync"
 )
 
 // Event is the unit that flows on the engine's bus. Which fields are set
@@ -81,7 +84,7 @@ const (
 //	EvInvite             → Nick(inviter), NewNick(invitee), Buffer(channel)
 //	EvNick               → Nick(old), NewNick
 //	EvTopic              → Buffer, Text(topic), Nick(setter)
-//	EvConnect            → Nick(our nick)
+//	EvConnect            → Nick(our nick); Resumed + Args(channels) on re-attach
 //	EvDisconnect         → Text(reason)
 //	EvCommand            → Buffer, Command, Args, Text(arg string)
 //	evSetState           → State
@@ -119,6 +122,13 @@ type Event struct {
 	Away      bool // EvAway: whether Nick is now away
 	Online    bool // EvMonitor: whether the Args nicks are now online
 	Count     int  // EvListItem: user count
+	// Resumed (EvConnect) marks a re-attach to a connection stugan-engine kept
+	// registered while stugan was down: not a new registration, so perform,
+	// autojoin and the plugin "connect" signal don't run. Args lists the
+	// channels the connection is in.
+	Resumed bool
+
+	syncFn func() // evSync only
 }
 
 // MemberMode is one membership-prefix change carried by EvMode: Nick gains

@@ -39,6 +39,7 @@ plugin system.
 - **Lua plugins.** Commands, filters, hooks and timers, with hot reload and a curated library.
 - **Previews & uploads.** Link previews, inline images and video, paste or drag to upload.
 - **Built-in bouncer.** Connect WeeChat, HexChat, irssi or any other client too.
+- **Restart without dropping IRC.** The optional [stugan-engine](docs/engine.md) sidecar holds the connections while stugan upgrades: no quit/rejoin flood, nothing missed.
 - **SSH terminal UI.** Reach your session from any terminal.
 - **Installable PWA.** Mobile friendly, with Web Push and desktop notifications.
 - **Multi-user.** bcrypt logins with fully isolated networks and history.
@@ -53,7 +54,7 @@ plugin system.
 
 ## Quick start
 
-**Docker** (amd64 and arm64):
+**Docker** (amd64):
 
 ```sh
 docker run -d --name stugan -p 8080:8080 -v stugan-data:/data \
@@ -62,13 +63,16 @@ docker run -d --name stugan -p 8080:8080 -v stugan-data:/data \
 
 Put a `config.toml` with `listen = "0.0.0.0:8080"` in the `/data` volume, then
 open `http://localhost:8080`. The [Docker guide](docs/docker.md) covers compose,
-reverse proxy + TLS, `trusted_proxies` and updates.
+reverse proxy + TLS, `trusted_proxies` and updates. To keep IRC connected across
+upgrades, run it with [stugan-engine](docs/engine.md) using
+[`docker-compose.engine.yml`](docker-compose.engine.yml).
 
 **From source:**
 
 ```sh
 cd client && npm install && npm run build && cd ..
 go build -o stugan ./cmd/stugan
+go build -o stugan-engine ./cmd/stugan-engine   # optional, see docs/engine.md
 ./stugan                 # uses $STUGAN_HOME, else ~/.config/stugan
 ./stugan -home ./dev     # disposable config/data dir
 ```
@@ -120,6 +124,7 @@ Writing your own? See the [Lua API reference](docs/plugins.md).
 | [plugins](docs/plugins.md) | The Lua plugin API |
 | [ssh](docs/ssh.md) | SSH Terminal UI setup and usage |
 | [bouncer](docs/ircserver.md) | Built-in IRC bouncer server (native client access) |
+| [engine](docs/engine.md) | stugan-engine: keep IRC connected across stugan restarts |
 | [config](docs/config.md) | Configuration reference |
 
 ## License

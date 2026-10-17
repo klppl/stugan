@@ -2,12 +2,12 @@ package irc
 
 import (
 	"fmt"
-	"maps"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/klippelism/stugan/internal/core"
+	"github.com/klippelism/stugan/internal/enginelink"
 	"github.com/lrstanley/girc"
 )
 
@@ -712,12 +712,21 @@ func tag(e *girc.Event, key string) string {
 	return v
 }
 
-// copyTags snapshots message tags into a plain map (nil if none).
+// copyTags snapshots message tags into a plain map (nil if none). The relay's
+// own bookkeeping tags (stugan/seq, stugan/replay) are dropped: they describe
+// the hop through stugan-engine, not the message.
 func copyTags(t girc.Tags) map[string]string {
 	if len(t) == 0 {
 		return nil
 	}
 	m := make(map[string]string, len(t))
-	maps.Copy(m, t)
+	for k, v := range t {
+		if !strings.HasPrefix(k, enginelink.TagPrefix) {
+			m[k] = v
+		}
+	}
+	if len(m) == 0 {
+		return nil
+	}
 	return m
 }
