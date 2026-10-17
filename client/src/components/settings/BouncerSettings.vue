@@ -12,8 +12,16 @@ const port = computed(() => bouncer.value?.port ?? 6697);
 const tls = computed(() => bouncer.value?.tls ?? false);
 const authRequired = computed(() => bouncer.value?.auth_required ?? true);
 const username = computed(() => bouncer.value?.username || "default");
+const localOnly = computed(() => bouncer.value?.local_only ?? false);
+// pw names the password a client must send: the account's own, or in
+// single-user mode the site-wide web password.
+const pw = computed(() => (bouncer.value?.single_user ? "web password" : "stugan password"));
 const passwordHint = computed(() =>
-  authRequired.value ? "Your stugan password" : "None needed (single-user mode)",
+  authRequired.value
+    ? bouncer.value?.single_user
+      ? "Your web password (STUGAN_WEB_PASSWORD)"
+      : "Your stugan password"
+    : "None (only connections from this machine are accepted)",
 );
 
 // login is the username a classic client uses to attach to one network.
@@ -33,7 +41,7 @@ const weechat = computed(() => {
     `/server add ${name} ${host.value}/${port.value}${tls.value ? " -tls" : ""}`,
     `/set irc.server.${name}.username "${login(net)}"`,
   ];
-  if (authRequired.value) lines.push(`/set irc.server.${name}.password "<your stugan password>"`);
+  if (authRequired.value) lines.push(`/set irc.server.${name}.password "<your ${pw.value}>"`);
   if (bouncer.value?.fingerprint) {
     lines.push(`/set irc.server.${name}.tls_fingerprint "${bouncer.value.fingerprint.replace(/:/g, "").toLowerCase()}"`);
   }
@@ -43,7 +51,7 @@ const weechat = computed(() => {
 
 const irssi = computed(() => {
   const net = selectedNetwork.value;
-  const pass = authRequired.value ? ` ${login(net)}:<your stugan password>` : "";
+  const pass = authRequired.value ? ` ${login(net)}:<your ${pw.value}>` : "";
   return `/server add${tls.value ? " -tls" : ""} -network stugan-${net} ${host.value} ${port.value}${pass}\n/connect stugan-${net}`;
 });
 
@@ -94,6 +102,16 @@ tls    = true   # self-signed certificate is generated if none is given</pre>
           </div>
           <input :checked="bouncer.enabled" type="checkbox" class="toggle-switch" @change="toggle" />
         </label>
+      </div>
+
+      <div v-if="localOnly" class="settings-card bouncer-warning" role="note">
+        <p class="card-subtitle">Only local connections are accepted</p>
+        <p class="setting-hint">
+          No password protects this instance, so the bouncer only lets in IRC clients running on the same machine
+          (or reaching it through an SSH tunnel). To connect from elsewhere, set a web password with the
+          <code>STUGAN_WEB_PASSWORD</code> environment variable, or configure <code>[[users]]</code> accounts, and
+          restart stugan.
+        </p>
       </div>
 
       <template v-if="bouncer.enabled">
@@ -168,7 +186,7 @@ tls    = true   # self-signed certificate is generated if none is given</pre>
                   <code>{{ login(n.name) }}</code>
                   <button class="btn btn-sm" @click="copy(login(n.name), 'Username')">Copy</button>
                 </td>
-                <td v-if="authRequired" class="setting-hint">your stugan password</td>
+                <td v-if="authRequired" class="setting-hint">your {{ pw }}</td>
               </tr>
             </tbody>
           </table>
@@ -209,6 +227,9 @@ tls    = true   # self-signed certificate is generated if none is given</pre>
 </template>
 
 <style scoped>
+.bouncer-warning {
+  border-color: color-mix(in srgb, var(--hl) 50%, var(--border));
+}
 .bouncer-grid {
   display: grid;
   grid-template-columns: max-content 1fr;

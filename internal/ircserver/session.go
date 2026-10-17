@@ -15,6 +15,7 @@ import (
 
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/server"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -499,8 +500,15 @@ func (s *Session) finishSaslPlain(b64 string, nick string) {
 		return
 	}
 
-	userID, ok := s.hub.Login(parsed.Username, passwd)
+	var userID string
+	var ok bool
+	if s.hub.AuthEnabled() {
+		userID, ok = s.hub.Login(parsed.Username, passwd)
+	} else if ok = s.singleUserAuthorized(passwd); ok {
+		userID = s.singleUserID()
+	}
 	if !ok {
+		s.authFailedPause()
 		fail()
 		return
 	}
@@ -560,21 +568,26 @@ func (s *Session) authenticate() {
 	}
 
 	if !s.hub.AuthEnabled() {
-		// Single-user unauthenticated mode
-		users := s.hub.Users()
-		userID := "default"
-		if len(users) > 0 {
-			userID = users[0]
-		}
-		netSel := ""
+		// Single-user mode: no accounts, so the web password stands in for
+		// one. The username part is free; only the network selector matters.
+		netSel, secret := "", ""
 		if s.passRaw != "" {
 			if creds, ok := ParseCredentials(s.passRaw, s.clientUser); ok {
-				netSel = creds.Network
+				netSel, secret = creds.Network, creds.Secret
 			}
 		} else if s.clientUser != "" {
 			netSel = UnmarshalLogin(s.clientUser).Network
 		}
-		s.completeAttach(userID, netSel)
+		if !s.singleUserAuthorized(secret) {
+			s.authFailedPause()
+			if s.srv.opts.PasswordHash == "" {
+				s.failRegistration("No password is set, so only connections from this machine are accepted. Set STUGAN_WEB_PASSWORD (or configure [[users]]) to allow remote IRC clients")
+			} else {
+				s.failRegistration("Invalid password: use the web password as the server password or SASL password")
+			}
+			return
+		}
+		s.completeAttach(s.singleUserID(), netSel)
 		return
 	}
 
@@ -591,11 +604,46 @@ func (s *Session) authenticate() {
 
 	userID, ok := s.hub.Login(creds.Username, creds.Secret)
 	if !ok {
+		s.authFailedPause()
 		s.failRegistration("Invalid username or password")
 		return
 	}
 
 	s.completeAttach(userID, creds.Network)
+}
+
+// authFailDelay slows each failed bouncer login, so guessing passwords over
+// many connections costs real time. A var so tests can shorten it.
+var authFailDelay = time.Second
+
+func (s *Session) authFailedPause() { time.Sleep(authFailDelay) }
+
+// singleUserID is the implicit account bouncer logins attach to in
+// single-user mode.
+func (s *Session) singleUserID() string {
+	if users := s.hub.Users(); len(users) > 0 {
+		return users[0]
+	}
+	return "default"
+}
+
+// singleUserAuthorized checks a single-user-mode login. With a password hash
+// configured the secret must match it. Without one nothing else guards the
+// account, so only clients connecting from this machine get in.
+func (s *Session) singleUserAuthorized(secret string) bool {
+	if hash := s.srv.opts.PasswordHash; hash != "" {
+		return secret != "" && bcrypt.CompareHashAndPassword([]byte(hash), []byte(secret)) == nil
+	}
+	return isLoopback(s.remoteAddr)
+}
+
+func isLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Session) completeAttach(userID string, networkSel string) {

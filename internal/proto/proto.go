@@ -116,10 +116,17 @@ type BouncerInfo struct {
 	// Fingerprint is the listener certificate's SHA-256 fingerprint, set for
 	// a self-signed certificate that clients must pin.
 	Fingerprint string `json:"fingerprint,omitempty"`
-	// Username is the login name for this account; AuthRequired is false in
-	// single-user mode, where no password is needed.
+	// Username is the login name for this account. AuthRequired reports that
+	// logins need a password: the account's own, or in single-user mode the
+	// web password ($STUGAN_WEB_PASSWORD).
 	Username     string `json:"username"`
 	AuthRequired bool   `json:"auth_required"`
+	// LocalOnly reports that no password guards this account (single-user
+	// mode without a web password), so only loopback clients are accepted.
+	LocalOnly bool `json:"local_only,omitempty"`
+	// SingleUser reports single-user mode, where the password (if any) is
+	// the web password rather than an account password.
+	SingleUser bool `json:"single_user,omitempty"`
 }
 
 // BouncerSet is a client→server request to allow or deny native IRC client

@@ -13,6 +13,7 @@ import (
 
 	"github.com/klippelism/stugan/internal/core"
 	"github.com/klippelism/stugan/internal/server"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type mockHistory struct {
@@ -602,6 +603,90 @@ func TestListenerInfo(t *testing.T) {
 		host, port, tlsOn, fp := s.Listener()
 		if host != c.host || port != c.port || !tlsOn || fp != "" {
 			t.Errorf("%s: got (%q, %d, %v, %q), want (%q, %d, true, \"\")", c.addr, host, port, tlsOn, fp, c.host, c.port)
+		}
+	}
+}
+
+// registerResult runs a raw registration and reports the first decisive
+// numeric: "001" (attached), "464" (refused) or the SASL outcome "903"/"904".
+func registerResult(t *testing.T, addr, script string) string {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	fmt.Fprint(conn, script)
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("no decisive reply for %q: %v", script, err)
+		}
+		for _, code := range []string{" 001 ", " 464 ", " 903 ", " 904 "} {
+			if strings.Contains(line, code) {
+				return strings.TrimSpace(code)
+			}
+		}
+	}
+}
+
+// TestBouncerSingleUserPassword: in single-user mode the web password guards
+// the bouncer; without it, nobody can attach.
+func TestBouncerSingleUserPassword(t *testing.T) {
+	defer func(d time.Duration) { authFailDelay = d }(authFailDelay)
+	authFailDelay = 0
+
+	srv, _, _, addr, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+	srv.hub.(*mockHub).users = nil // single-user mode
+	hash, err := bcrypt.GenerateFromPassword([]byte("webpw"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.opts.PasswordHash = string(hash)
+
+	sasl := func(pass string) string {
+		payload := base64.StdEncoding.EncodeToString([]byte("\x00x/libera\x00" + pass))
+		return "CAP LS 302\r\nCAP REQ :sasl\r\nAUTHENTICATE PLAIN\r\nAUTHENTICATE " + payload + "\r\n"
+	}
+	cases := []struct {
+		name, script, want string
+	}{
+		{"no password", "NICK a\r\nUSER alice/libera 0 * :a\r\n", "464"},
+		{"wrong password", "PASS nope\r\nNICK a\r\nUSER alice/libera 0 * :a\r\n", "464"},
+		{"network as password (old docs)", "PASS libera\r\nNICK a\r\nUSER a 0 * :a\r\n", "464"},
+		{"password + network in username", "PASS webpw\r\nNICK a\r\nUSER alice/libera 0 * :a\r\n", "001"},
+		{"user/network:password", "PASS x/libera:webpw\r\nNICK a\r\nUSER a 0 * :a\r\n", "001"},
+		{"sasl wrong", sasl("nope"), "904"},
+		{"sasl right", sasl("webpw"), "903"},
+	}
+	for _, c := range cases {
+		if got := registerResult(t, addr, c.script); got != c.want {
+			t.Errorf("%s: got %s, want %s", c.name, got, c.want)
+		}
+	}
+
+	// No web password at all: only loopback clients (this test dials
+	// 127.0.0.1) may attach, with no credentials.
+	srv.opts.PasswordHash = ""
+	if got := registerResult(t, addr, "NICK a\r\nUSER alice/libera 0 * :a\r\n"); got != "001" {
+		t.Errorf("loopback without password: got %s, want 001", got)
+	}
+}
+
+func TestIsLoopback(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"127.0.0.1:5000":   true,
+		"[::1]:5000":       true,
+		"192.168.1.9:5000": false,
+		"203.0.113.7:6697": false,
+		"[2001:db8::1]:1":  false,
+		"garbage":          false,
+	} {
+		if got := isLoopback(addr); got != want {
+			t.Errorf("isLoopback(%q) = %v, want %v", addr, got, want)
 		}
 	}
 }

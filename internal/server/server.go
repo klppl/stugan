@@ -1281,8 +1281,10 @@ func (s *Server) bouncerInfo(userID string, t *Tenant) proto.BouncerInfo {
 	info := proto.BouncerInfo{
 		Enabled:      BouncerAllowed(t),
 		Username:     userID,
-		AuthRequired: s.hub.AuthEnabled(),
+		AuthRequired: s.hub.AuthEnabled() || s.magicHash != "",
 	}
+	info.LocalOnly = !info.AuthRequired
+	info.SingleUser = !s.hub.AuthEnabled()
 	if s.bouncer != nil {
 		info.Available = true
 		info.Host, info.Port, info.TLS, info.Fingerprint = s.bouncer.Listener()

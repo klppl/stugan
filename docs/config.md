@@ -276,6 +276,10 @@ Serves persistent IRC state directly to native IRC desktop and mobile clients
 `listen` is non-empty. See [ircserver.md](ircserver.md) for the full setup
 guide.
 
+Logins use the account password with `[[users]]`, or `$STUGAN_WEB_PASSWORD` in
+single-user mode. A single-user instance with no web password accepts only
+loopback (same-machine) IRC clients.
+
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `listen` | string | `""` | Address to bind, e.g. `0.0.0.0:6697`. Omitted or empty disables the bouncer. |
@@ -296,7 +300,7 @@ max_playback = 50
 | Var | Meaning |
 |-----|---------|
 | `STUGAN_HOME` | Config/data/scripts root (highest-priority lookup). |
-| `STUGAN_WEB_PASSWORD` | Enables the site-wide password gate in front of the whole site (stacks with `[[users]]`). See [server.md](server.md#security-hardening). |
+| `STUGAN_WEB_PASSWORD` | Enables the site-wide password gate in front of the whole site (stacks with `[[users]]`). In single-user mode it is also the IRC bouncer password. See [server.md](server.md#security-hardening). |
 
 There is no built-in `.env` parser; `set -a; source .env; set +a; ./stugan`
 loads one from a POSIX shell, or docker-compose's `env_file:` does it for

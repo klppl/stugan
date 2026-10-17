@@ -39,6 +39,10 @@ type Options struct {
 	KeyFile     string
 	DataDir     string
 	MaxPlayback int
+	// PasswordHash is the bcrypt hash of the single-user password (the web
+	// UI's $STUGAN_WEB_PASSWORD). With auth disabled, bouncer logins must
+	// present it; when it is empty too, only loopback clients are accepted.
+	PasswordHash string
 }
 
 // Server serves the downstream IRC bouncer protocol over TCP or TLS.

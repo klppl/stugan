@@ -790,7 +790,7 @@ func TestBouncerSet(t *testing.T) {
 	if err := decode(readFrame(t, ctx, ws), &init); err != nil {
 		t.Fatal(err)
 	}
-	want := proto.BouncerInfo{Available: true, Enabled: true, Port: 6697, TLS: true, Fingerprint: "AB:CD", Username: defaultUser}
+	want := proto.BouncerInfo{Available: true, Enabled: true, Port: 6697, TLS: true, Fingerprint: "AB:CD", Username: defaultUser, LocalOnly: true, SingleUser: true}
 	if init.Bouncer != want {
 		t.Fatalf("init bouncer = %+v, want %+v", init.Bouncer, want)
 	}
@@ -812,5 +812,15 @@ func TestBouncerSet(t *testing.T) {
 	fb.mu.Unlock()
 	if len(dropped) != 1 || dropped[0] != defaultUser {
 		t.Fatalf("dropped = %v, want [%s]", dropped, defaultUser)
+	}
+}
+
+// TestBouncerInfoWebPassword: in single-user mode a web password makes the
+// bouncer password-protected rather than local-only.
+func TestBouncerInfoWebPassword(t *testing.T) {
+	srv := New(SingleUser(&Tenant{}), Options{Bouncer: &fakeBouncer{}, MagicWordHash: "$2a$10$x"})
+	info := srv.bouncerInfo(defaultUser, &Tenant{})
+	if !info.AuthRequired || info.LocalOnly || !info.SingleUser {
+		t.Fatalf("info = %+v, want auth required, not local-only, single-user", info)
 	}
 }

@@ -92,7 +92,9 @@ export interface BouncerInfo {
   tls?: boolean;
   fingerprint?: string; // SHA-256, set for a self-signed certificate to pin
   username: string;
-  auth_required: boolean;
+  auth_required: boolean; // logins need a password (account's, or the web password)
+  local_only?: boolean; // no password guards the account: loopback clients only
+  single_user?: boolean; // the password is $STUGAN_WEB_PASSWORD, not an account's
 }
 
 // BouncerSet allows or denies native IRC client logins on this account.

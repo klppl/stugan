@@ -94,8 +94,20 @@ need only one server entry: log in as `alice` (SASL or `alice:mypassword`)
 without a network and every network appears automatically.
 
 #### D. Single-User Mode (No `[[users]]` configured)
-If running stugan in unauthenticated single-user mode:
-- **SASL Username / Server Password**: `<network>` (or leave blank if only 1 network exists).
+There are no accounts, so the web password (`$STUGAN_WEB_PASSWORD`) guards the
+bouncer too. Put the network in the username and the web password in the
+server password (or SASL password); the username part before the slash is
+ignored:
+- **Username**: `default/libera`
+- **Server Password / SASL Password**: your web password
+
+With **no** web password set, nothing protects the account, so the bouncer
+accepts only clients connecting from the same machine (loopback, e.g. a local
+client or one coming through an SSH tunnel) and refuses everyone else. stugan
+logs a warning at startup in that case. Set `STUGAN_WEB_PASSWORD` or configure
+`[[users]]` to connect from elsewhere.
+
+Failed bouncer logins are delayed by one second each to slow password guessing.
 
 ---
 

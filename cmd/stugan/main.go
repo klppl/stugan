@@ -118,7 +118,13 @@ func run() error {
 			KeyFile:     cfg.IRCServer.KeyFile,
 			DataDir:     cfg.DataDir(),
 			MaxPlayback: cfg.IRCServer.MaxPlayback,
+			// Single-user mode has no accounts; the web password guards the
+			// bouncer too.
+			PasswordHash: magicHash,
 		})
+		if !cfg.AuthEnabled() && magicHash == "" {
+			log.Warn("irc bouncer has no password (single-user mode without $STUGAN_WEB_PASSWORD); only loopback clients will be accepted")
+		}
 		hub.registerIRCSinks(ircSrv)
 		bouncer = ircSrv
 	}
