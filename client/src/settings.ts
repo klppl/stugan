@@ -126,6 +126,7 @@ interface Settings {
   reactions: boolean; // show emoji reactions (off by default; most servers don't support it)
   sendTyping: boolean; // broadcast our own +typing notifications (opt-in: others can see when you type)
   showTyping: boolean; // display other people's typing notifications
+  replyQuote: boolean; // show Reply / Quote buttons on a message's hover toolbar
   showTopBar: boolean; // desktop: show the top bar (channel name, search, buttons); Cmd-K covers it when off
   digestOnReturn: boolean; // open "What you missed" when coming back after a while away
   awayMinutes: number; // how long out of view counts as "away" for digestOnReturn
@@ -180,6 +181,7 @@ function load(): Settings {
       reactions: typeof s.reactions === "boolean" ? s.reactions : false,
       sendTyping: typeof s.sendTyping === "boolean" ? s.sendTyping : false,
       showTyping: typeof s.showTyping === "boolean" ? s.showTyping : true,
+      replyQuote: typeof s.replyQuote === "boolean" ? s.replyQuote : true,
       showTopBar: typeof s.showTopBar === "boolean" ? s.showTopBar : true,
       digestOnReturn: typeof s.digestOnReturn === "boolean" ? s.digestOnReturn : true,
       awayMinutes: isAwayMinutes(s.awayMinutes) ? s.awayMinutes : DEFAULT_AWAY_MINUTES,
@@ -196,6 +198,7 @@ function load(): Settings {
       reactions: false,
       sendTyping: false,
       showTyping: true,
+      replyQuote: true,
       showTopBar: true,
       digestOnReturn: true,
       awayMinutes: DEFAULT_AWAY_MINUTES,
@@ -242,6 +245,7 @@ export function loadSettingsPayload(s: Record<string, unknown>) {
     if (typeof s.reactions === "boolean") settings.reactions = s.reactions;
     if (typeof s.sendTyping === "boolean") settings.sendTyping = s.sendTyping;
     if (typeof s.showTyping === "boolean") settings.showTyping = s.showTyping;
+    if (typeof s.replyQuote === "boolean") settings.replyQuote = s.replyQuote;
     if (typeof s.showTopBar === "boolean") settings.showTopBar = s.showTopBar;
     if (typeof s.digestOnReturn === "boolean") settings.digestOnReturn = s.digestOnReturn;
     if (isAwayMinutes(s.awayMinutes)) settings.awayMinutes = s.awayMinutes;

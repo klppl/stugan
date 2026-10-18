@@ -59,7 +59,7 @@ interface Composer {
 }
 const composer = inject<Composer | null>("composer", null);
 const canCompose = computed(
-  () => !!composer && !props.showBuffer && ["privmsg", "notice", "action"].includes(props.msg.kind),
+  () => !!composer && settings.replyQuote && !props.showBuffer && ["privmsg", "notice", "action"].includes(props.msg.kind),
 );
 function doReply() {
   composer?.reply(props.msg.from);

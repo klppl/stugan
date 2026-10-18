@@ -100,6 +100,16 @@ function commitAway() {
 
       <label class="setting-row checkbox-row">
         <div class="setting-label">
+          <span>Reply and Quote Buttons</span>
+          <span class="setting-hint">Show Reply and Quote on a message's hover toolbar</span>
+        </div>
+        <input v-model="settings.replyQuote" type="checkbox" class="toggle-switch" />
+      </label>
+
+      <div class="setting-divider" />
+
+      <label class="setting-row checkbox-row">
+        <div class="setting-label">
           <span>What You Missed on Return</span>
           <span class="setting-hint">Open a summary of mentions and unread channels when you come back after {{ settings.awayMinutes }} {{ settings.awayMinutes === 1 ? "minute" : "minutes" }} or more away</span>
         </div>
