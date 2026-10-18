@@ -95,7 +95,7 @@ type Conn struct {
 	// goroutine) and consumed by Connect (engine reconnect loop) to turn
 	// the generic disconnect error into core.ErrAuthFailed.
 	authFailed atomic.Bool
-	// mech is our SASL PLAIN or SCRAM implementation (nil for EXTERNAL or no SASL). It
+	// mech is the SASL mechanism (nil for no SASL). It
 	// is installed into the girc config for the initial registration exchange
 	// and cleared once registered, so girc can't re-run SASL mid-session on a
 	// post-registration CAP ACK (see the CONNECTED handler); Connect restores
@@ -352,7 +352,8 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 	var wire func(eventSender)
 	switch {
 	case opts.SASLExternal:
-		gcfg.SASL = &girc.SASLExternal{}
+		mech = &girc.SASLExternal{}
+		gcfg.SASL = mech
 	case opts.SASLUser != "" && opts.SASLScram:
 		m := &saslScram{user: opts.SASLUser, pass: opts.SASLPass}
 		mech, wire = m, func(c eventSender) { m.client = c }
@@ -400,21 +401,8 @@ func (c *Conn) registerHandlers() {
 		// welcome goroutine, ~2s after 001, concurrently with the message
 		// handlers that use c.batches.)
 		//
-		// Registration is complete (this fires ~2s after RPL_WELCOME, well
-		// after the SASL exchange), so clear the SASL mech: girc otherwise
-		// re-sends AUTHENTICATE on any later CAP ACK while sasl is enabled and
-		// Config.SASL is set (cap.go handleCAP), and a bouncer that emits a
-		// CAP NEW after registration — soju, once it has attached the upstream
-		// network and advertises bouncer-networks-notify — would trigger a
-		// spurious mid-session re-auth that the server rejects, dropping the
-		// connection. Connect reinstalls the mech before the next dial. This
-		// write and handleCAP's read of Config.SASL are on different girc
-		// goroutines, but separated in time: the initial CAP exchange finishes
-		// before RPL_WELCOME, and a bouncer's CAP NEW arrives only once it has
-		// attached the upstream network, seconds later.
-		if c.mech != nil {
-			gc.Config.SASL = nil
-		}
+		// (SASL is switched off when it succeeds, not here: see the
+		// RPL_SASLSUCCESS handler. Doing it here raced with girc's CAP handling.)
 		// A replayed welcome (re-attach through stugan-engine) is not a new
 		// registration: the restore marker announces it as a resumed connect.
 		if c.skipConnected.Swap(false) {
@@ -480,6 +468,19 @@ func (c *Conn) registerHandlers() {
 			}
 		})
 	}
+	// Authentication is done once the server says so: stop girc re-running SASL
+	// for the rest of the connection. girc re-sends AUTHENTICATE on every later
+	// CAP ACK while Config.SASL is set, and soju announces "CAP NEW sasl=…" to a
+	// bound connection *before* RPL_WELCOME, so clearing at welcome (below) is
+	// too late: it re-requests sasl, re-authenticates, and soju answers 904 and
+	// drops a connection that was already logged in. This runs on girc's read
+	// goroutine, the same one that handles CAP, so there is no race. Connect
+	// reinstalls the mech before the next dial.
+	h.Add(girc.RPL_SASLSUCCESS, func(gc *girc.Client, _ girc.Event) {
+		if c.mech != nil {
+			gc.Config.SASL = nil
+		}
+	})
 	h.Add("BATCH", func(gc *girc.Client, e girc.Event) { c.handleBatch(gc, &e) })
 
 	cmds = append(cmds, numericReplies...)

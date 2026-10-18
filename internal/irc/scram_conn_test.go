@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,6 +40,13 @@ type scramServerConn struct {
 	advertise string // value of the sasl cap
 	pass      string
 	chose     chan string // SASL mechanism the client asked for
+	// capNew makes the server announce "CAP NEW sasl" before the welcome, the
+	// way soju does for a connection bound to a network.
+	capNew bool
+	// late counts AUTHENTICATE / CAP REQ lines the client sent after SASL
+	// succeeded: a client that re-runs SASL mid-session gets dropped.
+	late atomic.Int32
+	done atomic.Bool
 }
 
 func (s *scramServerConn) serve(c net.Conn) {
@@ -54,6 +62,7 @@ func (s *scramServerConn) serve(c net.Conn) {
 		iter   = 4096
 		step   int
 		chosen bool
+		plain  bool
 		nick   = "*"
 		mac    = func(key []byte, msg string) []byte {
 			h := hmac.New(v.New, key)
@@ -72,6 +81,11 @@ func (s *scramServerConn) serve(c net.Conn) {
 		if len(f) == 0 {
 			continue
 		}
+		if s.done.Load() && (f[0] == "AUTHENTICATE" || (f[0] == "CAP" && len(f) > 1 && f[1] == "REQ")) {
+			s.late.Add(1)
+			w(":srv 904 %s :Invalid base64-encoded response", nick)
+			continue
+		}
 		switch f[0] {
 		case "NICK":
 			nick = f[1]
@@ -82,6 +96,11 @@ func (s *scramServerConn) serve(c net.Conn) {
 			case "REQ":
 				w(":srv CAP * ACK %s", strings.TrimPrefix(strings.Join(f[2:], " "), ""))
 			case "END":
+				if s.capNew {
+					for i := 0; i < 3; i++ {
+						w(":srv CAP * NEW :sasl=PLAIN,SCRAM-SHA-256")
+					}
+				}
 				w(":srv 001 %s :Welcome", nick)
 			}
 		case "AUTHENTICATE":
@@ -89,6 +108,11 @@ func (s *scramServerConn) serve(c net.Conn) {
 			if !chosen {
 				chosen = true
 				s.chose <- arg
+				if arg == "PLAIN" {
+					plain = true
+					w("AUTHENTICATE +")
+					continue
+				}
 				for _, h := range scramHashes {
 					if h.name == arg {
 						v = h
@@ -104,6 +128,12 @@ func (s *scramServerConn) serve(c net.Conn) {
 			}
 			raw, _ := base64.StdEncoding.DecodeString(arg)
 			msg := string(raw)
+			if plain {
+				w(":srv 900 %s %s!u@h acct :You are now logged in", nick, nick)
+				w(":srv 903 %s :SASL authentication successful", nick)
+				s.done.Store(true)
+				continue
+			}
 			switch step {
 			case 0: // client-first
 				bare = strings.TrimPrefix(msg, "n,,")
@@ -136,6 +166,7 @@ func (s *scramServerConn) serve(c net.Conn) {
 			case 2: // empty final response
 				w(":srv 900 %s %s!u@h acct :You are now logged in", nick, nick)
 				w(":srv 903 %s :SASL authentication successful", nick)
+				s.done.Store(true)
 			}
 		}
 	}
@@ -223,5 +254,57 @@ func TestSCRAMLoginWrongPassword(t *testing.T) {
 	}
 	if !errors.Is(err, core.ErrAuthFailed) {
 		t.Fatalf("Connect err = %v, want ErrAuthFailed", err)
+	}
+}
+
+// soju sends "CAP NEW sasl" to a bound connection before RPL_WELCOME. girc
+// answers each by re-requesting sasl and re-authenticating unless SASL was
+// switched off once it succeeded; the server then rejects the second attempt
+// and the connection dies.
+func TestNoSASLRerunAfterSuccess(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		scram bool
+	}{{"scram", true}, {"plain", false}} {
+		t.Run(tt.name, func(t *testing.T) {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+			srv := &scramServerConn{t: t, advertise: "PLAIN,SCRAM-SHA-256", pass: "hunter2", chose: make(chan string, 1), capNew: true}
+			accepted := make(chan net.Conn, 1)
+			go func() {
+				if c, err := ln.Accept(); err == nil {
+					accepted <- c
+					srv.serve(c)
+				}
+			}()
+			h := &lockedHandler{}
+			c, err := New(Options{
+				Network: "n", Addr: ln.Addr().String(), Nick: "me", User: "me", Realname: "me",
+				SASLUser: "alice", SASLPass: "hunter2", SASLScram: tt.scram,
+			}, h)
+			if err != nil {
+				t.Fatal(err)
+			}
+			errc := make(chan error, 1)
+			go func() { errc <- c.Connect(context.Background()) }()
+			var connErr error
+			select {
+			case connErr = <-errc:
+			case <-time.After(2500 * time.Millisecond):
+				// Still up: end it from the server side (girc's own Close races
+				// with Connect on the context-cancel path).
+				(<-accepted).Close()
+				connErr = <-errc
+			}
+			if errors.Is(connErr, core.ErrAuthFailed) {
+				t.Fatalf("connection dropped by a second SASL attempt: %v", connErr)
+			}
+			if n := srv.late.Load(); n != 0 {
+				t.Errorf("client re-ran SASL %d time(s) after it succeeded", n)
+			}
+		})
 	}
 }

@@ -377,8 +377,8 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		if e.Params[2] == "*" {
 			return core.Event{Type: core.EvBouncerNetwork, Network: network, Time: when, Target: id}, true
 		}
-		b := core.ParseBouncerAttrs(id, e.Params[2])
-		return core.Event{Type: core.EvBouncerNetwork, Network: network, Time: when, Bouncer: &b}, true
+		b, keys := core.ParseBouncerAttrs(id, e.Params[2])
+		return core.Event{Type: core.EvBouncerNetwork, Network: network, Time: when, Bouncer: &b, Args: keys}, true
 
 	case "CHATHISTORY":
 		// Only the TARGETS reply comes back as a CHATHISTORY line:

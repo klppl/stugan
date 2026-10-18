@@ -1966,7 +1966,11 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		switch {
 		case ev.Bouncer != nil:
 			if i := slices.IndexFunc(n.Bouncer, func(b BouncerNetwork) bool { return b.ID == ev.Bouncer.ID }); i >= 0 {
-				n.Bouncer[i] = *ev.Bouncer
+				if ev.Args == nil {
+					n.Bouncer[i] = *ev.Bouncer // a full record
+				} else {
+					n.Bouncer[i] = MergeBouncerAttrs(n.Bouncer[i], *ev.Bouncer, ev.Args)
+				}
 			} else {
 				n.Bouncer = append(n.Bouncer, *ev.Bouncer)
 			}

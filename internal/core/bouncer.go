@@ -32,12 +32,16 @@ type BouncerNetwork struct {
 
 // ParseBouncerAttrs parses the "key=value;key=value" attribute list of a
 // BOUNCER NETWORK line (values escaped like message tags). Unknown keys are
-// ignored.
-func ParseBouncerAttrs(id, attrs string) BouncerNetwork {
-	b := BouncerNetwork{ID: id}
+// ignored. keys names the attributes the line actually carried: a
+// notification only lists what changed (soju sends just "state=connected"),
+// so the caller must merge those over the network it already knows, not
+// replace it. MergeBouncerAttrs does that.
+func ParseBouncerAttrs(id, attrs string) (b BouncerNetwork, keys []string) {
+	b = BouncerNetwork{ID: id}
 	for _, kv := range strings.Split(attrs, ";") {
 		k, v, _ := strings.Cut(kv, "=")
 		v = unescapeBouncerValue(v)
+		keys = append(keys, k)
 		switch k {
 		case "name":
 			b.Name = v
@@ -55,7 +59,31 @@ func ParseBouncerAttrs(id, attrs string) BouncerNetwork {
 			b.Error = v
 		}
 	}
-	return b
+	return b, keys
+}
+
+// MergeBouncerAttrs returns old with the attributes named by keys taken from
+// patch (see ParseBouncerAttrs).
+func MergeBouncerAttrs(old, patch BouncerNetwork, keys []string) BouncerNetwork {
+	for _, k := range keys {
+		switch k {
+		case "name":
+			old.Name = patch.Name
+		case "host":
+			old.Host = patch.Host
+		case "port":
+			old.Port = patch.Port
+		case "tls":
+			old.TLS = patch.TLS
+		case "nickname":
+			old.Nick = patch.Nick
+		case "state":
+			old.State = patch.State
+		case "error":
+			old.Error = patch.Error
+		}
+	}
+	return old
 }
 
 var (

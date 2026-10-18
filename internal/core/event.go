@@ -41,8 +41,9 @@ const (
 	// replayed for Buffer, the newest stamped Time (zero when Count is 0).
 	EvHistoryBatch EventType = "history_batch"
 	// EvBouncerNetwork updates the bouncer network list: Bouncer set is an
-	// upsert, Target alone is a delete by id, and neither clears the list (a
-	// BOUNCER LISTNETWORKS reply is starting).
+	// upsert (Args, when set, names the attributes the line carried and only those
+	// are merged over a network we already hold; without it the record replaces), Target alone is a delete by id, and
+	// neither clears the list (a BOUNCER LISTNETWORKS reply is starting).
 	EvBouncerNetwork EventType = "bouncer_network"
 	// EvInvite: Nick invited NewNick (the invitee — possibly us) to Buffer.
 	EvInvite EventType = "invite"

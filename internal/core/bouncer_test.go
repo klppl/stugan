@@ -7,13 +7,40 @@ import (
 )
 
 func TestParseBouncerAttrs(t *testing.T) {
-	b := ParseBouncerAttrs("12", `name=Lib\sera;host=irc.libera.chat;port=6697;tls=1;nickname=al\:ex;state=connected;error=a\\b;extra=1`)
+	b, keys := ParseBouncerAttrs("12", `name=Lib\sera;host=irc.libera.chat;port=6697;tls=1;nickname=al\:ex;state=connected;error=a\\b;extra=1`)
 	want := BouncerNetwork{ID: "12", Name: "Lib era", Host: "irc.libera.chat", Port: 6697, TLS: true, Nick: "al;ex", State: "connected", Error: `a\b`}
 	if b != want {
 		t.Fatalf("got %+v, want %+v", b, want)
 	}
-	if b := ParseBouncerAttrs("1", "host=h;tls=0"); b.TLS || b.Port != 0 {
+	if len(keys) != 8 || keys[0] != "name" {
+		t.Errorf("keys = %v", keys)
+	}
+	if b, _ := ParseBouncerAttrs("1", "host=h;tls=0"); b.TLS || b.Port != 0 {
 		t.Errorf("defaults wrong: %+v", b)
+	}
+}
+
+// soju's notifications carry only what changed ("state=connected"); applying
+// one must not blank the rest of the record.
+func TestBouncerPartialUpdateMerges(t *testing.T) {
+	e, _ := newBouncerEngine(t)
+	full, keys := ParseBouncerAttrs("1", "name=libera;host=irc.libera.chat;port=6697;tls=1;nickname=al;state=connecting")
+	e.apply(Event{Type: EvBouncerNetwork, Network: "soju", Bouncer: &full, Args: keys})
+	patch, keys := ParseBouncerAttrs("1", "state=connected")
+	e.apply(Event{Type: EvBouncerNetwork, Network: "soju", Bouncer: &patch, Args: keys})
+	patch, keys = ParseBouncerAttrs("1", "error=")
+	e.apply(Event{Type: EvBouncerNetwork, Network: "soju", Bouncer: &patch, Args: keys})
+
+	got := e.SnapshotNetwork("soju").Bouncer
+	want := BouncerNetwork{ID: "1", Name: "libera", Host: "irc.libera.chat", Port: 6697, TLS: true, Nick: "al", State: "connected"}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	// An update for a network we don't hold yet is simply added.
+	other, keys := ParseBouncerAttrs("2", "name=oftc;host=irc.oftc.net")
+	e.apply(Event{Type: EvBouncerNetwork, Network: "soju", Bouncer: &other, Args: keys})
+	if got := e.SnapshotNetwork("soju").Bouncer; len(got) != 2 || got[1].Name != "oftc" {
+		t.Fatalf("after new network: %+v", got)
 	}
 }
 

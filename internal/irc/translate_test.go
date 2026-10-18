@@ -848,6 +848,11 @@ func TestToEventBouncerNetwork(t *testing.T) {
 		ev.Bouncer.ID != "4" || ev.Bouncer.Name != "libera" || !ev.Bouncer.TLS || ev.Bouncer.State != "connected" {
 		t.Fatalf("network row = %+v ok=%v", ev, ok)
 	}
+	// A notification may carry only what changed; the keys say which.
+	ev, ok = toEvent("n", girc.ParseEvent(":srv BOUNCER NETWORK 4 state=connecting"), "me")
+	if !ok || ev.Bouncer == nil || !slices.Equal(ev.Args, []string{"state"}) || ev.Bouncer.State != "connecting" {
+		t.Fatalf("partial update = %+v ok=%v", ev, ok)
+	}
 	ev, ok = toEvent("n", girc.ParseEvent(":srv BOUNCER NETWORK 4 *"), "me")
 	if !ok || ev.Type != core.EvBouncerNetwork || ev.Bouncer != nil || ev.Target != "4" {
 		t.Fatalf("delete row = %+v ok=%v", ev, ok)
