@@ -1,0 +1,101 @@
+# stugan, plus two optional sidecars you switch on with compose profiles.
+#
+#   stugan only:      docker compose up -d
+#   + engine:         IRC stays connected across stugan upgrades (docs/engine.md)
+#   + previews:       link previews fetched in an isolated container (docs/previews.md)
+#
+# Everything is chosen in `.env`. A stugan-only install needs no .env at all:
+#
+#   COMPOSE_PROFILES=engine,previews          # whichever you want, comma-separated
+#
+#   # engine (profile "engine")
+#   STUGAN_ENGINE_URL=tcp://stugan-engine:8016
+#   STUGAN_ENGINE_SECRET=<openssl rand -hex 32>
+#
+#   # previews (profile "previews")
+#   STUGAN_PREVIEWS_URL=http://stugan-previews:8017
+#   STUGAN_PREVIEWS_SECRET=<openssl rand -hex 32>
+#   STUGAN_PREVIEWS_YOUTUBE_API_KEY=          # optional, see docs/previews.md
+#
+# A *_URL variable is the feature switch inside stugan: set it only together
+# with its profile, or stugan will wait for a sidecar that isn't running.
+#
+# ⚠ The engine image is pinned to `engine-1`, NOT `latest`. Compose recreates
+# every service whose image changed; on `latest` each stugan release would
+# restart the engine too and drop IRC, the thing it exists to prevent. `engine-1`
+# moves only when the engine itself changes, and the `1` is the protocol major.
+# The previews sidecar is stateless and is fine to update with stugan.
+#
+# Already running stugan? Don't switch to this file from another directory:
+# compose names volumes after the project directory, so you'd start on an
+# empty one. Copy the lines you need into your existing file instead; see
+# docs/engine.md and docs/previews.md.
+
+services:
+  stugan:
+    image: ghcr.io/klppl/stugan:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - stugan-data:/data
+    environment:
+      # Empty means off. Set together with the matching profile (see above).
+      STUGAN_ENGINE_URL: ${STUGAN_ENGINE_URL:-}
+      STUGAN_ENGINE_SECRET: ${STUGAN_ENGINE_SECRET:-}
+      STUGAN_PREVIEWS_URL: ${STUGAN_PREVIEWS_URL:-}
+      STUGAN_PREVIEWS_SECRET: ${STUGAN_PREVIEWS_SECRET:-}
+    depends_on:
+      stugan-engine:
+        condition: service_healthy
+        required: false
+      stugan-previews:
+        condition: service_healthy
+        required: false
+
+  stugan-engine:
+    profiles: [engine]
+    image: ${STUGAN_ENGINE_IMAGE:-ghcr.io/klppl/stugan:engine-1}
+    restart: unless-stopped
+    # No volumes: the engine stores nothing. No published ports: :8016 exists
+    # only on the compose network.
+    environment:
+      STUGAN_ENGINE_SECRET: ${STUGAN_ENGINE_SECRET:?set STUGAN_ENGINE_SECRET in .env (openssl rand -hex 32)}
+      # Required in a container: the default loopback bind is unreachable
+      # from the stugan container.
+      STUGAN_ENGINE_LISTEN: 0.0.0.0:8016
+      # Optional tuning (bytes / Go duration); empty means the default.
+      STUGAN_ENGINE_BUFFER_BYTES: ${STUGAN_ENGINE_BUFFER_BYTES:-}
+      STUGAN_ENGINE_BUFFER_TOTAL_BYTES: ${STUGAN_ENGINE_BUFFER_TOTAL_BYTES:-}
+      STUGAN_ENGINE_ORPHAN_TIMEOUT: ${STUGAN_ENGINE_ORPHAN_TIMEOUT:-}
+    healthcheck:
+      test: ["CMD", "/app/stugan-engine", "-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  stugan-previews:
+    profiles: [previews]
+    image: ${STUGAN_PREVIEWS_IMAGE:-ghcr.io/klppl/stugan:previews}
+    restart: unless-stopped
+    # No volumes, no published ports. Ideally also give it a network with
+    # no route to your LAN; see docs/previews.md.
+    environment:
+      STUGAN_PREVIEWS_SECRET: ${STUGAN_PREVIEWS_SECRET:?set STUGAN_PREVIEWS_SECRET in .env (openssl rand -hex 32)}
+      STUGAN_PREVIEWS_LISTEN: 0.0.0.0:8017
+      # Optional provider keys; empty means "provider uses its keyless mode".
+      STUGAN_PREVIEWS_YOUTUBE_API_KEY: ${STUGAN_PREVIEWS_YOUTUBE_API_KEY:-}
+      STUGAN_PREVIEWS_GITHUB_TOKEN: ${STUGAN_PREVIEWS_GITHUB_TOKEN:-}
+      STUGAN_PREVIEWS_REDDIT_CLIENT_ID: ${STUGAN_PREVIEWS_REDDIT_CLIENT_ID:-}
+      STUGAN_PREVIEWS_REDDIT_CLIENT_SECRET: ${STUGAN_PREVIEWS_REDDIT_CLIENT_SECRET:-}
+      STUGAN_PREVIEWS_REDDIT_USER_AGENT: ${STUGAN_PREVIEWS_REDDIT_USER_AGENT:-}
+    healthcheck:
+      test: ["CMD", "/app/stugan-previews", "-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  stugan-data:

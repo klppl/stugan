@@ -30,12 +30,17 @@ unaffected.
 
 ### Docker
 
-[`docker-compose.previews.yml`](../docker-compose.previews.yml) is a complete
-two-container stack. Put the secret (and any provider keys) in `.env`:
+[`docker-compose.yml`](../docker-compose.yml) has the sidecar as its `previews`
+profile (use `COMPOSE_PROFILES=engine,previews` to run both). Put the profile,
+URL, secret and any provider keys in `.env`:
 
 ```sh
-echo "STUGAN_PREVIEWS_SECRET=$(openssl rand -hex 32)" > .env
-docker compose -f docker-compose.previews.yml up -d
+cat > .env <<EOF
+COMPOSE_PROFILES=previews
+STUGAN_PREVIEWS_URL=http://stugan-previews:8017
+STUGAN_PREVIEWS_SECRET=$(openssl rand -hex 32)
+EOF
+docker compose up -d
 ```
 
 To add it to an existing compose file, add the service and two variables on

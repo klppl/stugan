@@ -66,7 +66,7 @@ Put a `config.toml` with `listen = "0.0.0.0:8080"` in the `/data` volume, then
 open `http://localhost:8080`. The [Docker guide](docs/docker.md) covers compose,
 reverse proxy + TLS, `trusted_proxies` and updates. To keep IRC connected across
 upgrades, run it with [stugan-engine](docs/engine.md) using
-[`docker-compose.engine.yml`](docker-compose.engine.yml).
+[`docker-compose.yml`](docker-compose.yml) (profiles `engine`, `previews`).
 
 **From source:**
 

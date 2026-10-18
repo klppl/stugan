@@ -49,7 +49,7 @@ You add **one service** (`stugan-engine`) and **two environment variables** on
 
 | You run stugan today with… | Do this |
 |----------------------------|---------|
-| Nothing yet (new install) | [Use `docker-compose.engine.yml`](#new-install) |
+| Nothing yet (new install) | [Use `docker-compose.yml`](#new-install) |
 | The compose file from [docker.md](docker.md) | [Add the engine to it](#existing-compose-file) |
 | Your own compose behind a tunnel/proxy network (Dockge, Portainer, …) | [Same, with a private network](#behind-a-reverse-proxy-or-tunnel-network) |
 | `docker run` | [Move to compose, keeping your volume](#coming-from-docker-run) |
@@ -65,12 +65,16 @@ All cases share two rules:
 
 ### New install
 
-The repository ships [`docker-compose.engine.yml`](../docker-compose.engine.yml),
-a complete two-container stack:
+The repository ships [`docker-compose.yml`](../docker-compose.yml); the engine
+is its `engine` profile:
 
 ```sh
-echo "STUGAN_ENGINE_SECRET=$(openssl rand -hex 32)" > .env
-docker compose -f docker-compose.engine.yml up -d
+cat > .env <<EOF
+COMPOSE_PROFILES=engine
+STUGAN_ENGINE_URL=tcp://stugan-engine:8016
+STUGAN_ENGINE_SECRET=$(openssl rand -hex 32)
+EOF
+docker compose up -d
 ```
 
 | Container | Image | Holds |

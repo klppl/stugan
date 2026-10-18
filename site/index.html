@@ -108,8 +108,12 @@
     <code>config.toml</code> with <code>listen = "0.0.0.0:8080"</code> under <code>[server]</code>
     in the <code>/data</code> volume, then open <code>http://localhost:8080</code>.</p>
   <p>To keep IRC connected across upgrades, run it together with stugan-engine instead:</p>
-  <pre>echo "STUGAN_ENGINE_SECRET=$(openssl rand -hex 32)" &gt; .env
-docker compose -f docker-compose.engine.yml up -d</pre>
+  <pre>cat &gt; .env &lt;&lt;EOF
+COMPOSE_PROFILES=engine
+STUGAN_ENGINE_URL=tcp://stugan-engine:8016
+STUGAN_ENGINE_SECRET=$(openssl rand -hex 32)
+EOF
+docker compose up -d</pre>
   <p class="muted">See the
     <a href="https://github.com/klppl/stugan/blob/main/docs/docker.md">Docker guide</a> for reverse proxy and TLS, or
     <a href="https://github.com/klppl/stugan#quick-start">build from source</a>.</p>

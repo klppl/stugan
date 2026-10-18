@@ -126,8 +126,7 @@ it, and keep your volume line as it is. The engine guide has
 [the edited file](engine.md#existing-compose-file), a variant for
 [tunnel/proxy networks](engine.md#behind-a-reverse-proxy-or-tunnel-network),
 and the steps for [`docker run` users](engine.md#coming-from-docker-run). For a
-fresh install, [`docker-compose.engine.yml`](../docker-compose.engine.yml) is a
-complete two-container stack. Keep the engine on its `engine-1` tag, never
+fresh install, [`docker-compose.yml`](../docker-compose.yml) has the engine as a profile. Keep the engine on its `engine-1` tag, never
 `latest`.
 
 ## Behind a reverse proxy (TLS)
