@@ -322,7 +322,7 @@ type NetworkConfig struct {
 	// SASLExternal authenticates with SASL EXTERNAL (CertFP) instead of
 	// PLAIN; requires CertFile and TLS.
 	SASLExternal bool `toml:"sasl_external"`
-	// SASLScram authenticates with SASL SCRAM-SHA-256 instead of PLAIN, using
+	// SASLScram authenticates with SASL SCRAM (SHA-512 or SHA-256) instead of PLAIN, using
 	// sasl_user/sasl_pass: the password never crosses the wire.
 	SASLScram bool `toml:"sasl_scram"`
 	// CertFile is a path to a PEM file holding the client certificate and

@@ -88,7 +88,7 @@ authoritative.
 | `monitor` | []string | Friends list watched via IRCv3 MONITOR (online/offline). Editable from the GUI thereafter. |
 | `connect` | bool | Connect on startup (default true). |
 | `sasl_user` / `sasl_pass` | string | SASL PLAIN credentials. |
-| `sasl_scram` | bool | Authenticate with SASL SCRAM-SHA-256 instead of PLAIN, so the password is never sent. The server must offer it (Ergo does; on Libera the account needs a SCRAM-capable password hash). |
+| `sasl_scram` | bool | Authenticate with SASL SCRAM instead of PLAIN, so the password is never sent. stugan uses SCRAM-SHA-512 if the server offers it (Libera does), else SCRAM-SHA-256. The server must offer one of them and the account needs a SCRAM-capable password hash; otherwise login fails and PLAIN is the fallback. |
 | `sasl_external` | bool | Use SASL EXTERNAL (CertFP) instead of a password. Takes precedence over `sasl_scram`. |
 | `cert_file` | string | PEM with certificate **and** private key concatenated (for CertFP). |
 | `server_pass` | string | IRC `PASS` — for bouncers (ZNC/soju) or password-gated servers. |

@@ -1,7 +1,12 @@
 package irc
 
 import (
+	"crypto/hmac"
+	"crypto/pbkdf2"
 	"encoding/base64"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +92,108 @@ func TestSASLScramResetAndEscape(t *testing.T) {
 	}
 	if m.Encode([]string{"+"}) == "" {
 		t.Error("cannot restart after reset")
+	}
+}
+
+// TestSASLScramRoundTripAllVariants plays an independent server side of
+// SCRAM, written from RFC 5802 §3 rather than sharing the client's helpers, so
+// a round trip proves the two agree for every variant.
+func TestSASLScramRoundTripAllVariants(t *testing.T) {
+	for _, v := range scramHashes {
+		t.Run(v.name, func(t *testing.T) {
+			const pass, user = "pässwörd", "alice"
+			salt := []byte("0123456789abcdef")
+			iter := 4096
+
+			m := &saslScram{user: user, pass: pass, client: &captureSender{}}
+			m.advertise("sasl=PLAIN," + v.name)
+			if got := m.Method(); got != v.name {
+				t.Fatalf("Method = %s", got)
+			}
+
+			raw, _ := base64.StdEncoding.DecodeString(m.Encode([]string{"+"}))
+			clientFirst := string(raw)
+			bare := clientFirst[len("n,,"):]
+			attrs := scramAttrs(bare)
+			if attrs["n"] != user {
+				t.Fatalf("client-first = %q", clientFirst)
+			}
+			snonce := attrs["r"] + "srvnonce"
+			serverFirst := "r=" + snonce + ",s=" + base64.StdEncoding.EncodeToString(salt) + ",i=" + strconv.Itoa(iter)
+
+			// Server side, derived from the stored password only.
+			salted, _ := pbkdf2.Key(v.New, saslPrep(pass), salt, iter, v.New().Size())
+			mac := func(key []byte, msg string) []byte {
+				h := hmac.New(v.New, key)
+				h.Write([]byte(msg))
+				return h.Sum(nil)
+			}
+			storedKey := v.New()
+			storedKey.Write(mac(salted, "Client Key"))
+			serverKey := mac(salted, "Server Key")
+
+			finalRaw, _ := base64.StdEncoding.DecodeString(m.Encode([]string{b64(serverFirst)}))
+			final := string(finalRaw)
+			proofB64 := scramAttrs(final)["p"]
+			noProof := strings.TrimSuffix(final, ",p="+proofB64)
+			authMsg := bare + "," + serverFirst + "," + noProof
+			clientSig := mac(storedKey.Sum(nil), authMsg)
+			proof, _ := base64.StdEncoding.DecodeString(proofB64)
+			if len(proof) != len(clientSig) {
+				t.Fatalf("proof length %d, want %d", len(proof), len(clientSig))
+			}
+			recovered := make([]byte, len(proof))
+			for i := range proof {
+				recovered[i] = proof[i] ^ clientSig[i]
+			}
+			check := v.New()
+			check.Write(recovered)
+			if !hmac.Equal(check.Sum(nil), storedKey.Sum(nil)) {
+				t.Fatal("server could not verify the client proof")
+			}
+
+			sig := "v=" + base64.StdEncoding.EncodeToString(mac(serverKey, authMsg))
+			if got := m.Encode([]string{b64(sig)}); got != "+" {
+				t.Fatalf("valid server signature = %q", got)
+			}
+		})
+	}
+}
+
+func TestSASLScramMethodSelection(t *testing.T) {
+	tests := []struct {
+		caps string
+		want string
+	}{
+		{"", "SCRAM-SHA-256"}, // nothing advertised: the default
+		{"sasl", "SCRAM-SHA-256"},
+		{"sasl=PLAIN,EXTERNAL", "SCRAM-SHA-256"},
+		{"sasl=PLAIN,SCRAM-SHA-256", "SCRAM-SHA-256"},
+		{"away-notify sasl=ECDSA-NIST256P-CHALLENGE,EXTERNAL,PLAIN,SCRAM-SHA-512 batch", "SCRAM-SHA-512"},
+		{"sasl=scram-sha-256,scram-sha-512", "SCRAM-SHA-512"}, // strongest wins, case-insensitive
+	}
+	for _, tt := range tests {
+		m := &saslScram{}
+		m.advertise(tt.caps)
+		if got := m.Method(); got != tt.want {
+			t.Errorf("advertised %q: Method = %s, want %s", tt.caps, got, tt.want)
+		}
+	}
+	// A reconnect to a different server must not reuse the old list.
+	m := &saslScram{}
+	m.advertise("sasl=SCRAM-SHA-512")
+	m.reset()
+	if got := m.Method(); got != "SCRAM-SHA-256" {
+		t.Errorf("after reset Method = %s", got)
+	}
+}
+
+// Conn.Caps only reports capabilities on knownCaps; one missing from it is
+// silently invisible to the engine and the UI.
+func TestKnownCapsCoverFeatureCaps(t *testing.T) {
+	for _, c := range []string{"soju.im/bouncer-networks", "soju.im/bouncer-networks-notify", "chghost", "setname", "draft/chathistory", "chathistory"} {
+		if !slices.Contains(knownCaps, c) {
+			t.Errorf("%s missing from knownCaps", c)
+		}
 	}
 }

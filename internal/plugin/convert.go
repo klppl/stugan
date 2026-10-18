@@ -131,6 +131,10 @@ func signalName(ev core.Event) (string, bool) {
 		return "invite", true
 	case core.EvAccount:
 		return "account", true
+	case core.EvChgHost:
+		return "chghost", true
+	case core.EvSetName:
+		return "setname", true
 	default:
 		return "", false
 	}

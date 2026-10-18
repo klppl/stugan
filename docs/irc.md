@@ -32,9 +32,12 @@ the requested caps. Inbound girc callbacks are normalized and pushed to the
   and an explicit `ServerName` (girc needs it set).
 - **SASL PLAIN**: a non-empty `SASLUser`/`SASLPass` configures
   `girc.SASLPlain`.
-- **SASL SCRAM-SHA-256**: `SASLScram = true` (with `SASLUser`/`SASLPass`)
+- **SASL SCRAM**: `SASLScram = true` (with `SASLUser`/`SASLPass`)
   uses our own `saslScram` (`internal/irc/scram.go`, a `girc.SASLMech` — girc
-  has none). The password never crosses the wire and the server's signature is
+  has none). It offers SCRAM-SHA-512 when the server's `sasl=` value lists it
+  (Libera lists only that), else SCRAM-SHA-256: a `CAP LS` handler records the
+  advertised mechanisms, which always arrive before the ACK that makes girc ask
+  for one. The password never crosses the wire and the server's signature is
   verified, so an impostor server fails the exchange. State is per attempt and
   reset on every (re)connect. A server that doesn't list the mechanism answers
   `904`, which surfaces as the usual "authentication failed" notice — use PLAIN

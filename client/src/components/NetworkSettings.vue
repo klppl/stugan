@@ -190,7 +190,7 @@ function remove() {
           </label>
           <label v-if="form.tls" class="row"><span>Allow self-signed</span><input v-model="form.insecure" type="checkbox" /></label>
           <label class="row"><span>SASL EXTERNAL</span><input v-model="form.saslExternal" type="checkbox" /></label>
-          <label class="row"><span>SASL SCRAM</span><input v-model="form.saslScram" type="checkbox" title="Use SCRAM-SHA-256 instead of PLAIN: the password is never sent" /></label>
+          <label class="row"><span>SASL SCRAM</span><input v-model="form.saslScram" type="checkbox" title="Use SCRAM (SHA-512 or SHA-256) instead of PLAIN: the password is never sent" /></label>
           <label class="row">
             <span>Client cert</span>
             <textarea v-model="form.certPem" rows="4" spellcheck="false" placeholder="PEM cert + key for CertFP" />

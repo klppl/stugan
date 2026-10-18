@@ -5,10 +5,13 @@ import (
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/base64"
+	"hash"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/lrstanley/girc"
 	"golang.org/x/text/secure/precis"
@@ -19,8 +22,21 @@ import (
 // 4096–600000.
 const scramMaxIter = 1 << 20
 
-// saslScram implements girc.SASLMech for SCRAM-SHA-256 (RFC 5802 / RFC 7677,
-// no channel binding). Unlike PLAIN the password never crosses the wire, and
+// scramHash is one SCRAM variant. scramHashes lists them strongest first;
+// servers differ in what they offer (Libera: SCRAM-SHA-512 only; others
+// SCRAM-SHA-256), so the variant is chosen from the server's advertised list.
+type scramHash struct {
+	name string
+	New  func() hash.Hash
+}
+
+var scramHashes = []scramHash{
+	{"SCRAM-SHA-512", sha512.New},
+	{"SCRAM-SHA-256", sha256.New},
+}
+
+// saslScram implements girc.SASLMech for SCRAM-SHA-512 / SCRAM-SHA-256 (RFC 5802
+// / RFC 7677, no channel binding). Unlike PLAIN the password never crosses the wire, and
 // the client verifies the server's signature, so a man in the middle cannot
 // pose as the network.
 //
@@ -38,6 +54,13 @@ type saslScram struct {
 	user, pass string
 	client     eventSender
 
+	// mu guards mechs and hash: the CAP LS handler records the server's
+	// mechanisms and girc then calls Method, both on girc's read goroutine,
+	// but reset runs on the connecting one.
+	mu    sync.Mutex
+	mechs map[string]bool // SASL mechanisms the server advertised
+	hash  scramHash       // the variant Method chose
+
 	// per-exchange state, cleared by reset on every (re)connect.
 	step        int
 	cnonce      string
@@ -54,11 +77,58 @@ const (
 	scramDone
 )
 
-// Method identifies the mechanism to girc and the server.
-func (s *saslScram) Method() string { return "SCRAM-SHA-256" }
+// advertise records the mechanisms from a CAP LS/NEW line's sasl value
+// ("sasl=PLAIN,SCRAM-SHA-512"). Multi-line LS replies accumulate.
+func (s *saslScram) advertise(caps string) {
+	for _, tok := range strings.Fields(caps) {
+		val, ok := strings.CutPrefix(tok, "sasl=")
+		if !ok {
+			continue
+		}
+		s.mu.Lock()
+		if s.mechs == nil {
+			s.mechs = map[string]bool{}
+		}
+		for m := range strings.SplitSeq(val, ",") {
+			s.mechs[strings.ToUpper(m)] = true
+		}
+		s.mu.Unlock()
+	}
+}
 
-// reset forgets any half-finished exchange; Connect calls it before dialing.
-func (s *saslScram) reset() { *s = saslScram{user: s.user, pass: s.pass, client: s.client} }
+// Method identifies the mechanism to girc and the server: the strongest SCRAM
+// variant the server offered, or SCRAM-SHA-256 when it listed none (an older
+// server that doesn't announce mechanisms — it will refuse if it lacks it).
+func (s *saslScram) Method() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hash = scramHashes[len(scramHashes)-1]
+	for _, h := range scramHashes {
+		if s.mechs[h.name] {
+			s.hash = h
+			break
+		}
+	}
+	return s.hash.name
+}
+
+func (s *saslScram) variant() scramHash {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.hash.New == nil {
+		s.hash = scramHashes[len(scramHashes)-1]
+	}
+	return s.hash
+}
+
+// reset forgets the exchange and what the last server advertised; Connect
+// calls it before dialing.
+func (s *saslScram) reset() {
+	s.mu.Lock()
+	s.mechs, s.hash = nil, scramHash{}
+	s.mu.Unlock()
+	s.step, s.cnonce, s.clientFirst, s.serverSig = scramStart, "", "", nil
+}
 
 // Encode answers one server AUTHENTICATE message.
 func (s *saslScram) Encode(params []string) string {
@@ -111,20 +181,22 @@ func (s *saslScram) final(arg string) string {
 		return ""
 	}
 
-	salted, err := pbkdf2.Key(sha256.New, saslPrep(s.pass), salt, iter, sha256.Size)
+	v := s.variant()
+	salted, err := pbkdf2.Key(v.New, saslPrep(s.pass), salt, iter, v.New().Size())
 	if err != nil {
 		return ""
 	}
-	clientKey := hmacSHA256(salted, "Client Key")
-	storedKey := sha256.Sum256(clientKey)
+	clientKey := hmacSum(v.New, salted, "Client Key")
+	stored := v.New()
+	stored.Write(clientKey)
 	noProof := "c=biws,r=" + nonce // biws = base64("n,,"), no channel binding
 	authMsg := s.clientFirst + "," + serverFirst + "," + noProof
-	clientSig := hmacSHA256(storedKey[:], authMsg)
+	clientSig := hmacSum(v.New, stored.Sum(nil), authMsg)
 	proof := make([]byte, len(clientKey))
 	for i := range proof {
 		proof[i] = clientKey[i] ^ clientSig[i]
 	}
-	s.serverSig = hmacSHA256(hmacSHA256(salted, "Server Key"), authMsg)
+	s.serverSig = hmacSum(v.New, hmacSum(v.New, salted, "Server Key"), authMsg)
 	s.step = scramSentFinal
 	return sendChunked(s.client, base64.StdEncoding.EncodeToString(
 		[]byte(noProof+",p="+base64.StdEncoding.EncodeToString(proof))))
@@ -145,8 +217,8 @@ func (s *saslScram) verify(arg string) string {
 	return "+" // empty final response; the server answers 903
 }
 
-func hmacSHA256(key []byte, msg string) []byte {
-	m := hmac.New(sha256.New, key)
+func hmacSum(h func() hash.Hash, key []byte, msg string) []byte {
+	m := hmac.New(h, key)
 	m.Write([]byte(msg))
 	return m.Sum(nil)
 }

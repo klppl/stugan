@@ -27,7 +27,7 @@ Capabilities negotiated:
 - `draft/chathistory` / `chathistory` — upstream server history: the
   `/chathistory` command (every subcommand) and automatic catch-up, below.
 - `soju.im/bouncer-networks` (+ `-notify`) — manage soju's networks from the UI.
-- SASL `SCRAM-SHA-256` alongside PLAIN and EXTERNAL (`sasl_scram`).
+- SASL `SCRAM-SHA-512` / `SCRAM-SHA-256` alongside PLAIN and EXTERNAL (`sasl_scram`).
 - `draft/message-redaction` — delete messages (`REDACT`); see below.
 - `draft/read-marker` / `read-marker` — synchronized read positions via `MARKREAD`.
 

@@ -47,7 +47,7 @@ type Options struct {
 	// SASLExternal authenticates via SASL EXTERNAL (CertFP) instead of PLAIN.
 	// Requires CertPEM and TLS.
 	SASLExternal bool
-	// SASLScram authenticates with SASL SCRAM-SHA-256 instead of PLAIN, using
+	// SASLScram authenticates with SASL SCRAM (SHA-512 or SHA-256) instead of PLAIN, using
 	// SASLUser/SASLPass. Ignored when SASLExternal is set.
 	SASLScram bool
 	// CertPEM is a client certificate (cert + private key concatenated, PEM)
@@ -471,6 +471,15 @@ func (c *Conn) registerHandlers() {
 	// BATCH brackets a group of messages. We only act on draft/multiline
 	// batches (reassembled into one message); other types (e.g. chathistory)
 	// just tag their members, which pass through normally.
+	// SCRAM picks its variant from the server's advertised mechanisms; the CAP
+	// LS reply carrying "sasl=…" always precedes the ACK that starts SASL.
+	if m, ok := c.mech.(*saslScram); ok {
+		h.Add(girc.CAP, func(_ *girc.Client, e girc.Event) {
+			if len(e.Params) >= 3 && (e.Params[1] == girc.CAP_LS || e.Params[1] == girc.CAP_NEW) {
+				m.advertise(e.Last())
+			}
+		})
+	}
 	h.Add("BATCH", func(gc *girc.Client, e girc.Event) { c.handleBatch(gc, &e) })
 
 	cmds = append(cmds, numericReplies...)
@@ -964,6 +973,8 @@ var knownCaps = []string{
 	"invite-notify", "draft/chathistory", "chathistory",
 	"account-tag", "labeled-response", "standard-replies",
 	"draft/message-redaction", "draft/multiline",
+	"chghost", "setname",
+	"soju.im/bouncer-networks", "soju.im/bouncer-networks-notify",
 }
 
 // Caps returns the negotiated IRCv3 capabilities (from the set stugan uses).

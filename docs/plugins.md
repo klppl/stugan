@@ -55,12 +55,15 @@ stugan.hook_topic(fn)
 stugan.hook_completion(fn)
 
 -- Listen to signals. event is "join","part","kick","quit","nick","connect",
--- "resume","disconnect","topic","mode","invite","account". fn(signal) ->
+-- "resume","disconnect","topic","mode","invite","account","chghost",
+-- "setname". fn(signal) ->
 -- ignored (notify-only). The signal table carries network/nick/new_nick/
 -- channel/account/text, plus kicker for "kick" (nick is the kicked member).
 -- For "mode", nick is the setter and text the raw mode string. For "invite",
 -- nick is the inviter and new_nick the invitee (possibly you). For
 -- "account", nick logged in to services account (account "" = logged out).
+-- For "chghost", text is nick's new "user@host"; for "setname", their new
+-- realname. Both fire once per event, not once per shared channel.
 -- "connect" fires on a fresh registration; "resume" instead when stugan
 -- re-attached to a connection stugan-engine kept registered across a restart
 -- (still identified, still in its channels — don't identify or join again).

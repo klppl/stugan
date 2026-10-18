@@ -91,7 +91,7 @@ function submit() {
         </label>
         <label v-if="tls" class="row"><span>Allow self-signed</span><input v-model="insecure" type="checkbox" /></label>
         <label class="row"><span>SASL EXTERNAL</span><input v-model="saslExternal" type="checkbox" /></label>
-        <label class="row"><span>SASL SCRAM</span><input v-model="saslScram" type="checkbox" title="Use SCRAM-SHA-256 instead of PLAIN: the password is never sent" /></label>
+        <label class="row"><span>SASL SCRAM</span><input v-model="saslScram" type="checkbox" title="Use SCRAM (SHA-512 or SHA-256) instead of PLAIN: the password is never sent" /></label>
         <label class="row">
           <span>Client cert</span>
           <textarea v-model="certPem" rows="4" spellcheck="false" placeholder="PEM cert + key for CertFP (-----BEGIN CERTIFICATE----- … -----END PRIVATE KEY-----)" />

@@ -336,6 +336,26 @@ func TestHookSignal(t *testing.T) {
 	}
 }
 
+func TestHookSignalChghostSetname(t *testing.T) {
+	api := &fakeAPI{}
+	h := newHost(t, api, map[string]string{
+		"watch.lua": `
+			stugan.hook_signal("chghost", function(s)
+			  stugan.print(s.network, "*status", "host " .. s.nick .. " " .. s.text)
+			end)
+			stugan.hook_signal("setname", function(s)
+			  stugan.print(s.network, "*status", "name " .. s.nick .. " " .. s.text)
+			end)`,
+	}, nil)
+
+	ctx := context.Background()
+	h.Dispatch(ctx, core.Event{Type: core.EvChgHost, Network: "n", Nick: "carol", Text: "u@cloak"})
+	h.Dispatch(ctx, core.Event{Type: core.EvSetName, Network: "n", Nick: "carol", Text: "Carol C"})
+	if len(api.prints) != 2 || api.prints[0][2] != "host carol u@cloak" || api.prints[1][2] != "name carol Carol C" {
+		t.Fatalf("signal prints = %v", api.prints)
+	}
+}
+
 func TestHoldAndReleaseJoinsLua(t *testing.T) {
 	api := &fakeAPI{}
 	h := newHost(t, api, map[string]string{

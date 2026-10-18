@@ -43,7 +43,7 @@ type NetworkParams struct {
 	// SASLExternal authenticates with SASL EXTERNAL (CertFP) instead of
 	// PLAIN. Requires a client certificate (CertPEM) and TLS.
 	SASLExternal bool `json:"sasl_external,omitempty"`
-	// SASLScram authenticates with SASL SCRAM-SHA-256 instead of PLAIN, using
+	// SASLScram authenticates with SASL SCRAM (SHA-512 or SHA-256) instead of PLAIN, using
 	// SASLUser/SASLPass. SASLExternal takes precedence if both are set.
 	SASLScram bool `json:"sasl_scram,omitempty"`
 	// CertPEM is a client certificate (cert and private key concatenated in
