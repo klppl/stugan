@@ -2,8 +2,12 @@ package previews
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"mime"
+	"net/http"
 	"net/url"
+	"path"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -23,9 +27,12 @@ func (openGraph) Fetch(ctx context.Context, f *Fetcher, u *url.URL) (*Card, erro
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
 	ct := resp.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "text/html") && !strings.HasPrefix(ct, "application/xhtml") {
-		return nil, ErrNotHTML
+		return fileCard(resp), nil
 	}
 	// Decode per the Content-Type header or <meta charset> so non-UTF-8 pages
 	// don't come out garbled.
@@ -88,4 +95,49 @@ func ParseOpenGraph(r io.Reader, pageURL string) Card {
 			}
 		}
 	}
+}
+
+// fileCard describes a non-HTML response (a PDF, an archive, a stray image):
+// its name, type and size, so the link says what it is before you click.
+func fileCard(resp *http.Response) *Card {
+	final := resp.Request.URL
+	name := ""
+	if _, params, err := mime.ParseMediaType(resp.Header.Get("Content-Disposition")); err == nil {
+		name = params["filename"]
+	}
+	if name == "" {
+		name, _ = url.PathUnescape(path.Base(final.Path))
+		if name == "." || name == "/" {
+			name = ""
+		}
+	}
+	if name == "" {
+		name = final.Hostname()
+	}
+	ct, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	c := &Card{URL: final.String(), Title: name, Site: "File"}
+	add := detailAdder(c)
+	add(ct)
+	if resp.ContentLength > 0 {
+		add(humanBytes(resp.ContentLength))
+	}
+	add(strings.TrimPrefix(final.Hostname(), "www."))
+	if strings.HasPrefix(ct, "image/") && resp.ContentLength <= maxImageBytes {
+		c.Image = final.String() // the client shows it through the media proxy
+	}
+	return c
+}
+
+// humanBytes renders 1536 as "1.5 KB".
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
 }

@@ -101,7 +101,16 @@ plain link) you'd get without the sidecar.
 | `youtube` | videos, Shorts, live, playlists on `youtube.com` / `youtu.be` | `STUGAN_PREVIEWS_YOUTUBE_API_KEY` (optional) |
 | `instagram` | public posts, reels and IGTV on `instagram.com` | none |
 | `reddit` | post links on `reddit.com` (any subdomain) and `redd.it` | `STUGAN_PREVIEWS_REDDIT_CLIENT_ID`, `_CLIENT_SECRET`, `_USER_AGENT`, `_RSS=off` (all optional) |
-| `opengraph` | everything else (`og:*`, `<title>`, charset-aware) | none |
+| `github` | repos, issues, pull requests and commits on `github.com` | `STUGAN_PREVIEWS_GITHUB_TOKEN` (optional) |
+| `hackernews` | `news.ycombinator.com/item?id=…` stories and comments | none |
+| `bluesky` | `bsky.app/profile/…/post/…` | none |
+| `wikipedia` | `<lang>.wikipedia.org/wiki/…` articles | none |
+| `oembed` | Vimeo, SoundCloud, Spotify, TikTok, Dailymotion, Flickr, Mixcloud, Giphy via their open oEmbed endpoints | none |
+| `opengraph` | everything else (`og:*`, `<title>`, charset-aware); non-HTML links become file cards | none |
+
+Short links (`bit.ly`, `t.co`, `tinyurl.com`, `amzn.to` and about 30 others) are
+expanded first: the redirect chain is followed through the SSRF guard and the
+card is built for the destination, labelled `via bit.ly`. (`og:*`, `<title>`, charset-aware) | none |
 
 **YouTube.** With an API key ([YouTube Data API v3](https://developers.google.com/youtube/v3/getting-started),
 free quota) the card shows title, description, thumbnail, channel, duration,
@@ -136,6 +145,15 @@ spoiler posts get no text or image. If the credentials are wrong or
 rate-limited, the card falls back to the keyless one. Set
 `STUGAN_PREVIEWS_REDDIT_USER_AGENT` to something like
 `linux:stugan-previews:1.0 (by /u/yourname)`, as Reddit asks.
+
+**GitHub.** Keyless the API allows 60 requests an hour per IP, shared by every
+user of the sidecar. A token (no scopes needed; a fine-grained token with no
+permissions is enough) raises that to 5,000. Past the limit the provider fails
+and the link gets the generic card.
+
+**File cards.** A link that isn't a web page (a PDF, an archive, an image
+without an extension) used to get no card. It now shows the file name, type,
+size and host, and images show a thumbnail.
 
 ## Adding a provider
 

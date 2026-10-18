@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 
 	"github.com/klippelism/stugan/internal/previewproto"
 )
@@ -42,6 +43,11 @@ func Providers(env Env) []Provider {
 		newYouTube(env),
 		newInstagram(),
 		newReddit(env),
+		newGitHub(env),
+		newHackerNews(),
+		newBluesky(),
+		newWikipedia(),
+		newOEmbed(),
 		openGraph{},
 	}
 }
@@ -65,9 +71,23 @@ func NewRegistry(ps []Provider, log *slog.Logger) *Registry {
 // changes), so it logs at debug and falls through; the last error wins when
 // every provider fails.
 func (r *Registry) Resolve(ctx context.Context, f *Fetcher, raw string) (*Card, error) {
+	return r.resolve(ctx, f, raw, 0)
+}
+
+func (r *Registry) resolve(ctx context.Context, f *Fetcher, raw string, depth int) (*Card, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return nil, err
+	}
+	// Short links: describe where they lead. depth guards against a
+	// shortener that redirects to another shortener forever.
+	if depth == 0 && isShortener(u.Hostname()) {
+		if final, err := expand(ctx, f, u); err == nil && final.String() != u.String() && !isShortener(final.Hostname()) {
+			if c, err := r.resolve(ctx, f, final.String(), 1); err == nil {
+				c.Details = append(c.Details, "via "+strings.TrimPrefix(strings.ToLower(u.Hostname()), "www."))
+				return c, nil
+			}
+		}
 	}
 	var lastErr error = fmt.Errorf("no provider for %s", u.Host)
 	for _, p := range r.providers {

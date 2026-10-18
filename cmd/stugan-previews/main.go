@@ -14,6 +14,8 @@
 //
 //	STUGAN_PREVIEWS_YOUTUBE_API_KEY   YouTube Data API v3 key (optional;
 //	                                  without it YouTube uses keyless oEmbed)
+//	STUGAN_PREVIEWS_GITHUB_TOKEN      GitHub token (optional; raises the API
+//	                                  rate limit from 60 to 5,000 an hour)
 //	STUGAN_PREVIEWS_REDDIT_CLIENT_ID  Reddit app client id (optional; with
 //	STUGAN_PREVIEWS_REDDIT_CLIENT_SECRET / _USER_AGENT; without them Reddit
 //	                                  uses keyless oEmbed: title + subreddit)

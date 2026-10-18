@@ -3,6 +3,7 @@ package previews
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -90,3 +91,25 @@ func limitBody(r io.Reader) io.Reader { return io.LimitReader(r, maxJSONBytes) }
 func basicAuth(user, pass string) string {
 	return base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
 }
+
+// JSON GETs an API URL with extra headers and decodes the (size-capped) body
+// into v, failing on a non-2xx status.
+func (f *Fetcher) JSON(ctx context.Context, rawURL string, header map[string]string, v any) error {
+	h := map[string]string{"Accept": "application/json"}
+	for k, val := range header {
+		h[k] = val
+	}
+	resp, err := f.Get(ctx, rawURL, h)
+	if err != nil {
+		return redactKey(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return json.NewDecoder(limitBody(resp.Body)).Decode(v)
+}
+
+// apiUA identifies the sidecar to public APIs whose policies ask for it
+// (Wikimedia, GitHub).
+const apiUA = "stugan-previews/1.0 (+https://github.com/klppl/stugan)"
