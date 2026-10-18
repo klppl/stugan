@@ -144,14 +144,13 @@ func toNetworkDTO(n *core.Network) proto.NetworkDTO {
 		})
 	}
 	return proto.NetworkDTO{
-		ID:       n.ID,
-		Name:     n.Name,
-		Nick:     n.Nick,
-		State:    string(n.State),
-		Caps:     n.Caps,
-		Channels: chans,
-		Friends:  friends,
-
+		ID:              n.ID,
+		Name:            n.Name,
+		Nick:            n.Nick,
+		State:           string(n.State),
+		Caps:            n.Caps,
+		Channels:        chans,
+		Friends:         friends,
 		BouncerNetworks: bouncer,
 	}
 }

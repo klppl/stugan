@@ -218,3 +218,40 @@ func TestCatchUpNeedsCapAndBaseline(t *testing.T) {
 		t.Errorf("sent %v without the cap", raws)
 	}
 }
+
+// A catch-up goroutine still reading the store when the connection drops must
+// not write its chain afterwards: the next connection would inherit it.
+func TestCatchUpIgnoredAfterDisconnect(t *testing.T) {
+	h := &gatedHistory{historyStub: historyStub{last: map[string]time.Time{"#c": time.Now().Add(-time.Hour)}}, gate: make(chan struct{})}
+	conn := &fakeConnector{caps: []string{"draft/chathistory"}}
+	e := New(Options{Sink: &captureSink{}, Connector: conn, History: h})
+	if err := e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"}); err != nil {
+		t.Fatal(err)
+	}
+	e.handle(context.Background(), Event{Type: EvJoin, Network: "n", Nick: "me", Buffer: "#c"})
+	e.mu.Lock()
+	e.conns["n"] = &fakeRuntimeConn{} // the connection was replaced
+	e.mu.Unlock()
+	close(h.gate)
+	time.Sleep(100 * time.Millisecond)
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if len(e.catchUps) != 0 {
+		t.Errorf("stale chain survived: %+v", e.catchUps)
+	}
+	if raws := conn.conns[0].rawsSnap(); len(raws) != 0 {
+		t.Errorf("sent on a superseded connection: %v", raws)
+	}
+}
+
+// gatedHistory blocks LastChatTime until gate closes.
+type gatedHistory struct {
+	historyStub
+	gate chan struct{}
+}
+
+func (g *gatedHistory) LastChatTime(ctx context.Context, n, b string) (time.Time, error) {
+	<-g.gate
+	return g.historyStub.LastChatTime(ctx, n, b)
+}

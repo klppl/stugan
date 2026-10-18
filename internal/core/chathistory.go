@@ -53,6 +53,18 @@ func hasChatHistory(conn IRCConn) bool {
 	return slices.Contains(caps, "draft/chathistory") || slices.Contains(caps, "chathistory")
 }
 
+// sameConn reports whether a and b are the same connection. Connections are
+// pointers, but a comparison of uncomparable dynamic types would panic, so a
+// connection we cannot compare counts as unchanged.
+func sameConn(a, b IRCConn) (same bool) {
+	defer func() {
+		if recover() != nil {
+			same = true
+		}
+	}()
+	return a == b
+}
+
 func chatHistoryTime(t time.Time) string { return t.UTC().Format(chatHistoryLayout) }
 
 func catchUpKey(network, buffer string) string { return network + "\x00" + FoldIRC(buffer) }
@@ -224,6 +236,10 @@ func (e *Engine) startCatchUp(network string) {
 			return
 		}
 		e.mu.Lock()
+		if !sameConn(e.conns[network], conn) {
+			e.mu.Unlock() // disconnected or removed while we read the store
+			return
+		}
 		e.targetsSince[network] = since
 		e.mu.Unlock()
 		conn.SendRaw(fmt.Sprintf("CHATHISTORY TARGETS timestamp=%s timestamp=%s %d",
@@ -260,6 +276,10 @@ func (e *Engine) catchUpBuffer(network, buffer string, newest, fallback time.Tim
 			return
 		}
 		e.mu.Lock()
+		if !sameConn(e.conns[network], conn) {
+			e.mu.Unlock()
+			return
+		}
 		e.catchUps[catchUpKey(network, buffer)] = &catchUp{pages: 1, since: since}
 		e.mu.Unlock()
 		conn.SendRaw(fmt.Sprintf("CHATHISTORY AFTER %s timestamp=%s %d", buffer, chatHistoryTime(since), catchUpLimit))
