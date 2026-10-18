@@ -3,6 +3,7 @@ package previews
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"html"
@@ -23,6 +24,8 @@ type reddit struct {
 
 	// Endpoints, overridable in tests.
 	tokenURL, apiBase, oembedURL string
+	rssURL                       func(canon string) string
+	rssOff                       bool
 
 	mu      sync.Mutex
 	token   string
@@ -41,6 +44,8 @@ func newReddit(env Env) *reddit {
 		tokenURL:  "https://www.reddit.com/api/v1/access_token",
 		apiBase:   "https://oauth.reddit.com",
 		oembedURL: "https://www.reddit.com/oembed",
+		rssURL:    func(canon string) string { return strings.TrimRight(canon, "/") + "/.rss" },
+		rssOff:    strings.EqualFold(Setting(env, "reddit", "rss"), "off"),
 	}
 }
 
@@ -76,12 +81,12 @@ func (r *reddit) Fetch(ctx context.Context, f *Fetcher, u *url.URL) (*Card, erro
 			return c, nil
 		}
 		// A bad credential or a rate limit still yields a title via oEmbed.
-		if c2, oerr := r.oEmbed(ctx, f, id, u); oerr == nil {
+		if c2, kerr := r.keyless(ctx, f, u); kerr == nil {
 			return c2, nil
 		}
 		return nil, err
 	}
-	return r.oEmbed(ctx, f, id, u)
+	return r.keyless(ctx, f, u)
 }
 
 // accessToken returns a cached app-only token, fetching one when needed.
@@ -231,41 +236,148 @@ func redditCard(p redditPostData) *Card {
 
 var redditSub = regexp.MustCompile(`href="https?://(?:www\.)?reddit\.com/(r/[A-Za-z0-9_]+)/?"`)
 
-// oEmbed is the keyless fallback: the title and subreddit, nothing numeric.
-func (r *reddit) oEmbed(ctx context.Context, f *Fetcher, id string, u *url.URL) (*Card, error) {
-	// oEmbed wants the full permalink on www.reddit.com (old./np./m. and bare
-	// /comments/<id> are rejected); redd.it links go through as-is.
-	canon := u.String()
+// permalink resolves u to the canonical www.reddit.com permalink the keyless
+// endpoints want (old./np./m. and bare /comments/<id> are rejected); redd.it
+// short links are resolved by following their redirect.
+func (r *reddit) permalink(ctx context.Context, f *Fetcher, u *url.URL) (string, error) {
 	if strings.EqualFold(u.Hostname(), "redd.it") {
-		// Resolve the short link to its permalink by following the redirect.
-		resp, err := f.Get(ctx, canon, nil)
+		resp, err := f.Get(ctx, u.String(), nil)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		resp.Body.Close()
 		u = resp.Request.URL
 	}
 	if hostIs(u.Hostname(), "reddit.com") {
-		canon = "https://www.reddit.com" + u.EscapedPath()
+		return "https://www.reddit.com" + u.EscapedPath(), nil
 	}
-	body, err := f.GetJSON(ctx, r.oembedURL+"?url="+url.QueryEscape(canon))
+	return u.String(), nil
+}
+
+// keyless builds a card without credentials from two anonymous endpoints:
+// oEmbed (title, subreddit) and the post's Atom feed (author, date, a text
+// snippet). Neither exposes score or comment counts; those need the API.
+// Either source may fail (Reddit blocks some IPs); one is enough.
+func (r *reddit) keyless(ctx context.Context, f *Fetcher, u *url.URL) (*Card, error) {
+	canon, err := r.permalink(ctx, f, u)
 	if err != nil {
 		return nil, err
+	}
+	title, sub := r.oEmbed(ctx, f, canon)
+	post := r.rssPost(ctx, f, canon)
+	if title == "" {
+		title = post.title
+	}
+	if title == "" {
+		return nil, errors.New("keyless: no title from oEmbed or the feed")
+	}
+	if sub == "" {
+		sub = post.subreddit
+	}
+	c := &Card{URL: canon, Title: title, Site: "Reddit", Description: post.text}
+	if sub != "" {
+		c.Details = append(c.Details, sub)
+	}
+	if post.author != "" {
+		c.Details = append(c.Details, "u/"+post.author)
+	}
+	if post.date != "" {
+		c.Details = append(c.Details, post.date)
+	}
+	return c, nil
+}
+
+// oEmbed returns the post title and subreddit, or empty strings on failure.
+func (r *reddit) oEmbed(ctx context.Context, f *Fetcher, canon string) (title, sub string) {
+	body, err := f.GetJSON(ctx, r.oembedURL+"?url="+url.QueryEscape(canon))
+	if err != nil {
+		return "", ""
 	}
 	var o struct {
 		Title string `json:"title"`
 		HTML  string `json:"html"`
 	}
-	if err := json.Unmarshal(body, &o); err != nil {
-		return nil, err
+	if json.Unmarshal(body, &o) != nil {
+		return "", ""
 	}
-	title := strings.TrimSpace(html.UnescapeString(o.Title))
-	if title == "" {
-		return nil, errors.New("oembed: no title")
-	}
-	c := &Card{URL: u.String(), Title: title, Site: "Reddit"}
 	if m := redditSub.FindStringSubmatch(o.HTML); m != nil {
-		c.Details = []string{m[1]}
+		sub = m[1]
 	}
-	return c, nil
+	return strings.TrimSpace(html.UnescapeString(o.Title)), sub
+}
+
+type rssPostInfo struct{ title, subreddit, author, date, text string }
+
+type atomFeed struct {
+	Entries []struct {
+		ID      string `xml:"id"`
+		Title   string `xml:"title"`
+		Content string `xml:"content"`
+		Updated string `xml:"updated"`
+		Publish string `xml:"published"`
+		Author  struct {
+			Name string `xml:"name"`
+		} `xml:"author"`
+		Category struct {
+			Label string `xml:"label,attr"`
+		} `xml:"category"`
+	} `xml:"entry"`
+}
+
+var (
+	redditTag    = regexp.MustCompile(`<[^>]+>`)
+	redditPSplit = regexp.MustCompile(`(?i)</p>|<br\s*/?>`)
+)
+
+// rssPost reads the post's own entry (the t3_ one) from its Atom feed. The
+// feed carries no NSFW flag, so the snippet could be adult text: it's capped
+// short, never includes images, and STUGAN_PREVIEWS_REDDIT_RSS=off disables it.
+func (r *reddit) rssPost(ctx context.Context, f *Fetcher, canon string) rssPostInfo {
+	if r.rssOff {
+		return rssPostInfo{}
+	}
+	resp, err := f.Get(ctx, r.rssURL(canon), map[string]string{"Accept": "application/atom+xml,application/xml"})
+	if err != nil {
+		return rssPostInfo{}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return rssPostInfo{}
+	}
+	var feed atomFeed
+	if xml.NewDecoder(limitBody(resp.Body)).Decode(&feed) != nil {
+		return rssPostInfo{}
+	}
+	for _, e := range feed.Entries {
+		if !strings.HasPrefix(e.ID, "t3_") {
+			continue
+		}
+		info := rssPostInfo{title: strings.TrimSpace(e.Title), subreddit: e.Category.Label}
+		if name := strings.TrimPrefix(e.Author.Name, "/u/"); name != "" && name != "[deleted]" {
+			info.author = name
+		}
+		ts := e.Publish
+		if ts == "" {
+			ts = e.Updated
+		}
+		if t, err := time.Parse(time.RFC3339, ts); err == nil {
+			info.date = t.UTC().Format("2006-01-02")
+		}
+		// Body: the markdown div, before the trailing [link]/[comments] row.
+		body := e.Content
+		if i := strings.Index(body, "<!-- SC_ON -->"); i >= 0 {
+			body = body[:i]
+		}
+		body = redditPSplit.ReplaceAllString(body, " ")
+		body = html.UnescapeString(redditTag.ReplaceAllString(body, ""))
+		body = strings.TrimSpace(strings.TrimPrefix(body, "<!-- SC_OFF -->"))
+		body = strings.TrimSpace(strings.ReplaceAll(body, "<!-- SC_OFF -->", ""))
+		switch strings.ToLower(strings.TrimSpace(body)) {
+		case "", "[deleted]", "[removed]":
+			body = ""
+		}
+		info.text = shorten(body, 200)
+		return info
+	}
+	return rssPostInfo{}
 }

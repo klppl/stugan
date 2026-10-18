@@ -61,6 +61,13 @@ func TestRedditAPIAndOEmbed(t *testing.T) {
 	mux.HandleFunc("/oembed", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"title":"Keyless &amp; title ","html":"<a href=\"https://www.reddit.com/r/hyderabad/\">hyderabad</a>"}`))
 	})
+	mux.HandleFunc("/rss", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><entry>
+<author><name>/u/gopher</name></author><category term="golang" label="r/golang"/>
+<content type="html">&lt;!-- SC_OFF --&gt;&lt;div class=&quot;md&quot;&gt;&lt;p&gt;First para &amp;amp; more.&lt;/p&gt; &lt;p&gt;Second&lt;/p&gt; &lt;/div&gt;&lt;!-- SC_ON --&gt; &lt;br/&gt; &lt;span&gt;[link]&lt;/span&gt;</content>
+<id>t3_abc123</id><published>2024-02-27T23:27:15+00:00</published><title>Feed title</title></entry>
+<entry><author><name>/u/other</name></author><id>t1_zzz</id><title>comment</title></entry></feed>`))
+	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -77,6 +84,7 @@ func TestRedditAPIAndOEmbed(t *testing.T) {
 			return ""
 		})
 		r.tokenURL, r.apiBase, r.oembedURL = srv.URL+"/token", srv.URL, srv.URL+"/oembed"
+		r.rssURL = func(string) string { return srv.URL + "/rss" }
 		return r
 	}
 
@@ -100,12 +108,51 @@ func TestRedditAPIAndOEmbed(t *testing.T) {
 
 	// Bad credentials degrade to the keyless oEmbed card instead of failing.
 	c, err := mk("cid", "wrong").Fetch(context.Background(), f, u)
-	if err != nil || c.Title != "Keyless & title" || len(c.Details) != 1 || c.Details[0] != "r/hyderabad" {
+	wantKeyless := "r/hyderabad|u/gopher|2024-02-27"
+	if err != nil || c.Title != "Keyless & title" || strings.Join(c.Details, "|") != wantKeyless || c.Description != "First para & more. Second" {
 		t.Errorf("fallback = %+v, %v", c, err)
 	}
 	// No credentials at all: oEmbed directly.
 	c, err = mk("", "").Fetch(context.Background(), f, u)
 	if err != nil || c.Title != "Keyless & title" {
 		t.Errorf("keyless = %+v, %v", c, err)
+	}
+}
+
+func TestRedditKeylessSurvivesOneSourceFailing(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oembed", func(w http.ResponseWriter, r *http.Request) { http.Error(w, "blocked", 403) })
+	mux.HandleFunc("/rss", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>t3_x</id><title>From feed</title>
+<category label="r/go"/><content type="html">[deleted]</content></entry></feed>`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	r := newReddit(func(string) string { return "" })
+	r.oembedURL, r.rssURL = srv.URL+"/oembed", func(string) string { return srv.URL + "/rss" }
+	u, _ := url.Parse("https://www.reddit.com/r/go/comments/x/t/")
+	c, err := r.Fetch(context.Background(), &Fetcher{Client: http.DefaultClient}, u)
+	if err != nil || c.Title != "From feed" || c.Description != "" || strings.Join(c.Details, "|") != "r/go" {
+		t.Errorf("feed-only = %+v, %v", c, err)
+	}
+
+	// Both sources down: an error, so the chain falls through to a plain link.
+	mux2 := http.NewServeMux()
+	srv2 := httptest.NewServer(mux2)
+	defer srv2.Close()
+	r.oembedURL, r.rssURL = srv2.URL+"/oembed", func(string) string { return srv2.URL + "/rss" }
+	if _, err := r.Fetch(context.Background(), &Fetcher{Client: http.DefaultClient}, u); err == nil {
+		t.Error("expected error when both keyless sources fail")
+	}
+
+	// RSS=off skips the feed entirely.
+	off := newReddit(func(k string) string {
+		if k == "STUGAN_PREVIEWS_REDDIT_RSS" {
+			return "off"
+		}
+		return ""
+	})
+	if !off.rssOff {
+		t.Error("STUGAN_PREVIEWS_REDDIT_RSS=off not honoured")
 	}
 }
