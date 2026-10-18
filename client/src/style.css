@@ -3100,3 +3100,16 @@ body {
     animation: none;
   }
 }
+
+/* iOS Safari zooms the page when focusing a field with font-size < 16px and
+   doesn't zoom back out on blur. Keep touch-device fields at 16px so it never
+   zooms in the first place. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    /* !important so scoped component rules (e.g. the upload comment field's
+       14px) can't win on specificity or load order. */
+    font-size: 16px !important;
+  }
+}
