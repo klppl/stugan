@@ -125,6 +125,16 @@ function usePreset(p: PresetTheme) {
 
       <label class="setting-row checkbox-row">
         <div class="setting-label">
+          <span>Tint Own Messages</span>
+          <span class="setting-hint">Color the whole text of your own messages, not just your nick. Turn off if it feels loud in your theme.</span>
+        </div>
+        <input v-model="settings.tintOwnMessages" type="checkbox" class="toggle-switch" />
+      </label>
+
+      <div class="setting-divider" />
+
+      <label class="setting-row checkbox-row">
+        <div class="setting-label">
           <span>Show Top Bar</span>
           <span class="setting-hint">The bar above the chat with the channel name, topic, search and buttons. When it's off, press Ctrl/Cmd-K for search, mentions, channels and the member list. Phones always show it.</span>
         </div>

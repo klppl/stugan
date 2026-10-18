@@ -1013,7 +1013,7 @@ body {
 }
 /* Own lines tint the whole body, not just the nick — on narrow screens the
    nick color alone is too subtle to pick out your own messages. */
-.message.self .body {
+:root:not(.no-self-tint) .message.self .body {
   color: var(--self);
 }
 .message .sys {

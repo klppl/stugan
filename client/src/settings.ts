@@ -127,6 +127,7 @@ interface Settings {
   sendTyping: boolean; // broadcast our own +typing notifications (opt-in: others can see when you type)
   showTyping: boolean; // display other people's typing notifications
   replyQuote: boolean; // show Reply / Quote buttons on a message's hover toolbar
+  tintOwnMessages: boolean; // tint the whole body of your own messages, not just the nick
   showTopBar: boolean; // desktop: show the top bar (channel name, search, buttons); Cmd-K covers it when off
   digestOnReturn: boolean; // open "What you missed" when coming back after a while away
   awayMinutes: number; // how long out of view counts as "away" for digestOnReturn
@@ -182,6 +183,7 @@ function load(): Settings {
       sendTyping: typeof s.sendTyping === "boolean" ? s.sendTyping : false,
       showTyping: typeof s.showTyping === "boolean" ? s.showTyping : true,
       replyQuote: typeof s.replyQuote === "boolean" ? s.replyQuote : true,
+      tintOwnMessages: typeof s.tintOwnMessages === "boolean" ? s.tintOwnMessages : true,
       showTopBar: typeof s.showTopBar === "boolean" ? s.showTopBar : true,
       digestOnReturn: typeof s.digestOnReturn === "boolean" ? s.digestOnReturn : true,
       awayMinutes: isAwayMinutes(s.awayMinutes) ? s.awayMinutes : DEFAULT_AWAY_MINUTES,
@@ -199,6 +201,7 @@ function load(): Settings {
       sendTyping: false,
       showTyping: true,
       replyQuote: true,
+      tintOwnMessages: true,
       showTopBar: true,
       digestOnReturn: true,
       awayMinutes: DEFAULT_AWAY_MINUTES,
@@ -246,6 +249,7 @@ export function loadSettingsPayload(s: Record<string, unknown>) {
     if (typeof s.sendTyping === "boolean") settings.sendTyping = s.sendTyping;
     if (typeof s.showTyping === "boolean") settings.showTyping = s.showTyping;
     if (typeof s.replyQuote === "boolean") settings.replyQuote = s.replyQuote;
+    if (typeof s.tintOwnMessages === "boolean") settings.tintOwnMessages = s.tintOwnMessages;
     if (typeof s.showTopBar === "boolean") settings.showTopBar = s.showTopBar;
     if (typeof s.digestOnReturn === "boolean") settings.digestOnReturn = s.digestOnReturn;
     if (isAwayMinutes(s.awayMinutes)) settings.awayMinutes = s.awayMinutes;
@@ -266,6 +270,7 @@ watch(
     // Set after applyTheme so the user's picked size wins over a custom theme
     // that also declares --font-size (parseTheme accepts any --variable).
     document.documentElement.style.setProperty("--font-size", s.fontSize + "px");
+    document.documentElement.classList.toggle("no-self-tint", !s.tintOwnMessages);
     if (!isSyncingRemote) {
       if (syncTimer) clearTimeout(syncTimer);
       syncTimer = window.setTimeout(() => {
