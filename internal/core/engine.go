@@ -125,7 +125,12 @@ type Engine struct {
 	// network. A reconnect supersedes any older Perform goroutine before it can
 	// send another command or auto-join on the new connection.
 	startupSeq map[string]uint64
-	listAccum  map[string][]ChannelListItem // in-progress LIST results
+	// catchUps and targetsSince drive upstream chathistory catch-up (see
+	// chathistory.go): the in-flight AFTER chain per buffer, and the baseline
+	// each network's TARGETS request used.
+	catchUps     map[string]*catchUp
+	targetsSince map[string]time.Time
+	listAccum    map[string][]ChannelListItem // in-progress LIST results
 	// pendingWhois records which buffer issued a WHOIS/WHOWAS/WHO/NAMES so we
 	// can route the server's numeric replies back to it. Key is
 	// "<network>\t<lowercase-target>"; cleared on the matching end-of
@@ -220,6 +225,8 @@ func New(opts Options) *Engine {
 		conns:        map[string]IRCConn{},
 		connCancels:  map[string]context.CancelFunc{},
 		startupSeq:   map[string]uint64{},
+		catchUps:     map[string]*catchUp{},
+		targetsSince: map[string]time.Time{},
 		listAccum:    map[string][]ChannelListItem{},
 		pendingWhois: map[string]string{},
 		pendingState: map[string]map[string]map[string]string{},
@@ -416,6 +423,12 @@ func (e *Engine) RemoveNetwork(id string) error {
 	delete(e.pendingState, id)
 	delete(e.listAccum, id)
 	delete(e.startupSeq, id)
+	delete(e.targetsSince, id)
+	for k := range e.catchUps {
+		if strings.HasPrefix(k, id+"\x00") {
+			delete(e.catchUps, k)
+		}
+	}
 	e.resetJoinGateLocked(id)
 	for i, n := range e.user.Networks {
 		if n.ID == id {
@@ -551,7 +564,7 @@ func needsReconnect(old, p NetworkParams) bool {
 		!slices.Equal(old.Fallbacks, p.Fallbacks) || old.Insecure != p.Insecure ||
 		old.User != p.User || old.Realname != p.Realname ||
 		old.SASLUser != p.SASLUser || old.SASLPass != p.SASLPass ||
-		old.ServerPass != p.ServerPass || old.SASLExternal != p.SASLExternal ||
+		old.ServerPass != p.ServerPass || old.SASLExternal != p.SASLExternal || old.SASLScram != p.SASLScram ||
 		old.CertPEM != p.CertPEM
 }
 
@@ -1218,14 +1231,34 @@ func (e *Engine) handle(ctx context.Context, ev Event) {
 		}
 		e.runBuiltinCommand(ev)
 
+	case EvHistoryTarget:
+		e.onHistoryTarget(ev)
+
+	case EvHistoryBatch:
+		e.onHistoryBatch(ev)
+
 	default: // join, part, quit, nick, connect, disconnect
 		e.host.Dispatch(ctx, ev) // notify-only
 		e.commit(ev)
-		if ev.Type == EvConnect {
+		switch ev.Type {
+		case EvConnect:
 			if ev.Resumed {
 				e.resumeStartup(ev.Network)
 			} else {
 				e.runPerform(ev.Network)
+				e.startCatchUp(ev.Network)
+				e.listBouncerNetworks(ev.Network)
+			}
+		case EvDisconnect:
+			e.dropCatchUps(ev.Network)
+		case EvJoin:
+			// Our own join: fill in what the channel said while we were away.
+			e.mu.RLock()
+			n := e.user.Network(ev.Network)
+			self := n != nil && EqualIRC(n.Nick, ev.Nick)
+			e.mu.RUnlock()
+			if self && isChannelName(ev.Buffer) {
+				e.catchUpBuffer(ev.Network, ev.Buffer, time.Time{}, time.Time{})
 			}
 		}
 	}
@@ -1900,6 +1933,7 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		// Drop stale friend presence: a dropped connection knows nothing about
 		// who is online until MONITOR re-reports after the next registration.
 		n.MonitorOnline = nil
+		n.Bouncer = nil
 		// Drop stale channel membership too. A dropped connection misses the
 		// QUIT/PART traffic that would normally retire members (including our
 		// own pre-disconnect nick once the server pings out its ghost), and the
@@ -1928,6 +1962,27 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 		emit = append(emit, m)
 		netChanged = created
 
+	case EvBouncerNetwork:
+		switch {
+		case ev.Bouncer != nil:
+			if i := slices.IndexFunc(n.Bouncer, func(b BouncerNetwork) bool { return b.ID == ev.Bouncer.ID }); i >= 0 {
+				n.Bouncer[i] = *ev.Bouncer
+			} else {
+				n.Bouncer = append(n.Bouncer, *ev.Bouncer)
+			}
+		case ev.Target != "":
+			n.Bouncer = slices.DeleteFunc(n.Bouncer, func(b BouncerNetwork) bool { return b.ID == ev.Target })
+		default:
+			n.Bouncer = nil
+		}
+		netChanged = true
+
+	case EvHistoryTarget:
+		// A conversation the server says had traffic: make sure it has a buffer.
+		if _, created := n.getOrCreate(ev.Buffer, KindQuery); created {
+			netChanged = true
+		}
+
 	case EvNames:
 		// The server's NAMES reply on join: merge the listed members
 		// without emitting join lines.
@@ -1955,6 +2010,21 @@ func (e *Engine) applyLocked(ev Event) (emit []Message, netChanged, persist bool
 			if m, ok := c.Members[FoldIRC(ev.Nick)]; ok {
 				m.Account = ev.Account
 				netChanged = true
+			}
+		}
+
+	case EvChgHost, EvSetName:
+		// chghost / setname: note it in every channel we share with the
+		// member, as churn the client folds with joins and parts.
+		for _, c := range n.Channels {
+			m, ok := c.Members[FoldIRC(ev.Nick)]
+			if !ok {
+				continue
+			}
+			if ev.Type == EvSetName {
+				line(MsgSetname, c.Name, m.Nick, fmt.Sprintf("%s changed their name to %q", m.Nick, ev.Text))
+			} else {
+				line(MsgChghost, c.Name, m.Nick, fmt.Sprintf("%s changed host to %s", m.Nick, ev.Text))
 			}
 		}
 

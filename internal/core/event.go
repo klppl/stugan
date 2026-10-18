@@ -30,6 +30,20 @@ const (
 	// EvAccount is an account-notify update: Nick logged in to services
 	// Account ("" = logged out).
 	EvAccount EventType = "account"
+	// EvChgHost is an IRCv3 chghost: Nick's user@host changed to Text.
+	EvChgHost EventType = "chghost"
+	// EvSetName is an IRCv3 setname: Nick's realname changed to Text.
+	EvSetName EventType = "setname"
+	// EvHistoryTarget is one row of a CHATHISTORY TARGETS reply: Buffer has had
+	// traffic, the newest at Time.
+	EvHistoryTarget EventType = "history_target"
+	// EvHistoryBatch marks the end of a chathistory batch: Count messages were
+	// replayed for Buffer, the newest stamped Time (zero when Count is 0).
+	EvHistoryBatch EventType = "history_batch"
+	// EvBouncerNetwork updates the bouncer network list: Bouncer set is an
+	// upsert, Target alone is a delete by id, and neither clears the list (a
+	// BOUNCER LISTNETWORKS reply is starting).
+	EvBouncerNetwork EventType = "bouncer_network"
 	// EvInvite: Nick invited NewNick (the invitee — possibly us) to Buffer.
 	EvInvite EventType = "invite"
 	// EvMode is a channel MODE change. MemberModes carries the membership
@@ -81,6 +95,10 @@ const (
 //	EvKick               → Nick(kicked), Kicker, Buffer, Text(reason)
 //	EvQuit               → Nick, Text(reason)
 //	EvAccount            → Nick, Account("" = logged out)
+//	EvChgHost            → Nick, Text("user@host")
+//	EvSetName            → Nick, Text(realname)
+//	EvHistoryTarget      → Buffer, Time(newest message)
+//	EvHistoryBatch       → Buffer, Count, Time(newest message)
 //	EvInvite             → Nick(inviter), NewNick(invitee), Buffer(channel)
 //	EvNick               → Nick(old), NewNick
 //	EvTopic              → Buffer, Text(topic), Nick(setter)
@@ -119,9 +137,10 @@ type Event struct {
 	// membership and list modes removed (e.g. "+o bob" → "+"). Empty means the
 	// producer did not split it, and the flags in Text are used as-is.
 	ChanModes string
-	Away      bool // EvAway: whether Nick is now away
-	Online    bool // EvMonitor: whether the Args nicks are now online
-	Count     int  // EvListItem: user count
+	Bouncer   *BouncerNetwork // EvBouncerNetwork
+	Away      bool            // EvAway: whether Nick is now away
+	Online    bool            // EvMonitor: whether the Args nicks are now online
+	Count     int             // EvListItem: user count; EvHistoryBatch: messages replayed
 	// Resumed (EvConnect) marks a re-attach to a connection stugan-engine kept
 	// registered while stugan was down: not a new registration, so perform,
 	// autojoin and the plugin "connect" signal don't run. Args lists the

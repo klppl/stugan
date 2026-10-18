@@ -73,7 +73,7 @@ func netAddParams(d proto.NetAdd) core.NetworkParams {
 		Nick: d.Nick, User: d.User, Realname: d.Realname,
 		SASLUser: d.SASLUser, SASLPass: d.SASLPass, Channels: d.Channels,
 		ServerPass: d.ServerPass, Perform: d.Perform,
-		SASLExternal: d.SASLExternal, CertPEM: d.CertPEM,
+		SASLExternal: d.SASLExternal, SASLScram: d.SASLScram, CertPEM: d.CertPEM,
 	}
 }
 
@@ -92,7 +92,7 @@ func netConfigParams(d proto.NetConfig, existing core.NetworkParams) core.Networ
 	p.Channels = append([]string(nil), d.Channels...)
 	p.ServerPass = d.ServerPass
 	p.Perform = append([]string(nil), d.Perform...)
-	p.SASLExternal, p.CertPEM = d.SASLExternal, d.CertPEM
+	p.SASLExternal, p.SASLScram, p.CertPEM = d.SASLExternal, d.SASLScram, d.CertPEM
 	return p
 }
 
@@ -105,7 +105,7 @@ func netConfigDTO(p core.NetworkParams) proto.NetConfig {
 		Nick: p.Nick, User: p.User, Realname: p.Realname,
 		SASLUser: p.SASLUser, SASLPass: p.SASLPass, Channels: p.Channels,
 		ServerPass: p.ServerPass, Perform: p.Perform,
-		SASLExternal: p.SASLExternal, CertPEM: p.CertPEM,
+		SASLExternal: p.SASLExternal, SASLScram: p.SASLScram, CertPEM: p.CertPEM,
 	}
 }
 
@@ -136,6 +136,13 @@ func toNetworkDTO(n *core.Network) proto.NetworkDTO {
 			})
 		}
 	}
+	var bouncer []proto.BouncerNetworkDTO
+	for _, b := range n.Bouncer {
+		bouncer = append(bouncer, proto.BouncerNetworkDTO{
+			ID: b.ID, Name: b.Name, Host: b.Host, Port: b.Port, TLS: b.TLS,
+			Nick: b.Nick, State: b.State, Error: b.Error,
+		})
+	}
 	return proto.NetworkDTO{
 		ID:       n.ID,
 		Name:     n.Name,
@@ -144,6 +151,8 @@ func toNetworkDTO(n *core.Network) proto.NetworkDTO {
 		Caps:     n.Caps,
 		Channels: chans,
 		Friends:  friends,
+
+		BouncerNetworks: bouncer,
 	}
 }
 

@@ -279,7 +279,7 @@ func (m *model) renderLine(msg core.Message, w int) string {
 
 func (m *model) formatBody(msg core.Message) string {
 	switch msg.Kind {
-	case core.MsgSystem, core.MsgJoin, core.MsgPart, core.MsgQuit, core.MsgNick, core.MsgTopic:
+	case core.MsgSystem, core.MsgJoin, core.MsgPart, core.MsgQuit, core.MsgNick, core.MsgChghost, core.MsgSetname, core.MsgTopic:
 		if msg.Kind == core.MsgSystem && core.IsPluginBuffer(msg.From) {
 			return m.st.system.Render("<"+msg.From+"> ") + msg.Text // plugin reply window
 		}

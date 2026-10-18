@@ -25,6 +25,35 @@ const features = computed(() => {
   ];
 });
 
+// Networks a soju control connection manages. The section only shows on a
+// connection that negotiated soju.im/bouncer-networks.
+const bouncerNets = computed(
+  () => connection.store.networks.find((n) => n.id === props.network)?.bouncer_networks ?? [],
+);
+const isBouncer = computed(() => caps.value.includes("soju.im/bouncer-networks"));
+const bnet = reactive({ name: "", host: "", port: 6697, tls: true, nick: "", pass: "" });
+function bouncerOpened(name: string): boolean {
+  return connection.store.networks.some((n) => n.id === `${props.network}-${name}`);
+}
+function addBouncerNet() {
+  if (!bnet.host.trim()) return;
+  connection.bouncerAdd({
+    network: props.network,
+    name: bnet.name.trim() || undefined,
+    host: bnet.host.trim(),
+    port: bnet.port || undefined,
+    tls: bnet.tls,
+    nick: bnet.nick.trim() || undefined,
+    pass: bnet.pass || undefined,
+  });
+  bnet.name = bnet.host = bnet.nick = bnet.pass = "";
+}
+function removeBouncerNet(id: string, name: string) {
+  if (confirm(`Remove "${name}" from the bouncer? This deletes it on the bouncer itself.`)) {
+    connection.bouncerRemove(props.network, id);
+  }
+}
+
 function toggleConnected() {
   connection.setConnected(props.network, !connected.value);
 }
@@ -45,6 +74,7 @@ const form = reactive({
   serverPass: "",
   perform: "",
   saslExternal: false,
+  saslScram: false,
   certPem: "",
   channels: "",
 });
@@ -64,6 +94,7 @@ function fill(cfg: NetConfig) {
   form.serverPass = cfg.server_pass;
   form.perform = (cfg.perform ?? []).join("\n");
   form.saslExternal = cfg.sasl_external;
+  form.saslScram = cfg.sasl_scram ?? false;
   form.certPem = cfg.cert_pem;
   form.channels = (cfg.channels ?? []).join(", ");
   loaded.value = true;
@@ -106,6 +137,7 @@ function save() {
     sasl_pass: form.saslPass,
     server_pass: form.serverPass,
     sasl_external: form.saslExternal,
+    sasl_scram: form.saslScram,
     cert_pem: form.certPem.trim(),
     perform: form.perform
       .split("\n")
@@ -158,6 +190,7 @@ function remove() {
           </label>
           <label v-if="form.tls" class="row"><span>Allow self-signed</span><input v-model="form.insecure" type="checkbox" /></label>
           <label class="row"><span>SASL EXTERNAL</span><input v-model="form.saslExternal" type="checkbox" /></label>
+          <label class="row"><span>SASL SCRAM</span><input v-model="form.saslScram" type="checkbox" title="Use SCRAM-SHA-256 instead of PLAIN: the password is never sent" /></label>
           <label class="row">
             <span>Client cert</span>
             <textarea v-model="form.certPem" rows="4" spellcheck="false" placeholder="PEM cert + key for CertFP" />
@@ -193,6 +226,35 @@ function remove() {
           </template>
         </div>
 
+        <div v-if="isBouncer" class="caps-section bnets">
+          <h3>Bouncer networks</h3>
+          <p class="hint">
+            This is a soju control connection. “Open” adds a stugan network
+            logged in to that upstream (<code>user/network</code>).
+          </p>
+          <p v-if="bouncerNets.length === 0" class="hint">No networks yet.</p>
+          <ul v-else class="feature-list">
+            <li v-for="b in bouncerNets" :key="b.id">
+              <span class="bnet-dot" :class="b.state" :title="b.error || b.state" />
+              <span class="feature-label">{{ b.name || b.host }}</span>
+              <code class="feature-cap">{{ b.host }}{{ b.port ? ":" + b.port : "" }}</code>
+              <button type="button" :disabled="bouncerOpened(b.name)" @click="connection.bouncerOpen(network, b.id)">
+                {{ bouncerOpened(b.name) ? "Opened" : "Open" }}
+              </button>
+              <button type="button" class="danger" @click="removeBouncerNet(b.id, b.name || b.host)">Remove</button>
+            </li>
+          </ul>
+          <div class="bnet-add" @keydown.enter.prevent="addBouncerNet">
+            <input v-model="bnet.name" placeholder="name" aria-label="Network name" />
+            <input v-model="bnet.host" placeholder="host" aria-label="Host" />
+            <input v-model.number="bnet.port" type="number" aria-label="Port" class="bnet-port" />
+            <label class="bnet-tls"><input v-model="bnet.tls" type="checkbox" /> TLS</label>
+            <input v-model="bnet.nick" placeholder="nick (optional)" aria-label="Nick" />
+            <input v-model="bnet.pass" type="password" placeholder="password (optional)" aria-label="Password" />
+            <button type="button" :disabled="!bnet.host.trim()" @click="addBouncerNet">Add</button>
+          </div>
+        </div>
+
         <div class="row">
           <button type="button" class="danger" @click="remove">Remove network</button>
           <button type="button" @click="toggleConnected">{{ connected ? "Disconnect" : "Connect" }}</button>
@@ -206,6 +268,42 @@ function remove() {
 </template>
 
 <style scoped>
+.bnets .feature-list li {
+  gap: 6px;
+}
+.bnet-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  flex: none;
+}
+.bnet-dot.connected {
+  background: var(--self);
+}
+.bnet-dot.connecting {
+  background: var(--accent);
+}
+.bnet-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  align-items: center;
+}
+.bnet-add input:not([type="checkbox"]) {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+.bnet-add .bnet-port {
+  flex: 0 0 80px;
+}
+.bnet-tls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.9em;
+}
 .caps-section {
   margin-top: 14px;
 }

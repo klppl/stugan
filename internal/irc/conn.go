@@ -47,6 +47,9 @@ type Options struct {
 	// SASLExternal authenticates via SASL EXTERNAL (CertFP) instead of PLAIN.
 	// Requires CertPEM and TLS.
 	SASLExternal bool
+	// SASLScram authenticates with SASL SCRAM-SHA-256 instead of PLAIN, using
+	// SASLUser/SASLPass. Ignored when SASLExternal is set.
+	SASLScram bool
 	// CertPEM is a client certificate (cert + private key concatenated, PEM)
 	// presented during the TLS handshake for CertFP / SASL EXTERNAL.
 	CertPEM  string
@@ -81,6 +84,10 @@ type Conn struct {
 	// and written only from girc's single read goroutine (the BATCH and message
 	// handlers), so it needs no locking.
 	batches map[string]*multilineBatch
+	// histBatches tracks open inbound chathistory batches (ref → target), so
+	// the replayed lines can be counted and the batch's end reported. Same
+	// goroutine discipline as batches.
+	histBatches map[string]*histBatch
 	// batchSeq names outbound multiline batches; atomic since Message may be
 	// called from the engine loop or a plugin goroutine.
 	batchSeq atomic.Uint64
@@ -88,12 +95,12 @@ type Conn struct {
 	// goroutine) and consumed by Connect (engine reconnect loop) to turn
 	// the generic disconnect error into core.ErrAuthFailed.
 	authFailed atomic.Bool
-	// mech is our SASL PLAIN implementation (nil for EXTERNAL or no SASL). It
+	// mech is our SASL PLAIN or SCRAM implementation (nil for EXTERNAL or no SASL). It
 	// is installed into the girc config for the initial registration exchange
 	// and cleared once registered, so girc can't re-run SASL mid-session on a
 	// post-registration CAP ACK (see the CONNECTED handler); Connect restores
 	// it before every (re)connect.
-	mech *saslPlain
+	mech girc.SASLMech
 	// outbound serializes user and command writes away from the engine loop.
 	// girc applies flood control synchronously, so calling Cmd methods directly
 	// from core can otherwise stall all networks for the duration of its delay.
@@ -228,6 +235,15 @@ func (w *outboundWriter) close() {
 	w.mu.Unlock()
 }
 
+// histBatch follows one inbound chathistory batch: how many messages it
+// replayed and the newest one's time, reported to the engine when it closes so
+// a catch-up can continue with the next page.
+type histBatch struct {
+	target string
+	count  int
+	last   time.Time
+}
+
 // multilineBatch accumulates the lines of one inbound draft/multiline message
 // until the closing BATCH. tags/source come from the opening BATCH command,
 // which carries the msgid/time/account for the whole logical message.
@@ -271,9 +287,14 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		// sent lines come back with the server's msgid/server-time) and
 		// draft/chathistory (server-side history on bouncers/ergo).
 		SupportedCaps: map[string][]string{
-			"echo-message":      nil,
-			"draft/chathistory": nil,
-			"chathistory":       nil, // the ratified name some servers use
+			"echo-message": nil,
+			"setname":      nil,
+			// soju's control channel: list/add/remove the bouncer's networks.
+			// Only offered to connections not bound to one of them.
+			"soju.im/bouncer-networks":        nil,
+			"soju.im/bouncer-networks-notify": nil,
+			"draft/chathistory":               nil,
+			"chathistory":                     nil, // the ratified name some servers use
 			// account-tag stamps the sender's account on every message (not
 			// just JOINs); labeled-response correlates replies; standard-replies
 			// gives structured FAIL/WARN/NOTE; message-redaction enables
@@ -327,12 +348,18 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 	// mech is kept aside so the client can be wired into it below: it writes
 	// its own AUTHENTICATE chunks (see sasl.go), but the girc client can only
 	// be built once this config is complete.
-	var mech *saslPlain
+	var mech girc.SASLMech
+	var wire func(eventSender)
 	switch {
 	case opts.SASLExternal:
 		gcfg.SASL = &girc.SASLExternal{}
+	case opts.SASLUser != "" && opts.SASLScram:
+		m := &saslScram{user: opts.SASLUser, pass: opts.SASLPass}
+		mech, wire = m, func(c eventSender) { m.client = c }
+		gcfg.SASL = mech
 	case opts.SASLUser != "":
-		mech = &saslPlain{user: opts.SASLUser, pass: opts.SASLPass}
+		m := &saslPlain{user: opts.SASLUser, pass: opts.SASLPass}
+		mech, wire = m, func(c eventSender) { m.client = c }
 		gcfg.SASL = mech
 	}
 
@@ -343,20 +370,21 @@ func New(opts Options, handler core.ConnHandler) (*Conn, error) {
 		}
 	}
 	c := &Conn{
-		opts:    opts,
-		handler: handler,
-		log:     log.With("network", opts.Network),
-		client:  girc.New(gcfg),
-		addrs:   addrs,
-		batches: map[string]*multilineBatch{},
-		mech:    mech,
+		opts:        opts,
+		handler:     handler,
+		log:         log.With("network", opts.Network),
+		client:      girc.New(gcfg),
+		addrs:       addrs,
+		batches:     map[string]*multilineBatch{},
+		histBatches: map[string]*histBatch{},
+		mech:        mech,
 	}
 	c.outbound = newOutboundWriter(c.dispatchOutbound)
 	if opts.Relay != nil {
 		c.fingerprint = registrationFingerprint(opts, addrs)
 	}
-	if mech != nil {
-		mech.client = c.client
+	if wire != nil {
+		wire(c.client)
 	}
 	c.registerHandlers()
 	return c, nil
@@ -431,7 +459,11 @@ func (c *Conn) registerHandlers() {
 	cmds := []string{
 		girc.PRIVMSG, girc.NOTICE, girc.JOIN, girc.PART, girc.KICK,
 		girc.QUIT, girc.NICK, girc.TOPIC, girc.RPL_TOPIC, girc.RPL_NOTOPIC, girc.AWAY,
-		girc.INVITE, girc.CAP_ACCOUNT,
+		girc.INVITE, girc.CAP_ACCOUNT, girc.CAP_CHGHOST, "SETNAME",
+		// CHATHISTORY TARGETS replies (the other subcommands only go upstream).
+		"CHATHISTORY",
+		// soju.im/bouncer-networks: NETWORK rows (list reply and notifications).
+		"BOUNCER",
 		girc.RPL_LIST, girc.RPL_LISTEND, girc.CAP_TAGMSG,
 		// IRCv3 message-redaction (REDACT) and standard-replies (FAIL/WARN/NOTE).
 		"REDACT", "FAIL", "WARN", "NOTE",
@@ -454,6 +486,9 @@ func (c *Conn) registerHandlers() {
 				return
 			}
 			if ev, ok := toEvent(c.opts.Network, &e, gc.GetNick()); ok {
+				if !c.filterHistory(&e, &ev) {
+					return
+				}
 				c.emit(ev)
 			}
 		})
@@ -646,6 +681,7 @@ func (c *Conn) Connect(ctx context.Context) error {
 	// linger across reconnects. girc's handler goroutines, the only other
 	// users of the map, are not running between connections.
 	clear(c.batches)
+	clear(c.histBatches)
 	if c.opts.Relay != nil {
 		return c.connectRelay(ctx)
 	}
@@ -672,6 +708,9 @@ func (c *Conn) Connect(ctx context.Context) error {
 	// set here: the client is idle between Connect calls, which the reconnect
 	// loop makes serially.
 	if c.mech != nil {
+		if r, ok := c.mech.(interface{ reset() }); ok {
+			r.reset()
+		}
 		c.client.Config.SASL = c.mech
 	}
 
@@ -792,8 +831,33 @@ func (c *Conn) messageNow(target, text string) {
 	_ = c.client.Cmd.SendRaw("BATCH -" + ref)
 }
 
-// handleBatch opens or closes a draft/multiline batch. Other batch types are
-// ignored here (their member messages still pass through normally, tagged).
+// isHistoryBatch reports whether a BATCH type is a chathistory replay.
+func isHistoryBatch(typ string) bool {
+	return typ == "chathistory" || typ == "draft/chathistory"
+}
+
+// filterHistory counts a message that belongs to an open chathistory batch and
+// reports whether it should be emitted. A replay may only ever add messages:
+// anything else (a replayed JOIN/PART/NICK, were a server to send them) would
+// rewrite the live member list with stale membership, so it is dropped.
+func (c *Conn) filterHistory(e *girc.Event, ev *core.Event) bool {
+	b := c.histBatches[tag(e, "batch")]
+	if b == nil {
+		return true
+	}
+	if ev.Type != core.EvMessageIn {
+		return false
+	}
+	b.count++
+	if ev.Message != nil && ev.Message.Time.After(b.last) {
+		b.last = ev.Message.Time
+	}
+	return true
+}
+
+// handleBatch opens or closes a draft/multiline or chathistory batch. Other
+// batch types are ignored here (their member messages still pass through
+// normally, tagged).
 func (c *Conn) handleBatch(gc *girc.Client, e *girc.Event) {
 	if len(e.Params) == 0 || len(e.Params[0]) < 2 {
 		return
@@ -801,6 +865,13 @@ func (c *Conn) handleBatch(gc *girc.Client, e *girc.Event) {
 	ref := e.Params[0][1:]
 	switch e.Params[0][0] {
 	case '+':
+		if len(e.Params) >= 2 && e.Params[1] == "soju.im/bouncer-networks" {
+			// A LISTNETWORKS reply replaces the list; the rows follow.
+			c.emit(core.Event{Type: core.EvBouncerNetwork, Network: c.opts.Network})
+		}
+		if len(e.Params) >= 3 && isHistoryBatch(e.Params[1]) {
+			c.histBatches[ref] = &histBatch{target: e.Params[2]}
+		}
 		if len(e.Params) >= 3 && e.Params[1] == "draft/multiline" {
 			c.batches[ref] = &multilineBatch{
 				notice: false,
@@ -811,6 +882,13 @@ func (c *Conn) handleBatch(gc *girc.Client, e *girc.Event) {
 			}
 		}
 	case '-':
+		if h := c.histBatches[ref]; h != nil {
+			delete(c.histBatches, ref)
+			c.emit(core.Event{
+				Type: core.EvHistoryBatch, Network: c.opts.Network, Time: h.last,
+				Buffer: h.target, Count: h.count,
+			})
+		}
 		if b := c.batches[ref]; b != nil {
 			delete(c.batches, ref)
 			c.finishBatch(gc, b)

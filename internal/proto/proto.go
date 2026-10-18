@@ -45,6 +45,9 @@ const (
 	TMissedFetch  = "missed:fetch"   // c2s — request the highlights missed since last read (digest)
 	TNetAdd       = "net:add"        // c2s
 	TNetEdit      = "net:edit"       // c2s
+	TBNetAdd      = "bnet:add"       // c2s — add a network on a soju control connection
+	TBNetDel      = "bnet:del"       // c2s — remove one
+	TBNetOpen     = "bnet:open"      // c2s — create a stugan network bound to one
 	TNetConnect   = "net:connect"    // c2s
 	TList         = "list"           // c2s
 	TPluginAction = "plugin:action"  // c2s — manage or install a plugin
@@ -164,6 +167,40 @@ type NetworkDTO struct {
 	// Friends is the network's MONITOR list with live presence, for the sidebar
 	// friends section. Omitted when the network has no friends.
 	Friends []FriendDTO `json:"friends,omitempty"`
+	// BouncerNetworks lists the upstream networks a soju control connection
+	// manages (soju.im/bouncer-networks). Omitted for any other connection.
+	BouncerNetworks []BouncerNetworkDTO `json:"bouncer_networks,omitempty"`
+}
+
+// BouncerNetworkDTO is one network a bouncer manages.
+type BouncerNetworkDTO struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Host  string `json:"host"`
+	Port  int    `json:"port,omitempty"`
+	TLS   bool   `json:"tls"`
+	Nick  string `json:"nick,omitempty"`
+	State string `json:"state,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+// BNetAdd is a client→server request to add a network on a bouncer control
+// connection. Pass is the upstream password; it is write-only.
+type BNetAdd struct {
+	Network string `json:"network"`
+	Name    string `json:"name,omitempty"`
+	Host    string `json:"host"`
+	Port    int    `json:"port,omitempty"`
+	TLS     bool   `json:"tls"`
+	Nick    string `json:"nick,omitempty"`
+	Pass    string `json:"pass,omitempty"`
+}
+
+// BNetRef names one of a control connection's bouncer networks, for bnet:del
+// and bnet:open.
+type BNetRef struct {
+	Network string `json:"network"`
+	ID      string `json:"id"`
 }
 
 // FriendDTO is one monitored nick and whether it is currently online.
@@ -329,6 +366,7 @@ type NetAdd struct {
 	ServerPass   string   `json:"server_pass,omitempty"`
 	Perform      []string `json:"perform,omitempty"`
 	SASLExternal bool     `json:"sasl_external,omitempty"`
+	SASLScram    bool     `json:"sasl_scram,omitempty"`
 	CertPEM      string   `json:"cert_pem,omitempty"`
 	Channels     []string `json:"channels,omitempty"`
 }
@@ -452,6 +490,7 @@ type NetConfig struct {
 	ServerPass   string   `json:"server_pass"`
 	Perform      []string `json:"perform"`
 	SASLExternal bool     `json:"sasl_external"`
+	SASLScram    bool     `json:"sasl_scram"`
 	CertPEM      string   `json:"cert_pem"`
 	Channels     []string `json:"channels"`
 }

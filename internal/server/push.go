@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 
@@ -201,11 +202,20 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// staleNotify is how old a line may be and still ring the user. Anything
+// older is a replay (chathistory catch-up, a bouncer's playback), not news: a
+// long absence would otherwise fire a push per replayed mention. It still
+// counts as unread and shows in the missed-highlights digest.
+const staleNotify = 15 * time.Minute
+
 // maybePush sends a push notification for a highlight if the user is away
 // (no visible browser tab for that user). Background tabs remain connected
 // for history/state sync but no longer suppress notifications.
 func (s *Server) maybePush(user string, m core.Message) {
 	if s.push == nil || m.Self {
+		return
+	}
+	if !m.Time.IsZero() && time.Since(m.Time) > staleNotify {
 		return
 	}
 	// Notify on highlights and on direct messages (queries): a DM is

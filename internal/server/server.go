@@ -741,6 +741,25 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 				return c.tenant.Engine.UpdateNetwork(netConfigParams(d, existing))
 			})
 
+	case proto.TBNetAdd:
+		reqHandle(c, env, "bnet:add requires network and host",
+			func(d proto.BNetAdd) bool { return d.Network != "" && d.Host != "" },
+			func(d proto.BNetAdd) error {
+				return c.tenant.Engine.BouncerAdd(d.Network, core.BouncerNetwork{
+					Name: d.Name, Host: d.Host, Port: d.Port, TLS: d.TLS, Nick: d.Nick,
+				}, d.Pass)
+			})
+
+	case proto.TBNetDel:
+		reqHandle(c, env, "bnet:del requires network and id",
+			func(d proto.BNetRef) bool { return d.Network != "" && d.ID != "" },
+			func(d proto.BNetRef) error { return c.tenant.Engine.BouncerDelete(d.Network, d.ID) })
+
+	case proto.TBNetOpen:
+		reqHandle(c, env, "bnet:open requires network and id",
+			func(d proto.BNetRef) bool { return d.Network != "" && d.ID != "" },
+			func(d proto.BNetRef) error { return c.tenant.Engine.BouncerOpen(d.Network, d.ID) })
+
 	case proto.TPluginList:
 		s.reply(c, env.ID, proto.TPluginList, proto.PluginListResp{
 			Plugins: toPluginInfos(c.tenant.Engine.Plugins()),

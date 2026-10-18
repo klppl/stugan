@@ -37,6 +37,9 @@ export const T = {
   MissedFetch: "missed:fetch",
   NetAdd: "net:add",
   NetEdit: "net:edit",
+  BNetAdd: "bnet:add",
+  BNetDel: "bnet:del",
+  BNetOpen: "bnet:open",
   NetConnect: "net:connect",
   List: "list",
   PluginAction: "plugin:action",
@@ -177,6 +180,39 @@ export interface NetworkDTO {
   caps?: string[];
   channels: ChannelDTO[];
   friends?: FriendDTO[];
+  // Networks a soju control connection manages (soju.im/bouncer-networks).
+  bouncer_networks?: BouncerNetworkDTO[];
+}
+
+// BouncerNetworkDTO is one network a bouncer manages.
+export interface BouncerNetworkDTO {
+  id: string;
+  name: string;
+  host: string;
+  port?: number;
+  tls: boolean;
+  nick?: string;
+  state?: string;
+  error?: string;
+}
+
+// BNetAdd (c2s) adds a network on a bouncer control connection. pass is
+// write-only.
+export interface BNetAdd {
+  network: string;
+  name?: string;
+  host: string;
+  port?: number;
+  tls: boolean;
+  nick?: string;
+  pass?: string;
+}
+
+// BNetRef (c2s) names one of a control connection's bouncer networks, for
+// bnet:del and bnet:open.
+export interface BNetRef {
+  network: string;
+  id: string;
 }
 
 // FriendDTO is one monitored nick and whether it is currently online.
@@ -325,6 +361,7 @@ export interface NetAdd {
   server_pass?: string;
   perform?: string[];
   sasl_external?: boolean;
+  sasl_scram?: boolean;
   cert_pem?: string;
   channels?: string[];
 }
@@ -407,6 +444,7 @@ export interface NetConfig {
   server_pass: string;
   perform: string[];
   sasl_external: boolean;
+  sasl_scram: boolean;
   cert_pem: string;
   channels: string[];
 }

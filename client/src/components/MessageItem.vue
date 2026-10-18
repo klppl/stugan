@@ -109,7 +109,7 @@ function time(iso: string): string {
 
 // Membership churn (join/part/quit/nick) and true system notices both render
 // as a dim "— text" line; only privmsg/notice/action carry a sender + body.
-const EVENT_KINDS = ["join", "part", "quit", "nick"];
+const EVENT_KINDS = ["join", "part", "quit", "nick", "chghost", "setname"];
 // A plugin's command reply, printed into its ZNC-style "*name" window. It
 // renders like a chat line (so links stay clickable) but under a bouncer
 // pseudo-nick that is plainly not a person and carries no nick menu.

@@ -625,6 +625,27 @@ func (s *Store) MarkRead(ctx context.Context, network, buffer string, ts time.Ti
 	return err
 }
 
+// LastChatTime returns the timestamp of the newest stored conversational line
+// (privmsg/notice/action) in a buffer, or the zero time if there is none.
+// Local system lines are deliberately ignored: they are stamped at reconnect
+// time, after any messages missed while offline, so counting them would hide
+// the very gap a chathistory catch-up exists to fill.
+func (s *Store) LastChatTime(ctx context.Context, network, buffer string) (time.Time, error) {
+	s.flush() // see every line queued before this call
+	var ts sql.NullInt64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT MAX(ts) FROM messages
+		 WHERE network = ? AND buffer_fold = ? AND kind IN ('privmsg', 'notice', 'action')`,
+		network, core.FoldIRC(buffer)).Scan(&ts)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("last chat time: %w", err)
+	}
+	if !ts.Valid {
+		return time.Time{}, nil
+	}
+	return time.UnixMilli(ts.Int64), nil
+}
+
 // ReadMarker satisfies core.Sink, advancing the read marker for a buffer.
 func (s *Store) ReadMarker(network, buffer string, ts time.Time) {
 	_ = s.MarkRead(context.Background(), network, buffer, ts)

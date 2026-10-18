@@ -43,6 +43,7 @@ HTTP endpoints (auth, uploads, previews, push). It imports `core`, `proto`, and
 | `complete:req` | `Complete` → plugin `hook_completion` (async) |
 | `net:add` | `AddNetworkLive` |
 | `net:edit` | `UpdateNetwork` (merged over the existing `NetworkConfig`) |
+| `bnet:add` / `bnet:del` / `bnet:open` | `BouncerAdd` / `BouncerDelete` / `BouncerOpen` |
 | `net:remove` | `RemoveNetwork` |
 | `net:connect` | `SetConnected` |
 | `net:info` | replies `net:info` with `NetworkConfig` |

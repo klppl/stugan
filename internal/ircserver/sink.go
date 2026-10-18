@@ -114,6 +114,8 @@ func (sess *Session) formatSinkMessage(m core.Message) []string {
 		return []string{FormatLine("", prefix, "NICK", m.Text)}
 	case core.MsgTopic:
 		return []string{FormatLine("", prefix, "TOPIC", m.Buffer, m.Text)}
+	case core.MsgChghost, core.MsgSetname:
+		return nil // downstream clients see their own upstream view of these
 	}
 
 	var bodies []string

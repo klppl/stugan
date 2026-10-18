@@ -64,6 +64,9 @@ lowercase. `c2s` = client→server, `s2c` = server→client.
 | `missed:fetch`  | (none)         | request the highlights missed since the read markers (digest body) |
 | `net:add`       | `NetAdd`       | add + connect a network |
 | `net:edit`      | `NetConfig`    | apply settings changes to a network |
+| `bnet:add`      | `BNetAdd`      | add a network on a soju control connection |
+| `bnet:del`      | `BNetRef`      | remove one of a soju control connection's networks |
+| `bnet:open`     | `BNetRef`      | create a stugan network bound to one (`user/network` login) |
 | `net:connect`   | `NetConnect`   | connect/disconnect a network |
 | `net:info`      | (ref)          | request a network's full config |
 | `list`          | `ListReq`      | run a channel-browser `LIST` (optional mask in `query`); results arrive as `list:result` |
@@ -152,7 +155,7 @@ type SearchResp struct { Query string; Results []MessageDTO }
 type NetAdd struct {
     Name, Addr, Nick, User, Realname string
     SASLUser, SASLPass, ServerPass, Channels, Perform, CertPEM string
-    TLS, SASLExternal bool
+    TLS, SASLExternal, SASLScram bool
 }
 type NetConnect struct { Network string; Connect bool }
 type ListReq    struct { Network, Query string }   // Query: optional LIST mask

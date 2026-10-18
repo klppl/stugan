@@ -268,6 +268,10 @@ func registrationFingerprint(o Options, addrs []string) string {
 		o.User, o.Realname, o.SASLUser, o.SASLPass, o.ServerPass,
 		strconv.FormatBool(o.SASLExternal), o.CertPEM,
 	}
+	// Appended only when set, so every existing fingerprint stays valid.
+	if o.SASLScram && !o.SASLExternal && o.SASLUser != "" {
+		parts = append(parts, "scram")
+	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:])
 }

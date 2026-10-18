@@ -947,3 +947,26 @@ func openFile(t *testing.T, path string) *Store {
 	t.Cleanup(func() { s.Close() })
 	return s
 }
+
+func TestLastChatTime(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	t0 := time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC)
+
+	if got, err := s.LastChatTime(ctx, "n", "#c"); err != nil || !got.IsZero() {
+		t.Fatalf("empty buffer: %v, %v", got, err)
+	}
+	s.Print(msg("n", "#c", "a", "old", core.MsgPrivmsg, t0))
+	s.Print(msg("n", "#c", "b", "newer", core.MsgAction, t0.Add(time.Hour)))
+	// Membership churn and local system lines are stamped after the gap and
+	// must not count as the newest conversation.
+	s.Print(msg("n", "#c", "c", "joined", core.MsgJoin, t0.Add(5*time.Hour)))
+	s.Print(msg("n", "#c", "", "reconnected", core.MsgSystem, t0.Add(6*time.Hour)))
+	s.Print(msg("n", "#other", "d", "elsewhere", core.MsgPrivmsg, t0.Add(9*time.Hour)))
+	s.Print(msg("m", "#c", "e", "other network", core.MsgPrivmsg, t0.Add(9*time.Hour)))
+
+	got, err := s.LastChatTime(ctx, "n", "#C") // folded lookup
+	if err != nil || !got.Equal(t0.Add(time.Hour)) {
+		t.Fatalf("LastChatTime = %v, %v; want %v", got, err, t0.Add(time.Hour))
+	}
+}

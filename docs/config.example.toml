@@ -91,6 +91,10 @@ connect  = true
 #   "/join #private secretkey",         # join keyed channels, etc.
 # ]
 #
+# SASL SCRAM-SHA-256: authenticate without ever sending the password.
+# Needs sasl_user/sasl_pass, and a server that offers the mechanism.
+# sasl_scram = true
+#
 # CertFP / SASL EXTERNAL: present a client certificate and authenticate with
 # it instead of a password. cert_file is a PEM with the certificate and the
 # private key concatenated.

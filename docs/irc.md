@@ -32,6 +32,13 @@ the requested caps. Inbound girc callbacks are normalized and pushed to the
   and an explicit `ServerName` (girc needs it set).
 - **SASL PLAIN**: a non-empty `SASLUser`/`SASLPass` configures
   `girc.SASLPlain`.
+- **SASL SCRAM-SHA-256**: `SASLScram = true` (with `SASLUser`/`SASLPass`)
+  uses our own `saslScram` (`internal/irc/scram.go`, a `girc.SASLMech` — girc
+  has none). The password never crosses the wire and the server's signature is
+  verified, so an impostor server fails the exchange. State is per attempt and
+  reset on every (re)connect. A server that doesn't list the mechanism answers
+  `904`, which surfaces as the usual "authentication failed" notice — use PLAIN
+  there. `SASLExternal` takes precedence over both.
 - **SASL EXTERNAL / CertFP**: `SASLExternal = true` uses `girc.SASLExternal`
   and presents a client certificate. `CertPEM` is a PEM bundle with the
   certificate **and** private key concatenated, loaded via
@@ -44,8 +51,9 @@ The baseline girc enables, plus stugan's additions via `SupportedCaps`, cover:
 `extended-join`, `account-tag`, `away-notify`, `multi-prefix`,
 `userhost-in-names`, `chghost`, `setname`, `invite-notify`, `labeled-response`,
 `standard-replies`, `draft/chathistory` (and the ratified `chathistory`),
-`draft/message-redaction`, `draft/multiline`, and `draft/read-marker` /
-`read-marker`. The
+`draft/message-redaction`, `draft/multiline`, `draft/read-marker` /
+`read-marker`, and soju's `soju.im/bouncer-networks` (+`-notify`; see
+[ircv3.md](ircv3.md)). The
 negotiated set is reported per-network via `Caps()` → `NetworkDTO.Caps`, so the
 client can gate cap-dependent UI.
 

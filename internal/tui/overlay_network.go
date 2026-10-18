@@ -146,6 +146,7 @@ func newNetFormOverlay(m *model, editID string) *netFormOverlay {
 		{label: "TLS", val: p.TLS},
 		{label: "Allow self-signed (insecure)", val: p.Insecure},
 		{label: "SASL EXTERNAL", val: p.SASLExternal},
+		{label: "SASL SCRAM", val: p.SASLScram},
 	}
 	f.setFocus(0)
 	return f
@@ -213,6 +214,7 @@ func (f *netFormOverlay) save(m *model) (overlay, tea.Cmd) {
 	p.TLS = f.bools[0].val
 	p.Insecure = f.bools[1].val
 	p.SASLExternal = f.bools[2].val
+	p.SASLScram = f.bools[3].val
 
 	var err error
 	if f.editID == "" {

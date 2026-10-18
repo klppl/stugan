@@ -11,7 +11,7 @@ import (
 // tells the server another chunk follows.
 const saslChunk = 400
 
-// eventSender is the part of *girc.Client saslPlain needs, so the chunking can
+// eventSender is the part of *girc.Client the SASL mechs need, so the chunking can
 // be tested without a server.
 type eventSender interface {
 	Send(*girc.Event)
@@ -54,11 +54,16 @@ func (s *saslPlain) Encode(params []string) string {
 	if len(params) != 1 || params[0] != "+" {
 		return ""
 	}
-	payload := base64.StdEncoding.EncodeToString(
-		[]byte("\x00" + s.user + "\x00" + s.pass))
+	return sendChunked(s.client, base64.StdEncoding.EncodeToString(
+		[]byte("\x00"+s.user+"\x00"+s.pass)))
+}
 
+// sendChunked writes every AUTHENTICATE chunk of payload but the last, which
+// it returns for girc to write (see saslPlain for why girc's own chunker is
+// bypassed).
+func sendChunked(client eventSender, payload string) string {
 	for len(payload) > saslChunk {
-		s.client.Send(&girc.Event{
+		client.Send(&girc.Event{
 			Command:   girc.AUTHENTICATE,
 			Params:    []string{payload[:saslChunk]},
 			Sensitive: true,

@@ -357,6 +357,50 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 			Nick: from, Account: account,
 		}, true
 
+	case girc.CAP_CHGHOST:
+		// chghost: <new user> <new host>.
+		if len(e.Params) != 2 {
+			return core.Event{}, false
+		}
+		return core.Event{
+			Type: core.EvChgHost, Network: network, Time: when,
+			Nick: from, Text: e.Params[0] + "@" + e.Params[1],
+		}, true
+
+	case "BOUNCER":
+		// BOUNCER NETWORK <id> <attrs|*>; "*" means the network was deleted.
+		// Replies to our own ADDNETWORK/DELNETWORK are not rows.
+		if len(e.Params) < 3 || !strings.EqualFold(e.Params[0], "NETWORK") {
+			return core.Event{}, false
+		}
+		id := e.Params[1]
+		if e.Params[2] == "*" {
+			return core.Event{Type: core.EvBouncerNetwork, Network: network, Time: when, Target: id}, true
+		}
+		b := core.ParseBouncerAttrs(id, e.Params[2])
+		return core.Event{Type: core.EvBouncerNetwork, Network: network, Time: when, Bouncer: &b}, true
+
+	case "CHATHISTORY":
+		// Only the TARGETS reply comes back as a CHATHISTORY line:
+		// CHATHISTORY TARGETS <target> <timestamp>.
+		if len(e.Params) < 3 || !strings.EqualFold(e.Params[0], "TARGETS") {
+			return core.Event{}, false
+		}
+		ts, err := time.Parse(time.RFC3339Nano, strings.TrimPrefix(e.Params[2], "timestamp="))
+		if err != nil {
+			return core.Event{}, false
+		}
+		return core.Event{
+			Type: core.EvHistoryTarget, Network: network, Time: ts,
+			Buffer: e.Params[1],
+		}, true
+
+	case "SETNAME":
+		return core.Event{
+			Type: core.EvSetName, Network: network, Time: when,
+			Nick: from, Text: e.Last(),
+		}, true
+
 	case girc.INVITE:
 		// :inviter INVITE <target> <channel> — target is us, or (with
 		// invite-notify) another user whose invite ops get to see.

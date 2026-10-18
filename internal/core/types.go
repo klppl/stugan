@@ -1,6 +1,9 @@
 package core
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // ConnState is a network's connection lifecycle state.
 type ConnState string
@@ -32,6 +35,10 @@ const (
 	MsgPart    MsgKind = "part"
 	MsgQuit    MsgKind = "quit"
 	MsgNick    MsgKind = "nick"
+	// MsgChghost / MsgSetname are IRCv3 chghost / setname notices: membership
+	// churn like MsgNick, so the client folds them with joins and parts.
+	MsgChghost MsgKind = "chghost"
+	MsgSetname MsgKind = "setname"
 	MsgTopic   MsgKind = "topic"
 	MsgSystem  MsgKind = "system"
 )
@@ -97,6 +104,7 @@ func (n *Network) clone() *Network {
 			nc.MonitorOnline[k] = v
 		}
 	}
+	nc.Bouncer = slices.Clone(n.Bouncer)
 	return nc
 }
 
@@ -122,6 +130,9 @@ type Network struct {
 	// the map is offline/unknown until the server reports it (730/731). Rebuilt
 	// each connection, so not persisted.
 	MonitorOnline map[string]bool
+	// Bouncer lists the upstream networks a bouncer (soju) manages for this
+	// connection, when it is a control connection. Rebuilt each connection.
+	Bouncer []BouncerNetwork
 }
 
 func (n *Network) initByFold() {

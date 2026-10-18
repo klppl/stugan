@@ -759,3 +759,113 @@ func TestChannelSettingFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestToEventChghostSetname(t *testing.T) {
+	ev, ok := toEvent("n", girc.ParseEvent(":alice!u@h CHGHOST newuser new.host"), "me")
+	if !ok || ev.Type != core.EvChgHost || ev.Nick != "alice" || ev.Text != "newuser@new.host" {
+		t.Fatalf("chghost = %+v ok=%v", ev, ok)
+	}
+	if _, ok := toEvent("n", girc.ParseEvent(":alice!u@h CHGHOST onlyone"), "me"); ok {
+		t.Error("malformed chghost accepted")
+	}
+	ev, ok = toEvent("n", girc.ParseEvent(":alice!u@h SETNAME :Alice Liddell"), "me")
+	if !ok || ev.Type != core.EvSetName || ev.Nick != "alice" || ev.Text != "Alice Liddell" {
+		t.Fatalf("setname = %+v ok=%v", ev, ok)
+	}
+}
+
+func TestChatHistoryBatch(t *testing.T) {
+	h := &recordHandler{}
+	c, err := New(Options{Network: "n", Addr: "a:6667", Nick: "me"}, h)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	line := func(s string) *girc.Event { return girc.ParseEvent(s) }
+
+	c.handleBatch(nil, line(":srv BATCH +h1 chathistory #c"))
+	// Messages in the batch are counted; the newest time is remembered.
+	for _, s := range []string{
+		"@batch=h1;time=2024-05-01T10:00:00.000Z :a!u@h PRIVMSG #c :one",
+		"@batch=h1;time=2024-05-01T10:00:02.000Z :a!u@h PRIVMSG #c :three",
+		"@batch=h1;time=2024-05-01T10:00:01.000Z :a!u@h PRIVMSG #c :two",
+	} {
+		e := line(s)
+		ev, ok := toEvent("n", e, "me")
+		if !ok || !c.filterHistory(e, &ev) {
+			t.Fatalf("message %q filtered", s)
+		}
+	}
+	// A replayed membership event must not reach the live member list.
+	e := line("@batch=h1;time=2024-05-01T10:00:03.000Z :a!u@h JOIN #c")
+	ev, _ := toEvent("n", e, "me")
+	if c.filterHistory(e, &ev) {
+		t.Error("replayed JOIN was not dropped")
+	}
+	// Traffic outside a history batch is untouched.
+	e = line(":b!u@h JOIN #c")
+	ev, _ = toEvent("n", e, "me")
+	if !c.filterHistory(e, &ev) {
+		t.Error("live JOIN was dropped")
+	}
+
+	c.handleBatch(nil, line(":srv BATCH -h1"))
+	if len(h.evs) != 1 {
+		t.Fatalf("events = %+v", h.evs)
+	}
+	end := h.evs[0]
+	want := time.Date(2024, 5, 1, 10, 0, 2, 0, time.UTC)
+	if end.Type != core.EvHistoryBatch || end.Buffer != "#c" || end.Count != 3 || !end.Time.Equal(want) {
+		t.Fatalf("batch end = %+v", end)
+	}
+
+	// The draft name works too, and an empty batch reports zero.
+	c.handleBatch(nil, line(":srv BATCH +h2 draft/chathistory bob"))
+	c.handleBatch(nil, line(":srv BATCH -h2"))
+	if end := h.evs[1]; end.Buffer != "bob" || end.Count != 0 || !end.Time.IsZero() {
+		t.Fatalf("empty batch end = %+v", end)
+	}
+}
+
+func TestToEventHistoryTargets(t *testing.T) {
+	ev, ok := toEvent("n", girc.ParseEvent(":srv CHATHISTORY TARGETS bob 2024-05-01T10:00:00.000Z"), "me")
+	if !ok || ev.Type != core.EvHistoryTarget || ev.Buffer != "bob" || !ev.Time.Equal(time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC)) {
+		t.Fatalf("targets row = %+v ok=%v", ev, ok)
+	}
+	for _, bad := range []string{
+		":srv CHATHISTORY TARGETS bob notatime",
+		":srv CHATHISTORY TARGETS bob",
+		":srv CHATHISTORY LATEST #c * 5",
+	} {
+		if _, ok := toEvent("n", girc.ParseEvent(bad), "me"); ok {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}
+
+func TestToEventBouncerNetwork(t *testing.T) {
+	ev, ok := toEvent("n", girc.ParseEvent(":srv BOUNCER NETWORK 4 name=libera;host=irc.libera.chat;tls=1;state=connected"), "me")
+	if !ok || ev.Type != core.EvBouncerNetwork || ev.Bouncer == nil ||
+		ev.Bouncer.ID != "4" || ev.Bouncer.Name != "libera" || !ev.Bouncer.TLS || ev.Bouncer.State != "connected" {
+		t.Fatalf("network row = %+v ok=%v", ev, ok)
+	}
+	ev, ok = toEvent("n", girc.ParseEvent(":srv BOUNCER NETWORK 4 *"), "me")
+	if !ok || ev.Type != core.EvBouncerNetwork || ev.Bouncer != nil || ev.Target != "4" {
+		t.Fatalf("delete row = %+v ok=%v", ev, ok)
+	}
+	for _, bad := range []string{":srv BOUNCER ADDNETWORK 5", ":srv BOUNCER NETWORK 4"} {
+		if _, ok := toEvent("n", girc.ParseEvent(bad), "me"); ok {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+
+	// A LISTNETWORKS reply opens with a reset so deleted networks drop out.
+	h := &recordHandler{}
+	c, err := New(Options{Network: "n", Addr: "a:6667", Nick: "me"}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.handleBatch(nil, girc.ParseEvent(":srv BATCH +b1 soju.im/bouncer-networks"))
+	if len(h.evs) != 1 || h.evs[0].Type != core.EvBouncerNetwork || h.evs[0].Bouncer != nil || h.evs[0].Target != "" {
+		t.Fatalf("reset = %+v", h.evs)
+	}
+}

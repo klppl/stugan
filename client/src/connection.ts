@@ -20,6 +20,9 @@ import {
   type SearchReq,
   type SearchResp,
   type MissedResp,
+  type BNetAdd,
+  type BouncerNetworkDTO,
+  type BNetRef,
   type NetAdd,
   type NetRemove,
   type NetConnect,
@@ -108,6 +111,7 @@ export interface Network {
   caps: string[]; // negotiated IRCv3 caps (gates reaction/redaction UI)
   buffers: Buffer[];
   friends: FriendDTO[]; // MONITOR list with live presence (sidebar friends)
+  bouncer_networks?: BouncerNetworkDTO[]; // soju control connection: the networks it manages
 }
 
 export type View = "chat" | "mentions" | "search" | "settings";
@@ -1025,6 +1029,7 @@ export class Connection {
       net.state = dto.state;
       net.caps = dto.caps ?? [];
     }
+    net.bouncer_networks = dto.bouncer_networks ?? [];
     // Friends (MONITOR): adopt the new list + presence. On a live update (not
     // the init snapshot), toast any friend that just transitioned to online.
     const wasOnline = new Map(net.friends.map((f) => [foldTarget(f.nick), f.online]));
@@ -1183,7 +1188,10 @@ export class Connection {
     // Desktop-notify on highlights and on direct messages (queries). DMs stay
     // out of the mentions view above but are still attention-worthy; this
     // mirrors the server-side push gate in maybePush.
-    if (!m.self && (m.highlight || (!muted && buf.kind === "query" && CONVERSATIONAL.has(m.kind)))) {
+    // Skip replays (chathistory catch-up, bouncer playback): same cutoff as the
+    // server's push gate.
+    const replayed = Date.now() - Date.parse(m.time) > 15 * 60 * 1000;
+    if (!replayed && !m.self && (m.highlight || (!muted && buf.kind === "query" && CONVERSATIONAL.has(m.kind)))) {
       this.desktopNotify(m);
     }
     if (!this.store.active) this.store.active = { network: net.id, buffer: buf.name };
@@ -1861,6 +1869,18 @@ export class Connection {
   // editNetwork applies edited settings; the server reconnects the network.
   editNetwork(cfg: NetConfig) {
     this.sendFrame<NetConfig>(T.NetEdit, cfg);
+  }
+
+  // bouncerAdd / bouncerRemove / bouncerOpen manage the networks of a soju
+  // control connection. bouncerOpen creates a stugan network bound to one.
+  bouncerAdd(params: BNetAdd) {
+    this.sendFrame<BNetAdd>(T.BNetAdd, params);
+  }
+  bouncerRemove(network: string, id: string) {
+    this.sendFrame<BNetRef>(T.BNetDel, { network, id });
+  }
+  bouncerOpen(network: string, id: string) {
+    this.sendFrame<BNetRef>(T.BNetOpen, { network, id });
   }
 
   // removeNetworkLocal drops a network from the store on a net:remove frame,

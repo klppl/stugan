@@ -1892,3 +1892,36 @@ func TestNetworkSnapshotsCoalesce(t *testing.T) {
 		t.Fatalf("last snapshot has %d members, want 201", got)
 	}
 }
+
+func TestApplyChghostSetname(t *testing.T) {
+	e, sink := newTestEngine(t)
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Buffer: "#a"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "alice", Buffer: "#b"})
+	e.apply(Event{Type: EvJoin, Network: "net", Nick: "bob", Buffer: "#b"})
+	sink.msgs = nil
+
+	e.apply(Event{Type: EvChgHost, Network: "net", Nick: "ALICE", Text: "u@cloak"})
+	e.apply(Event{Type: EvSetName, Network: "net", Nick: "bob", Text: "Bob B"})
+
+	var got []string
+	for _, m := range sink.msgs {
+		got = append(got, string(m.Kind)+" "+m.Buffer+" "+m.Text)
+	}
+	want := []string{
+		"chghost #a alice changed host to u@cloak",
+		"chghost #b alice changed host to u@cloak",
+		`setname #b bob changed their name to "Bob B"`,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("lines = %q, want %q", got, want)
+	}
+	for _, w := range want {
+		found := false
+		for _, g := range got {
+			found = found || g == w
+		}
+		if !found {
+			t.Errorf("missing %q in %q", w, got)
+		}
+	}
+}

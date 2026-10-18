@@ -173,7 +173,7 @@ function dayKey(iso: string): string {
 // A run of consecutive join/part/quit/nick lines collapses into one foldable
 // row (when settings.foldEvents is on) so busy channels don't drown in churn.
 // A day boundary or any real message closes an open run.
-const EVENT_KINDS = ["join", "part", "quit", "nick"];
+const EVENT_KINDS = ["join", "part", "quit", "nick", "chghost", "setname"];
 // cont marks a message that continues the previous one's group: same sender,
 // a few minutes apart, nothing in between. Phones use it to drop the repeated
 // nick + timestamp header (see .message.cont in style.css).
@@ -270,7 +270,7 @@ function eventSummary(events: MessageDTO[]): string {
   // Name the nicks (deduped, in order of appearance) so a quiet fold still says
   // who came and went; past NAME_LIMIT the rest collapse into "+N more".
   const NAME_LIMIT = 4;
-  const names: Record<string, string[]> = { join: [], part: [], quit: [], nick: [] };
+  const names: Record<string, string[]> = { join: [], part: [], quit: [], nick: [], chghost: [], setname: [] };
   for (const e of events) {
     let label = e.from;
     if (e.kind === "nick") {
@@ -287,7 +287,7 @@ function eventSummary(events: MessageDTO[]): string {
     const more = ns.length > NAME_LIMIT ? ` +${ns.length - NAME_LIMIT} more` : "";
     return `${shown}${more} ${verb}`;
   };
-  return [list("join", "joined"), list("part", "left"), list("quit", "quit"), list("nick", "changed nick")]
+  return [list("join", "joined"), list("part", "left"), list("quit", "quit"), list("nick", "changed nick"), list("chghost", "changed host"), list("setname", "changed name")]
     .filter(Boolean)
     .join(" · ");
 }
