@@ -237,6 +237,9 @@ let isSyncingRemote = false;
 
 export function loadSettingsPayload(s: Record<string, unknown>) {
   if (!s || typeof s !== "object") return;
+  // A local edit is still waiting to be sent; applying a remote snapshot now
+  // would revert it.
+  if (syncTimer) return;
   isSyncingRemote = true;
   try {
     if (typeof s.theme === "string") settings.theme = s.theme;
@@ -279,7 +282,10 @@ watch(
       }, 500);
     }
   },
-  { deep: true, immediate: true },
+  // sync: the default (pre) flush runs after loadSettingsPayload has already
+  // cleared isSyncingRemote, so a remote update was re-sent as a local edit and
+  // two devices ping-ponged each other's settings.
+  { deep: true, immediate: true, flush: "sync" },
 );
 
 // themeNames lists every selectable theme (built-in + installed).

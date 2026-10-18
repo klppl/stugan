@@ -842,7 +842,9 @@ func (s *Server) route(ctx context.Context, c *client, env proto.Envelope) {
 					}
 				}
 			}
-			s.broadcast(c.user, proto.TSettings, d)
+			// Not back to the sender: it already has this state, and an echo can
+			// overwrite a newer toggle made while the frame was in flight.
+			s.broadcastExcept(c.user, c, proto.TSettings, d)
 			return nil
 		})
 
