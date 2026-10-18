@@ -2,7 +2,7 @@
 
 The `.github/workflows/docker.yml` GitHub Action builds a `linux/amd64` image
 and publishes it to the GitHub Container Registry. It runs on demand (Actions →
-Docker → *Run workflow*), not on every push. This guide covers pulling that
+*Build stugan (main app)* → *Run workflow*), not on every push. This guide covers pulling that
 image onto a server and running it.
 
 ## The image
@@ -19,8 +19,8 @@ Tags produced by the workflow:
 | `main` | same builds, branch-named |
 | `v1.2.3`, `1.2` | a run on a `v*` git tag (semver) |
 | `sha-<short>` | every build, immutable — pin to this for reproducible deploys |
-| `previews` | the [stugan-previews](previews.md) image, from the separate *Docker (previews)* workflow |
-| `engine-1` | the [stugan-engine](engine.md) image, from the separate *Docker (engine)* workflow — moved only when the engine changes |
+| `previews` | the [stugan-previews](previews.md) image, from the separate *Build stugan-previews* workflow |
+| `engine-1` | the [stugan-engine](engine.md) image, from the separate *Build stugan-engine* workflow — moved only when the engine changes |
 
 To cut a versioned release, tag a commit, push it, and run the workflow on the
 tag:

@@ -1,4 +1,4 @@
-name: Docker (engine)
+name: Build stugan-engine
 
 # Publishes the stugan-engine image. Run it ONLY when the engine itself
 # changed (internal/engine, internal/engineproto, cmd/stugan-engine,

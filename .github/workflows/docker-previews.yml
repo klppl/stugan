@@ -1,4 +1,4 @@
-name: Docker (previews)
+name: Build stugan-previews
 
 # Publishes the stugan-previews image. Run it when the sidecar changed
 # (internal/previews, internal/previewproto, internal/safehttp,
