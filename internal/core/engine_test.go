@@ -449,6 +449,39 @@ func TestSendReactionRedactCapGated(t *testing.T) {
 	}
 }
 
+func TestSendReactionLocalEcho(t *testing.T) {
+	// Without echo-message the server never sends our reaction back, so the
+	// engine injects it locally; with echo-message it leaves that to the server.
+	for _, tc := range []struct {
+		caps []string
+		want int
+	}{
+		{[]string{"message-tags"}, 1},
+		{[]string{"message-tags", "echo-message"}, 0},
+	} {
+		sink := &captureSink{}
+		conn := &fakeConnector{caps: tc.caps}
+		e := New(Options{Sink: sink, Connector: conn})
+		if err := e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"}); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() { _ = e.Run(ctx) }()
+		e.SendReaction("n", "#go", "m1", "👍")
+		var got [][5]string
+		done := make(chan struct{})
+		e.Sync(func() { got = append(got, sink.reacts...); close(done) })
+		<-done
+		cancel()
+		if len(got) != tc.want {
+			t.Fatalf("caps %v: reacts = %+v, want %d", tc.caps, got, tc.want)
+		}
+		if tc.want == 1 && got[0] != [5]string{"n", "#go", "m1", "me", "👍"} {
+			t.Errorf("local echo = %+v", got[0])
+		}
+	}
+}
+
 func TestNeedsReconnect(t *testing.T) {
 	base := NetworkParams{ID: "n", Addr: "a:1", Nick: "me", Channels: []string{"#a"}}
 	// Live-applyable changes must not force a reconnect.

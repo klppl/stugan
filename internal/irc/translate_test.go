@@ -490,6 +490,11 @@ func TestToEventReact(t *testing.T) {
 	if ev, ok := toEvent("n", dm, "me"); !ok || ev.Buffer != "bob" {
 		t.Errorf("direct react buffer = %q ok=%v", ev.Buffer, ok)
 	}
+	// Our own echoed direct react stays in the other party's query.
+	own := girc.ParseEvent("@+draft/react=❤;+draft/reply=m1 :me!u@h TAGMSG bob")
+	if ev, ok := toEvent("n", own, "me"); !ok || ev.Buffer != "bob" || ev.Nick != "me" {
+		t.Errorf("own direct react = %+v ok=%v", ev, ok)
+	}
 }
 
 func TestToEventRedact(t *testing.T) {

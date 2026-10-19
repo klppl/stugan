@@ -1772,8 +1772,9 @@ func (e *Engine) SendTyping(network, buffer, state string) {
 
 // SendReaction sends an emoji reaction to a message (target msgid) in a
 // buffer as a +draft/react TAGMSG carrying +draft/reply, when the network
-// negotiated message-tags. The server echoes it back (if it broadcasts to
-// the reactor), which is how the sender's own reaction appears.
+// negotiated message-tags. With echo-message the server's echo is how the
+// sender's own reaction appears; without it we inject that echo locally, or
+// the reactor would never see their reaction land.
 func (e *Engine) SendReaction(network, buffer, target, reaction string) {
 	if target == "" || reaction == "" {
 		return
@@ -1782,7 +1783,20 @@ func (e *Engine) SendReaction(network, buffer, target, reaction string) {
 	if conn == nil {
 		return
 	}
-	_ = conn.SendRaw("@+draft/react=" + reaction + ";+draft/reply=" + target + " TAGMSG " + buffer)
+	if err := conn.SendRaw("@+draft/react=" + reaction + ";+draft/reply=" + target + " TAGMSG " + buffer); err != nil {
+		return
+	}
+	if e.echoMessage(network) {
+		return
+	}
+	nick := e.NetworkNick(network)
+	if nick == "" {
+		return
+	}
+	e.HandleEvent(Event{
+		Type: EvReact, Network: network, Time: time.Now(),
+		Nick: nick, Buffer: buffer, Target: target, Text: reaction,
+	})
 }
 
 // SendRedact redacts a message (target msgid) in a buffer via the

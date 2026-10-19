@@ -436,8 +436,10 @@ func toEvent(network string, e *girc.Event, self string) (core.Event, bool) {
 		}
 		target := e.Params[0]
 		buffer := target
-		if !isChannel(target) {
-			buffer = from // a direct TAGMSG → the sender's query
+		if !isChannel(target) && !(e.Echo || (self != "" && from == self)) {
+			// A direct TAGMSG → the sender's query; our own echoed one stays
+			// keyed by its target (the other party).
+			buffer = from
 		}
 		if react, ok := e.Tags.Get("+draft/react"); ok && react != "" {
 			msgid, _ := e.Tags.Get("+draft/reply")

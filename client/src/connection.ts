@@ -1766,7 +1766,8 @@ export class Connection {
   }
 
   // react sends an emoji reaction to a message (toggles on re-send). The
-  // server echoes it back, which is what updates the store.
+  // echo (the server's, or the engine's own without echo-message) is what
+  // updates the store.
   react(network: string, buffer: string, target: string, reaction: string) {
     this.sendFrame<React>(T.React, { network, buffer, target, reaction });
   }
