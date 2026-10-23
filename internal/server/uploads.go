@@ -743,6 +743,7 @@ func stripJPEG(data []byte) ([]byte, error) {
 	}
 	out := make([]byte, 0, len(data))
 	out = append(out, 0xFF, 0xD8) // SOI
+	orientation := 0              // EXIF orientation (1-8), 0 if absent
 	i := 2
 	for {
 		// A marker is 0xFF followed by a non-0xFF, non-0x00 byte; runs of
@@ -761,7 +762,7 @@ func stripJPEG(data []byte) ([]byte, error) {
 		switch {
 		case marker == 0xD9: // EOI: done; trailing bytes are dropped
 			out = append(out, 0xFF, marker)
-			return out, nil
+			return withOrientation(out, orientation), nil
 		case marker == 0xDA:
 			// SOS: copy its length-prefixed header, then the entropy-coded
 			// scan. Within the scan 0xFF is followed only by 0x00 (stuffing),
@@ -801,7 +802,8 @@ func stripJPEG(data []byte) ([]byte, error) {
 			}
 			out = append(out, data[start:i]...)
 			if i >= len(data) {
-				return out, nil // truncated scan; nothing trails it anyway
+				// truncated scan; nothing trails it anyway
+				return withOrientation(out, orientation), nil
 			}
 		case marker >= 0xD0 && marker <= 0xD7, marker == 0x01:
 			// Standalone markers (RSTn, TEM) carry no payload.
@@ -814,6 +816,9 @@ func stripJPEG(data []byte) ([]byte, error) {
 			if segLen < 2 || i+segLen > len(data) {
 				return nil, errBadImage
 			}
+			if marker == 0xE1 && orientation == 0 {
+				orientation = exifOrientation(data[i+2 : i+segLen])
+			}
 			drop := marker == 0xFE || (marker >= 0xE0 && marker <= 0xEF)
 			if !drop {
 				out = append(out, 0xFF, marker)
@@ -822,6 +827,65 @@ func stripJPEG(data []byte) ([]byte, error) {
 			i += segLen
 		}
 	}
+}
+
+// exifOrientation extracts the Orientation tag (1-8) from an APP1 payload, or
+// 0 if it is not EXIF or carries no valid orientation.
+func exifOrientation(seg []byte) int {
+	if len(seg) < 14 || string(seg[:6]) != "Exif\x00\x00" {
+		return 0
+	}
+	t := seg[6:]
+	var bo binary.ByteOrder
+	switch string(t[:2]) {
+	case "II":
+		bo = binary.LittleEndian
+	case "MM":
+		bo = binary.BigEndian
+	default:
+		return 0
+	}
+	ifd := int(bo.Uint32(t[4:]))
+	if ifd < 8 || ifd+2 > len(t) {
+		return 0
+	}
+	n := int(bo.Uint16(t[ifd:]))
+	for k := 0; k < n; k++ {
+		e := ifd + 2 + k*12
+		if e+12 > len(t) {
+			return 0
+		}
+		if bo.Uint16(t[e:]) == 0x0112 && bo.Uint16(t[e+2:]) == 3 {
+			if v := int(bo.Uint16(t[e+8:])); v >= 1 && v <= 8 {
+				return v
+			}
+			return 0
+		}
+	}
+	return 0
+}
+
+// withOrientation re-inserts a minimal EXIF APP1 segment holding only the
+// Orientation tag right after SOI. Stripping all EXIF would otherwise leave
+// phone photos (stored sensor-sideways with a rotate flag) displaying rotated.
+// The tag reveals nothing about the uploader.
+func withOrientation(jpeg []byte, orientation int) []byte {
+	if orientation < 2 || orientation > 8 { // 1 is the default; nothing to keep
+		return jpeg
+	}
+	seg := []byte{
+		0xFF, 0xE1, 0x00, 0x22, // APP1, length 34
+		'E', 'x', 'i', 'f', 0, 0,
+		'M', 'M', 0x00, 0x2A, 0, 0, 0, 8, // big-endian TIFF header, IFD0 at 8
+		0x00, 0x01, // one entry
+		0x01, 0x12, 0x00, 0x03, 0, 0, 0, 1, // Orientation, SHORT, count 1
+		0x00, byte(orientation), 0, 0, // value
+		0, 0, 0, 0, // no next IFD
+	}
+	out := make([]byte, 0, len(jpeg)+len(seg))
+	out = append(out, jpeg[:2]...)
+	out = append(out, seg...)
+	return append(out, jpeg[2:]...)
 }
 
 // pngMetaChunks are the ancillary PNG chunk types that carry no rendering

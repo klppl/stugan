@@ -712,3 +712,28 @@ func TestUploadDelete(t *testing.T) {
 		t.Errorf("got %d uploads in list after delete, want 0", len(list2))
 	}
 }
+
+func TestStripJPEGKeepsOrientation(t *testing.T) {
+	// Little-endian EXIF (as iPhones write) with Orientation=6 plus a GPS-ish blob.
+	exif := []byte("Exif\x00\x00II\x2A\x00\x08\x00\x00\x00\x01\x00\x12\x01\x03\x00\x01\x00\x00\x00\x06\x00\x00\x00\x00\x00\x00secretgps")
+	scan := []byte{0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x3F, 0x00, 0x12, 0x34}
+	var b bytes.Buffer
+	b.Write([]byte{0xFF, 0xD8})
+	b.Write(jpegSeg(0xE1, exif))
+	b.Write(scan)
+	b.Write([]byte{0xFF, 0xD9})
+
+	out, err := stripImageMetadata(b.Bytes())
+	if err != nil {
+		t.Fatalf("stripImageMetadata: %v", err)
+	}
+	if bytes.Contains(out, []byte("secretgps")) {
+		t.Error("EXIF payload survived stripping")
+	}
+	if got := exifOrientation(out[6:]); got != 6 {
+		t.Errorf("orientation = %d, want 6", got)
+	}
+	if !bytes.Contains(out, scan) {
+		t.Error("scan data was not preserved verbatim")
+	}
+}
