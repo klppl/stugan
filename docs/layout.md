@@ -147,6 +147,7 @@ config.Load → logging.New
   → for each effective user:
        open store (SQLite) at <data>/stugan.db
        install bundled scripts (fish, ignore, ai, webhooks) into <scripts>/
+         (first run only — when <scripts>/ doesn't exist yet)
        (if [engine] url: one enginelink.Link for the whole process, shared
         by every user's connector; ids are "<user>\x00<network>")
        build core.Engine{ user, connector, highlighter, aliases }

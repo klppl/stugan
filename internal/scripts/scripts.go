@@ -3,10 +3,9 @@
 // canonical copy of each bundled script lives next to this file; tests
 // and the runtime read from here, never from docs/.
 //
-// Add to Builtins as more plugins ship. Each entry installs to the user's
-// $STUGAN_HOME/scripts/<name> if (and only if) that file doesn't already
-// exist, so a user customising or deleting a bundled script keeps their
-// version across daemon restarts.
+// Builtins are copied into the user's $STUGAN_HOME/scripts/ only on first
+// run, when that directory doesn't exist yet. After that the directory is
+// the user's: edits and uninstalls stick across daemon restarts.
 package scripts
 
 import _ "embed"
@@ -24,7 +23,7 @@ var AI []byte
 var Webhooks []byte
 
 // Builtins maps a script filename to its embedded contents. The hub uses
-// this map to seed a user's scripts directory at startup.
+// this map to seed a new user's scripts directory.
 var Builtins = map[string][]byte{
 	"fish.lua":     Fish,
 	"ignore.lua":   Ignore,

@@ -25,23 +25,14 @@ import (
 	"github.com/klippelism/stugan/internal/tui"
 )
 
-// installBuiltinScripts copies any bundled scripts (currently just fish.lua
-// for FiSH Blowfish encryption) into the user's scripts directory on a
-// fresh install. Idempotent: an existing file is left alone, so a user who
-// edits or deletes a bundled script keeps their version across restarts.
+// installBuiltinScripts copies the bundled scripts (fish, ignore, ai,
+// webhooks) into a freshly created scripts directory. The caller only runs
+// it on first run — when the directory didn't exist yet — so a script the
+// user later uninstalls or deletes stays gone across restarts; anything
+// else comes from the plugin catalog.
 func installBuiltinScripts(scriptsDir string, log *slog.Logger) {
-	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
-		log.Warn("create scripts dir", "dir", scriptsDir, "err", err)
-		return
-	}
 	for name, body := range scripts.Builtins {
 		p := filepath.Join(scriptsDir, name)
-		if fi, err := os.Stat(p); err == nil && fi.Size() > 0 {
-			continue // user already has a non-empty script
-		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-			log.Warn("stat builtin script", "name", name, "err", err)
-			continue
-		}
 		if err := os.WriteFile(p, body, 0o644); err != nil {
 			log.Warn("install builtin script", "name", name, "err", err)
 			continue
@@ -164,12 +155,16 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 
 	for _, u := range cfg.EffectiveUsers() {
 		dataDir, scriptsDir := userDirs(cfg, u.Name)
+		_, statErr := os.Stat(scriptsDir)
+		freshScripts := errors.Is(statErr, os.ErrNotExist)
 		for _, d := range []string{dataDir, scriptsDir} {
 			if err := os.MkdirAll(d, 0o755); err != nil {
 				return nil, nil, fmt.Errorf("user %q dir %s: %w", u.Name, d, err)
 			}
 		}
-		installBuiltinScripts(scriptsDir, log.With("user", u.Name))
+		if freshScripts {
+			installBuiltinScripts(scriptsDir, log.With("user", u.Name))
+		}
 		db, err := store.Open(filepath.Join(dataDir, "stugan.db"), log)
 		if err != nil {
 			return nil, nil, fmt.Errorf("user %q store: %w", u.Name, err)

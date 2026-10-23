@@ -582,10 +582,10 @@ for the full plugin.
 
 **Bundled and auto-installed.** The daemon embeds fish.lua via `go:embed`
 (`internal/scripts/scripts.go`) and copies it to your scripts directory on
-first run when the file isn't there — so the right-click "Set encryption
-key…" affordance in the web UI just works without you copying anything by
-hand. Edits and deletions are preserved across restarts: a missing file is
-only re-installed if the script with that exact name doesn't exist.
+first run (when that directory doesn't exist yet) — so the right-click "Set
+encryption key…" affordance in the web UI just works without you copying
+anything by hand. After that the directory is yours: edits and uninstalls
+stick across restarts, and `/load fish` brings it back from the catalog.
 
 ### ai.lua — AI chat assistant & conversation summarizer
 
