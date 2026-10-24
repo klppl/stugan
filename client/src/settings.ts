@@ -267,14 +267,18 @@ let syncTimer: number | null = null;
 
 watch(
   settings,
-  (s) => {
+  (s, old) => {
     localStorage.setItem(KEY, JSON.stringify(s));
     applyTheme();
     // Set after applyTheme so the user's picked size wins over a custom theme
     // that also declares --font-size (parseTheme accepts any --variable).
     document.documentElement.style.setProperty("--font-size", s.fontSize + "px");
     document.documentElement.classList.toggle("no-self-tint", !s.tintOwnMessages);
-    if (!isSyncingRemote) {
+    // The immediate first run (old undefined) is the page loading, not an
+    // edit. Pushing it would make the pending timer swallow init's server
+    // settings, and a device with wiped localStorage (common for iOS PWAs)
+    // would reset every device to defaults.
+    if (old !== undefined && !isSyncingRemote) {
       if (syncTimer) clearTimeout(syncTimer);
       syncTimer = window.setTimeout(() => {
         syncTimer = null;
