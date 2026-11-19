@@ -783,7 +783,7 @@ func (s *Session) sendAttachBurst() {
 		tokens = append(tokens, fmt.Sprintf("BOUNCER_NETID=%s", s.networkID))
 	}
 	if s.hasCap(CapChatHistory) {
-		tokens = append(tokens, fmt.Sprintf("CHATHISTORY=%d", maxChatHistory), "MSGREFTYPES=timestamp")
+		tokens = append(tokens, fmt.Sprintf("CHATHISTORY=%d", maxChatHistory), "MSGREFTYPES=msgid,timestamp")
 	}
 	tokens = append(tokens, ":are supported by this server")
 	var isupportArgs []string

@@ -1270,3 +1270,180 @@ func (s *Store) Import(ctx context.Context, srcPath string, mode ImportMode) err
 
 	return nil
 }
+
+// historyPoint resolves a reference within its conversation. Timestamp references
+// compare times only; msgids additionally distinguish rows sharing a timestamp.
+func (s *Store) historyPoint(ctx context.Context, network, buffer, ref string) (float64, int64, error) {
+	if ref == "*" {
+		return 0, 0, nil
+	}
+	if strings.HasPrefix(ref, "timestamp=") {
+		t, err := time.Parse(time.RFC3339Nano, strings.TrimPrefix(ref, "timestamp="))
+		return float64(t.UnixMilli()) + float64(t.Nanosecond()%1000000)/1000000, 0, err
+	}
+	if strings.HasPrefix(ref, "msgid=") && len(ref) > 6 {
+		var ts int64
+		var id int64
+		err := s.db.QueryRowContext(ctx, `SELECT ts,id FROM messages WHERE network=? AND buffer_fold=? AND msgid=?`, network, core.FoldIRC(buffer), ref[6:]).Scan(&ts, &id)
+		return float64(ts), id, err
+	}
+	return 0, 0, fmt.Errorf("invalid history reference %q", ref)
+}
+
+// ChatHistory returns conversational history in deterministic (timestamp, rowid)
+// order. Filtering precedes LIMIT so events and empty lines do not consume it.
+func (s *Store) ChatHistory(ctx context.Context, network, buffer, command, ref1, ref2 string, limit int, includeSelf bool) ([]core.Message, error) {
+	s.flush()
+	if limit <= 0 {
+		return nil, fmt.Errorf("invalid limit")
+	}
+	a, ai, err := s.historyPoint(ctx, network, buffer, ref1)
+	if err != nil {
+		return nil, err
+	}
+	b, bi, err := s.historyPoint(ctx, network, buffer, ref2)
+	if ref2 != "" && err != nil {
+		return nil, err
+	}
+	base := `network=? AND buffer_fold=? AND kind IN ('privmsg','notice','action') AND text<>''`
+	args := []any{network, core.FoldIRC(buffer)}
+	if !includeSelf {
+		base += ` AND self=0`
+	}
+	boundary := func(op string, ts float64, id int64) (string, []any) {
+		if id != 0 {
+			return `(ts,id) ` + op + ` (?,?)`, []any{ts, id}
+		}
+		return `ts ` + op + ` ?`, []any{ts}
+	}
+	query := func(extra string, more []any, desc bool, n int) ([]core.Message, error) {
+		order := "ASC"
+		if desc {
+			order = "DESC"
+		}
+		q := `SELECT ` + msgCols + ` FROM messages WHERE ` + base
+		if extra != "" {
+			q += ` AND ` + extra
+		}
+		q += ` ORDER BY ts ` + order + `, id ` + order + ` LIMIT ?`
+		params := append(append(append([]any{}, args...), more...), n)
+		rows, err := s.db.QueryContext(ctx, q, params...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var out []core.Message
+		for rows.Next() {
+			m, _, err := scanMessage(rows)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, m)
+		}
+		if desc {
+			slices.Reverse(out)
+		}
+		return out, rows.Err()
+	}
+	switch command {
+	case "LATEST":
+		if ref1 == "*" {
+			return query("", nil, true, limit)
+		}
+		x, p := boundary(">", a, ai)
+		return query(x, p, true, limit)
+	case "BEFORE", "AFTER":
+		op := ">"
+		if command == "BEFORE" {
+			op = "<"
+		}
+		x, p := boundary(op, a, ai)
+		return query(x, p, command == "BEFORE", limit)
+	case "AROUND":
+		x, p := boundary("<=", a, ai)
+		older, err := query(x, p, true, (limit+1)/2)
+		if err != nil {
+			return nil, err
+		}
+		x, p = boundary(">", a, ai)
+		newer, err := query(x, p, false, limit-len(older))
+		if err != nil {
+			return nil, err
+		}
+		if len(older)+len(newer) < limit {
+			x, p = boundary("<=", a, ai)
+			older, err = query(x, p, true, limit-len(newer))
+		}
+		return append(older, newer...), err
+	case "BETWEEN":
+		reverse := ref1 != "*" && ref2 != "*" && (a > b || (a == b && ai > bi))
+		var clauses []string
+		var params []any
+		if ref1 != "*" {
+			op := ">"
+			if reverse {
+				op = "<"
+			}
+			x, p := boundary(op, a, ai)
+			clauses = append(clauses, x)
+			params = append(params, p...)
+		}
+		if ref2 != "*" {
+			op := "<"
+			if reverse {
+				op = ">"
+			}
+			x, p := boundary(op, b, bi)
+			clauses = append(clauses, x)
+			params = append(params, p...)
+		}
+		return query(strings.Join(clauses, " AND "), params, reverse, limit)
+	}
+	return nil, fmt.Errorf("invalid history command")
+}
+
+// ChatHistoryTargets selects by each conversation's actual latest chat time,
+// including archived channels and DMs absent from the engine snapshot.
+func (s *Store) ChatHistoryTargets(ctx context.Context, network, ref1, ref2 string, limit int) (map[string]time.Time, error) {
+	s.flush()
+	a, _, err := s.historyPoint(ctx, network, "", ref1)
+	if err != nil {
+		return nil, err
+	}
+	b, _, err := s.historyPoint(ctx, network, "", ref2)
+	if err != nil {
+		return nil, err
+	}
+	q := `SELECT buffer,MAX(ts) AS latest FROM messages WHERE network=? AND buffer NOT LIKE '*%' AND kind IN ('privmsg','notice','action') AND text<>'' GROUP BY buffer_fold HAVING 1=1`
+	args := []any{network}
+	if ref1 != "*" && ref2 != "*" && a > b {
+		a, b = b, a
+	}
+	if ref1 != "*" && ref2 != "*" {
+		q += ` AND latest>=? AND latest<=?`
+		args = append(args, a, b)
+	} else if ref1 != "*" {
+		q += ` AND latest>=?`
+		args = append(args, a)
+	} else if ref2 != "*" {
+		q += ` AND latest<=?`
+		args = append(args, b)
+	}
+	q += ` ORDER BY latest DESC, buffer_fold LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var buffer string
+		var ts int64
+		if err := rows.Scan(&buffer, &ts); err != nil {
+			return nil, err
+		}
+		out[buffer] = time.UnixMilli(ts)
+	}
+	return out, rows.Err()
+}

@@ -2,7 +2,10 @@ package ircserver
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -264,82 +267,128 @@ func (s *Session) handleBouncer(msg *Message) {
 	}
 }
 
-func (s *Session) handleChatHistory(msg *Message) {
-	if s.isControl || s.networkID == "" || s.history == nil {
-		_ = s.write(FormatLine("", serverName, "FAIL", "CHATHISTORY", "INVALID_TARGET", "*", ":Cannot fetch chat history on this connection"))
-		return
-	}
-
-	if len(msg.Params) < 1 {
-		s.numeric("461", "CHATHISTORY :Not enough parameters")
-		return
-	}
-
-	sub := strings.ToUpper(msg.Params[0])
-	if sub == "TARGETS" {
-		s.handleChatHistoryTargets(msg)
-		return
-	}
-
-	if sub != "LATEST" && sub != "BEFORE" && sub != "AFTER" && sub != "AROUND" && sub != "BETWEEN" {
-		_ = s.write(FormatLine("", serverName, "FAIL", "CHATHISTORY", "INVALID_PARAMS", sub, ":Unknown subcommand"))
-		return
-	}
-
-	if len(msg.Params) < 2 || msg.Params[1] == "" {
-		s.numeric("461", "CHATHISTORY :Not enough parameters")
-		return
-	}
-
-	target := msg.Params[1]
-	isBetween := sub == "BETWEEN"
-
-	limitIdx := 3
-	if isBetween {
-		limitIdx = 4
-	}
-
-	limit := defaultMaxPlayback
-	if len(msg.Params) > limitIdx && msg.Params[limitIdx] != "" {
-		n, err := strconv.Atoi(msg.Params[limitIdx])
-		if err != nil || n < 0 || n > maxChatHistory {
-			_ = s.write(FormatLine("", serverName, "FAIL", "CHATHISTORY", "INVALID_PARAMS", sub, msg.Params[limitIdx], ":Invalid limit"))
-			return
-		}
-		limit = n
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	msgs, _, err := s.history.Backlog(ctx, s.networkID, target, 0, limit)
-	if err != nil {
-		_ = s.write(FormatLine("", serverName, "FAIL", "CHATHISTORY", "INTERNAL_ERROR", sub, ":Failed to query history"))
-		return
-	}
-
-	isChannel := strings.HasPrefix(target, "#") || strings.HasPrefix(target, "&")
-
-	s.withBatch("chathistory", []string{target}, func(ref string) {
-		for _, m := range msgs {
-			lines := s.formatPlaybackMessage(m, isChannel, ref)
-			for _, line := range lines {
-				_ = s.write(line)
-			}
-		}
-	})
+// chatHistoryStore is optional so basic History providers remain compatible.
+type chatHistoryStore interface {
+	ChatHistory(context.Context, string, string, string, string, string, int, bool) ([]core.Message, error)
+	ChatHistoryTargets(context.Context, string, string, string, int) (map[string]time.Time, error)
 }
 
-func (s *Session) handleChatHistoryTargets(msg *Message) {
-	// Simple targets dump in batch
-	s.withBatch("draft/chathistory-targets", nil, func(ref string) {
-		if netSnapshot := s.engine.SnapshotNetwork(s.networkID); netSnapshot != nil {
-			for _, ch := range netSnapshot.Channels {
+func validHistoryRef(ref string, wildcard, msgid bool) bool {
+	if ref == "*" {
+		return wildcard
+	}
+	if strings.HasPrefix(ref, "msgid=") {
+		return msgid && len(ref) > 6 && !strings.ContainsAny(ref[6:], " \r\n\t")
+	}
+	if !strings.HasPrefix(ref, "timestamp=") {
+		return false
+	}
+	_, err := time.Parse(time.RFC3339Nano, ref[10:])
+	return err == nil
+}
+
+func (s *Session) handleChatHistory(msg *Message) {
+	sub := "*"
+	if len(msg.Params) > 0 {
+		sub = strings.ToUpper(msg.Params[0])
+	}
+	fail := func(code, reason string) {
+		_ = s.write(FormatLine("", serverName, "FAIL", "CHATHISTORY", code, sub, reason))
+	}
+	if s.isControl || s.networkID == "" || s.history == nil {
+		fail("INVALID_TARGET", "Cannot fetch history on this connection")
+		return
+	}
+	targets := sub == "TARGETS"
+	count := 4
+	if sub == "BETWEEN" {
+		count = 5
+	}
+	if sub != "LATEST" && sub != "BEFORE" && sub != "AFTER" && sub != "AROUND" && sub != "BETWEEN" && !targets {
+		fail("INVALID_PARAMS", "Unknown subcommand")
+		return
+	}
+	if len(msg.Params) != count {
+		fail("INVALID_PARAMS", "Incorrect parameter count")
+		return
+	}
+	limit, err := strconv.Atoi(msg.Params[count-1])
+	if err != nil || limit <= 0 || limit > maxChatHistory {
+		fail("INVALID_PARAMS", "Invalid limit")
+		return
+	}
+	first := 2
+	if targets {
+		first = 1
+	}
+	for _, r := range msg.Params[first : count-1] {
+		if !validHistoryRef(r, targets || sub == "LATEST" || sub == "BETWEEN", !targets) {
+			fail("INVALID_PARAMS", "Invalid message reference")
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	provider, ok := s.history.(chatHistoryStore)
+	if targets {
+		entries := map[string]time.Time{}
+		if ok {
+			entries, err = provider.ChatHistoryTargets(ctx, s.networkID, msg.Params[1], msg.Params[2], limit)
+		}
+		if err != nil {
+			fail("MESSAGE_ERROR", "Failed to query history")
+			return
+		}
+		names := make([]string, 0, len(entries))
+		for name := range entries {
+			names = append(names, name)
+		}
+		sort.Slice(names, func(i, j int) bool {
+			if entries[names[i]].Equal(entries[names[j]]) {
+				return names[i] < names[j]
+			}
+			return entries[names[i]].After(entries[names[j]])
+		})
+		s.withBatch("draft/chathistory-targets", nil, func(ref string) {
+			for _, name := range names {
 				tag := ""
 				if ref != "" {
-					tag = fmt.Sprintf("batch=%s", ref)
+					tag = "batch=" + ref
 				}
-				_ = s.write(FormatLine(tag, serverName, "CHATHISTORY", "TARGETS", ch.Name, FormatIrcTime(time.Now())))
+				_ = s.write(FormatLine(tag, serverName, "CHATHISTORY", "TARGETS", name, FormatIrcTime(entries[name])))
+			}
+		})
+		return
+	}
+	target := msg.Params[1]
+	if target == "" || strings.HasPrefix(target, "*") || strings.ContainsAny(target, " ,\r\n\t") {
+		fail("INVALID_TARGET", "Invalid target")
+		return
+	}
+	isChannel := strings.HasPrefix(target, "#") || strings.HasPrefix(target, "&")
+	var msgs []core.Message
+	if ok {
+		ref2 := ""
+		if sub == "BETWEEN" {
+			ref2 = msg.Params[3]
+		}
+		includeSelf := isChannel || (s.wantsSelfMessages() && !IsServicesNick(target))
+		msgs, err = provider.ChatHistory(ctx, s.networkID, target, sub, msg.Params[2], ref2, limit, includeSelf)
+	} else {
+		msgs, _, err = s.history.Backlog(ctx, s.networkID, target, 0, limit)
+	}
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			fail("INVALID_PARAMS", "Unknown message reference")
+		} else {
+			fail("MESSAGE_ERROR", "Failed to query history")
+		}
+		return
+	}
+	s.withBatch("chathistory", []string{target}, func(ref string) {
+		for _, m := range msgs {
+			for _, line := range s.formatPlaybackMessage(m, isChannel, ref) {
+				_ = s.write(line)
 			}
 		}
 	})
