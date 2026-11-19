@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -232,5 +233,58 @@ func TestAuthRateLimit(t *testing.T) {
 	resp, _ := postMagic(t, hs.URL, "", "hunter2")
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("after quota: status = %d, want 429", resp.StatusCode)
+	}
+}
+
+func TestMagicWordSessionRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "magic_sessions.json")
+	start := func(password, scope string) *httptest.Server {
+		t.Helper()
+		hash, err := auth.HashPassword(password)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hs := httptest.NewServer(New(SingleUser(&Tenant{}), Options{MagicWordHash: hash, MagicSessionPath: path, MagicSessionScope: scope}).Handler())
+		t.Cleanup(hs.Close)
+		return hs
+	}
+	hs := start("secret", "stable-fingerprint")
+	resp, _ := postMagic(t, hs.URL, "", "secret")
+	var cookie string
+	for _, c := range resp.Cookies() {
+		if c.Name == magicCookie {
+			cookie = c.Name + "=" + c.Value
+		}
+	}
+	if cookie == "" {
+		t.Fatal("no magic cookie")
+	}
+	hs.Close()
+	hs = start("secret", "stable-fingerprint")
+	if !getMagicMe(t, hs.URL, cookie).MagicWord.Granted {
+		t.Fatal("grant lost despite same password and fresh bcrypt salt")
+	}
+	req, _ := http.NewRequest("POST", hs.URL+"/api/magicword/logout", nil)
+	req.Header.Set("Cookie", cookie)
+	logout, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logout.Body.Close()
+	hs.Close()
+	hs = start("secret", "stable-fingerprint")
+	if getMagicMe(t, hs.URL, cookie).MagicWord.Granted {
+		t.Fatal("logout lost on restart")
+	}
+	resp, _ = postMagic(t, hs.URL, "", "secret")
+	for _, c := range resp.Cookies() {
+		if c.Name == magicCookie {
+			cookie = c.Name + "=" + c.Value
+		}
+	}
+	hs.Close()
+	hs = start("changed", "changed-fingerprint")
+	if getMagicMe(t, hs.URL, cookie).MagicWord.Granted {
+		t.Fatal("changed password retained grant")
 	}
 }

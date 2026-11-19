@@ -3,10 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"github.com/klippelism/stugan/internal/auth"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -149,4 +152,64 @@ func login(t *testing.T, base, user, pass string) (cookie string, code int) {
 		}
 	}
 	return cookie, resp.StatusCode
+}
+
+// persistentHub exercises the real session implementation through HTTP.
+type persistentHub struct {
+	*fakeHub
+	sessions *auth.Sessions
+}
+
+func (h *persistentHub) Session(token string) (string, bool)    { return h.sessions.Lookup(token) }
+func (h *persistentHub) StartSession(user string) (string, int) { return h.sessions.Create(user), 3600 }
+func (h *persistentHub) EndSession(token string)                { h.sessions.Delete(token) }
+
+func TestLoginSessionRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	start := func(credentials map[string]string) *httptest.Server {
+		t.Helper()
+		sessions, err := auth.NewPersistentSessions(time.Hour, path, "", credentials)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := &persistentHub{fakeHub: &fakeHub{creds: map[string]string{"alice": "pw"}, tenants: map[string]*Tenant{"alice": {}}}, sessions: sessions}
+		hs := httptest.NewServer(New(h, Options{}).Handler())
+		t.Cleanup(hs.Close)
+		return hs
+	}
+	creds := map[string]string{"alice": "password-hash"}
+	hs := start(creds)
+	cookie, code := login(t, hs.URL, "alice", "pw")
+	if code != http.StatusOK {
+		t.Fatalf("login: %d", code)
+	}
+	hs.Close()
+	hs = start(creds)
+	if !getMe(t, hs.URL, cookie).Authenticated {
+		t.Fatal("session lost on restart")
+	}
+	req, _ := http.NewRequest("POST", hs.URL+"/api/logout", nil)
+	req.Header.Set("Cookie", cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	hs.Close()
+	hs = start(creds)
+	if getMe(t, hs.URL, cookie).Authenticated {
+		t.Fatal("logout lost on restart")
+	}
+	cookie, _ = login(t, hs.URL, "alice", "pw")
+	hs.Close()
+	hs = start(map[string]string{"alice": "new-hash"})
+	if getMe(t, hs.URL, cookie).Authenticated {
+		t.Fatal("password change retained session")
+	}
+	cookie, _ = login(t, hs.URL, "alice", "pw")
+	hs.Close()
+	hs = start(map[string]string{})
+	if getMe(t, hs.URL, cookie).Authenticated {
+		t.Fatal("removed user retained session")
+	}
 }

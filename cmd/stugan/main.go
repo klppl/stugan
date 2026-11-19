@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"flag"
 	"fmt"
 	"os"
@@ -94,13 +95,14 @@ func run() error {
 
 	// Optional outer site-wide password ("magic word"). Hashed once at
 	// startup so the plaintext is not retained in process memory.
-	var magicHash string
+	var magicHash, magicScope string
 	if pw := os.Getenv("STUGAN_WEB_PASSWORD"); pw != "" {
 		h, err := auth.HashPassword(pw)
 		if err != nil {
 			return fmt.Errorf("hash $STUGAN_WEB_PASSWORD: %w", err)
 		}
 		magicHash = h
+		magicScope = fmt.Sprintf("%x", sha256.Sum256([]byte("stugan-magic-session-v1\x00"+pw)))
 		log.Info("magic-word gate enabled via $STUGAN_WEB_PASSWORD")
 	}
 
@@ -130,17 +132,19 @@ func run() error {
 	}
 
 	srv := server.New(hub, server.Options{
-		Logger:         log,
-		ServerName:     "stugan/" + version(),
-		StaticDir:      cfg.Server.StaticDir,
-		OriginPatterns: cfg.Server.OriginPatterns,
-		TrustedProxies: cfg.Server.TrustedProxies,
-		UploadDir:      filepath.Join(cfg.DataDir(), "uploads"),
-		Uploads:        cfg.Uploads,
-		PushDir:        filepath.Join(cfg.DataDir(), "push"),
-		MagicWordHash:  magicHash,
-		Bouncer:        bouncer,
-		Previews:       cfg.Previews,
+		Logger:            log,
+		ServerName:        "stugan/" + version(),
+		StaticDir:         cfg.Server.StaticDir,
+		OriginPatterns:    cfg.Server.OriginPatterns,
+		TrustedProxies:    cfg.Server.TrustedProxies,
+		UploadDir:         filepath.Join(cfg.DataDir(), "uploads"),
+		Uploads:           cfg.Uploads,
+		PushDir:           filepath.Join(cfg.DataDir(), "push"),
+		MagicWordHash:     magicHash,
+		MagicSessionPath:  filepath.Join(cfg.DataDir(), "magic_sessions.json"),
+		MagicSessionScope: magicScope,
+		Bouncer:           bouncer,
+		Previews:          cfg.Previews,
 	})
 	if cfg.PreviewsEnabled() {
 		log.Info("link previews go through stugan-previews", "url", cfg.Previews.URL)

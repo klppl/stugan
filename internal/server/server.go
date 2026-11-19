@@ -117,6 +117,9 @@ type Options struct {
 	// never keeps the plaintext in memory. When empty, the gate is
 	// disabled and all requests fall through to the normal auth flow.
 	MagicWordHash string
+	// MagicSessionScope must be a stable password fingerprint when persistence is used.
+	MagicSessionPath  string
+	MagicSessionScope string
 	// Bouncer, when set, is the IRC bouncer listener whose access the web UI
 	// exposes in Settings. Nil when [ircserver] is not configured.
 	Bouncer Bouncer
@@ -216,7 +219,15 @@ func New(hub Hub, opts Options) *Server {
 		s.previews = newPreviewRemote(opts.Previews.URL, opts.Previews.Secret)
 	}
 	if s.magicHash != "" {
-		s.magicSessions = auth.NewSessions(magicWordTTL)
+		scope := opts.MagicSessionScope
+		if scope == "" {
+			scope = opts.MagicWordHash
+		}
+		s.magicSessions, err = auth.NewPersistentSessions(magicWordTTL, opts.MagicSessionPath, scope, nil)
+		if err != nil {
+			log.Error("magic sessions unavailable; using empty in-memory sessions", "err", err)
+			s.magicSessions = auth.NewSessions(magicWordTTL)
+		}
 	}
 	return s
 }
@@ -413,6 +424,10 @@ func (s *Server) handleMagicWord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tok := s.magicSessions.Create("magic")
+	if tok == "" {
+		http.Error(w, "session unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: magicCookie, Value: tok, Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
@@ -460,6 +475,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tok, maxAge := s.hub.StartSession(user)
+	if tok == "" {
+		http.Error(w, "session unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: tok, Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Secure: secureCookie(r),

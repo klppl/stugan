@@ -127,7 +127,11 @@ func buildHub(cfg *config.Config, log *slog.Logger) (*hub, func(), error) {
 			hashes[u.Name] = u.PasswordHash
 		}
 		h.users = auth.NewUsers(hashes)
-		h.sessions = auth.NewSessions(time.Duration(h.sessMaxAge) * time.Second)
+		var err error
+		h.sessions, err = auth.NewPersistentSessions(time.Duration(h.sessMaxAge)*time.Second, filepath.Join(cfg.DataDir(), "sessions.json"), "", hashes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("load sessions: %w", err)
+		}
 	}
 
 	// Plugins are sandboxed by default; multi-user is always sandboxed and
