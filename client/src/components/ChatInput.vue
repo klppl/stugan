@@ -19,7 +19,7 @@ function targetKey(network: string, buffer: string): string {
 // branch passes any unknown /FOO through as raw FOO so the completion list
 // is a convenience, not a gate.
 const BUILTINS = [
-  "me", "msg", "notice", "join", "part", "nick", "quit", "raw", "query",
+  "me", "msg", "notice", "ctcp", "join", "part", "nick", "quit", "raw", "query",
   "whois", "whowas", "who", "names",
   "mode", "kick", "ban", "unban", "invite",
   "op", "deop", "voice", "devoice", "halfop", "dehalfop",

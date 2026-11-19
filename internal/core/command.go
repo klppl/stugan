@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -173,6 +174,8 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 		if target != "" && text != "" {
 			e.API().Notice(ev.Network, target, text)
 		}
+	case "ctcp":
+		e.ctcpCmd(conn, ev)
 	case "join":
 		// Pass the full argument string so channel keys come along:
 		// /join #chan key  →  JOIN #chan key (also /join #a,#b k1,k2).
@@ -181,11 +184,7 @@ func (e *Engine) runBuiltinCommand(ev Event) {
 			conn.SendRaw("JOIN " + ev.Text)
 		}
 	case "part":
-		ch := ev.Buffer
-		if len(ev.Args) > 0 {
-			ch = ev.Args[0]
-		}
-		conn.SendRaw("PART " + ch)
+		partCmd(conn, ev)
 	case "topic":
 		// /topic <text> sets the current channel's topic; /topic alone
 		// queries it.
@@ -348,6 +347,86 @@ func applyModeShorthand(conn IRCConn, ev Event, name string) {
 	conn.SendRaw("MODE " + ev.Buffer + " " + modes + " " + strings.Join(ev.Args, " "))
 }
 
+// partCmd handles /part [reason] in the current channel and
+// /part #chan[,#chan2] [reason] from any buffer.
+func partCmd(conn IRCConn, ev Event) {
+	text := strings.TrimSpace(ev.Text)
+	var ch, reason string
+	if text == "" {
+		if !isChannelName(ev.Buffer) {
+			return
+		}
+		ch = ev.Buffer
+	} else {
+		first, rest, _ := strings.Cut(text, " ")
+		rest = strings.TrimLeft(rest, " ")
+		switch {
+		case isChannelName(first):
+			ch = first
+			reason = rest
+		case isChannelName(ev.Buffer):
+			ch = ev.Buffer
+			reason = text
+		default:
+			return
+		}
+	}
+	ch = sanitizeIRCArg(ch)
+	if ch == "" {
+		return
+	}
+	reason = sanitizeIRCArg(reason)
+	if reason != "" {
+		conn.SendRaw("PART " + ch + " :" + reason)
+	} else {
+		conn.SendRaw("PART " + ch)
+	}
+}
+
+// ctcpCmd handles /ctcp <target> <command> [args], framing the payload with
+// \x01 delimiters over raw PRIVMSG so it bypasses message hooks (e.g. FiSH
+// encryption) and doesn't echo raw control bytes locally. Replies arrive via
+// NOTICE and are rendered by internal/irc/translate.go.
+func (e *Engine) ctcpCmd(conn IRCConn, ev Event) {
+	text := strings.TrimSpace(ev.Text)
+	target, afterTarget, ok := strings.Cut(text, " ")
+	afterTarget = strings.TrimLeft(afterTarget, " ")
+	cmd, args, _ := strings.Cut(afterTarget, " ")
+	args = strings.TrimLeft(args, " ")
+
+	target = sanitizeCTCP(target)
+	cmd = strings.ToUpper(sanitizeCTCP(cmd))
+	args = sanitizeCTCP(args)
+
+	if !ok || target == "" || cmd == "" {
+		e.inject(Message{
+			Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+			Kind: MsgSystem, Text: "usage: /ctcp <target> <command> [args]",
+		})
+		return
+	}
+	if cmd == "PING" && args == "" {
+		args = strconv.FormatInt(time.Now().Unix(), 10)
+	}
+	payload := cmd
+	if args != "" {
+		payload += " " + args
+	}
+	conn.SendRaw("PRIVMSG " + target + " :\x01" + payload + "\x01")
+	e.inject(Message{
+		Network: ev.Network, Buffer: ev.Buffer, Time: time.Now(),
+		Kind: MsgSystem, Text: "CTCP " + payload + " sent to " + target,
+	})
+}
+
+func sanitizeIRCArg(s string) string {
+	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
+}
+
+func sanitizeCTCP(s string) string {
+	return strings.NewReplacer("\x01", "", "\r", "", "\n", "").Replace(s)
+}
+
 // kickCmd handles /kick <nick> [reason] in the current channel, and
 // /kick #chan <nick> [reason] anywhere.
 func kickCmd(conn IRCConn, ev Event) {
@@ -358,7 +437,7 @@ func kickCmd(conn IRCConn, ev Event) {
 	nickIdx := 0
 	// If the first arg looks like a channel, treat it as the target.
 	first := ev.Args[0]
-	if first != "" && (first[0] == '#' || first[0] == '&' || first[0] == '+' || first[0] == '!') {
+	if isChannelName(first) {
 		chan_ = first
 		nickIdx = 1
 	}

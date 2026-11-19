@@ -1435,6 +1435,138 @@ func TestKickAndBanCommands(t *testing.T) {
 	}
 }
 
+func TestPartCommand(t *testing.T) {
+	conn := &fakeConnector{}
+	e := New(Options{Sink: &captureSink{}, Connector: conn})
+	_ = e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"})
+
+	// /part in a channel (no args).
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: "#c",
+		Command: "part",
+	})
+	// /part going to bed (reason for current channel).
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: "#c",
+		Command: "part", Args: []string{"going", "to", "bed"}, Text: "going to bed",
+	})
+	// /part #other (explicit channel, no reason).
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: "#c",
+		Command: "part", Args: []string{"#other"}, Text: "#other",
+	})
+	// /part #other see ya later (explicit channel + multi-word reason).
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: StatusBuffer,
+		Command: "part", Args: []string{"#other", "see", "ya", "later"}, Text: "#other see ya later",
+	})
+	// /part #a,#b leaving both (multi-channel + reason).
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: "#c",
+		Command: "part", Args: []string{"#a,#b", "leaving", "both"}, Text: "#a,#b leaving both",
+	})
+	// /part in *status or a query without a channel is a no-op.
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: StatusBuffer,
+		Command: "part",
+	})
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: "alice",
+		Command: "part", Args: []string{"bye"}, Text: "bye",
+	})
+
+	want := []string{
+		"PART #c",
+		"PART #c :going to bed",
+		"PART #other",
+		"PART #other :see ya later",
+		"PART #a,#b :leaving both",
+	}
+	if !slices.Equal(conn.conns[0].raws, want) {
+		t.Fatalf("part raws = %q, want %q", conn.conns[0].raws, want)
+	}
+}
+
+func TestCTCPCommand(t *testing.T) {
+	conn := &fakeConnector{}
+	sink := &captureSink{}
+	e := New(Options{Sink: sink, Connector: conn})
+	_ = e.AddNetworkLive(NetworkParams{ID: "n", Name: "n", Addr: "a:1", Nick: "me"})
+
+	// /ctcp alice version → uppercased, \x01-framed, with local confirmation.
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: "#c",
+		Command: "ctcp", Args: []string{"alice", "version"}, Text: "alice version",
+	})
+	// /ctcp alice PING custom 123 → preserves args.
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: "#c",
+		Command: "ctcp", Args: []string{"alice", "PING", "custom", "123"}, Text: "alice PING custom 123",
+	})
+	// /ctcp alice ping (no args) → auto-fills numeric unix timestamp.
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: "#c",
+		Command: "ctcp", Args: []string{"alice", "ping"}, Text: "alice ping",
+	})
+	// /ctcp #c TIME → channel target works too.
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: "#c",
+		Command: "ctcp", Args: []string{"#c", "TIME"}, Text: "#c TIME",
+	})
+	// Control characters are stripped from target/command/args.
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: "#c",
+		Command: "ctcp", Args: []string{"alice", "finger", "hi\x01\r\nthere"}, Text: "alice finger hi\x01\r\nthere",
+	})
+	// Missing command shows usage without sending anything.
+	rawsBefore := len(conn.conns[0].raws)
+	e.runBuiltinCommand(Event{
+		Type: EvCommand, Network: "n", Buffer: "#c",
+		Command: "ctcp", Args: []string{"alice"}, Text: "alice",
+	})
+	if len(conn.conns[0].raws) != rawsBefore {
+		t.Fatalf("incomplete /ctcp sent raw line: %v", conn.conns[0].raws[rawsBefore:])
+	}
+
+	raws := conn.conns[0].raws
+	if len(raws) != 5 {
+		t.Fatalf("got %d raw lines %q, want 5", len(raws), raws)
+	}
+	if raws[0] != "PRIVMSG alice :\x01VERSION\x01" {
+		t.Errorf("raws[0] = %q", raws[0])
+	}
+	if raws[1] != "PRIVMSG alice :\x01PING custom 123\x01" {
+		t.Errorf("raws[1] = %q", raws[1])
+	}
+	if !strings.HasPrefix(raws[2], "PRIVMSG alice :\x01PING ") || !strings.HasSuffix(raws[2], "\x01") || len(raws[2]) <= len("PRIVMSG alice :\x01PING \x01") {
+		t.Errorf("raws[2] (auto-timestamp PING) = %q", raws[2])
+	}
+	if raws[3] != "PRIVMSG #c :\x01TIME\x01" {
+		t.Errorf("raws[3] = %q", raws[3])
+	}
+	if raws[4] != "PRIVMSG alice :\x01FINGER hithere\x01" {
+		t.Errorf("raws[4] = %q", raws[4])
+	}
+
+	// Verify local system confirmation and usage lines were injected into #c.
+	var texts []string
+	for _, m := range sink.msgs {
+		if m.Kind == MsgSystem && m.Buffer == "#c" {
+			texts = append(texts, m.Text)
+		}
+	}
+	for _, want := range []string{
+		"CTCP VERSION sent to alice",
+		"CTCP PING custom 123 sent to alice",
+		"CTCP TIME sent to #c",
+		"usage: /ctcp <target> <command> [args]",
+	} {
+		if !slices.Contains(texts, want) {
+			t.Errorf("missing system message %q in %q", want, texts)
+		}
+	}
+}
+
 func TestUnknownCommandPassesThroughAsRaw(t *testing.T) {
 	// The default branch in runBuiltinCommand now upper-cases the command
 	// and sends it raw — the documented weechat/irssi behavior. That makes
